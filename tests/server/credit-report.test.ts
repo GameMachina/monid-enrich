@@ -63,7 +63,7 @@ test('report includes unused organizations, orphan budgets, holds and uncertain 
 		'aiReservations', (SELECT jsonb_agg(r ORDER BY id) FROM enrichable.openai_reservations r),
 		'emailReservations', (SELECT jsonb_agg(r ORDER BY id) FROM enrichable.enrichment_reservations r)) AS value`)).rows;
 	const before = await snapshot();
-	const report = await readCreditReport(database, { openai: 500, typesafe: 100, enrichment: 205 });
+	const report = await readCreditReport(database);
 	assert.equal(report.organizationCount, 3);
 	assert.equal(report.users.totalObserved, 4);
 	assert.equal(report.users.firstSeenLast24Hours, 1);
@@ -81,6 +81,10 @@ test('report includes unused organizations, orphan budgets, holds and uncertain 
 	assert.equal(report.organizations.find(org => org.workspaceId === 'orphan')!.name, null);
 	assert.equal((report.deployment.openai as { spentUsd: number }).spentUsd, 0.35);
 	assert.equal((report.deployment.enrichment as { spentUsd: number }).spentUsd, 1.2);
+	assert.equal((report.deployment.openai as { grantedUsd: number }).grantedUsd, 1000);
+	await db.query("UPDATE enrichable.credit_limits SET cap_nano=2500000000000 WHERE kind='openai'");
+	const updated = await readCreditReport(database);
+	assert.equal((updated.deployment.openai as { grantedUsd: number }).grantedUsd, 2500);
 	assert.deepEqual(await snapshot(), before);
 	for (const store of [ai, email]) {
 		await assert.rejects(store.reserve(actor, -1), /Invalid/);
@@ -101,7 +105,7 @@ test('holds past their lease are reported as uncertain without modifying the led
 	const killed = await ai.reserve(actor, 100_000_000);
 	await ai.reserve(actor, 50_000_000);
 	await db.query(`UPDATE enrichable.openai_reservations SET created_at = now() - interval '${RESERVATION_LEASE_SECONDS + 1} seconds' WHERE id = $1`, [killed]);
-	const report = await readCreditReport(database, { openai: 500, typesafe: 100, enrichment: 205 });
+	const report = await readCreditReport(database);
 	const openai = report.organizations.find(org => org.workspaceId === workspaceId(actor))!.openai as Record<string, unknown>;
 	assert.equal(openai.heldUsd, 0.05);
 	assert.equal(openai.uncertainUsd, 0.1);

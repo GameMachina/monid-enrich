@@ -32,7 +32,7 @@ Set `ENRICHABLE_OPENAI_TRIAL_ENABLED=true` and a fresh server-only `OPENAI_API_K
 
 Sponsored requests use `gpt-6-luna` on the official OpenAI endpoint, ignoring client model and base URL overrides. Text input and output are bounded; every model call, tool step, retry, fallback decision and inference connection test is metered. The server atomically reserves a conservative text-token cost bound before each call and settles against reported usage, including reasoning output and cached input. Unused reservations are refunded. Timeouts, provider errors or missing usage retain the reservation because billing is uncertain. Interrupted processes leave their holds intact for manual reconciliation; holds never expire automatically.
 
-The default deployment-wide **lifetime cap is $500**, configured with `ENRICHABLE_OPENAI_TOTAL_BUDGET_USD` (maximum $10,000). This cap includes pending reservations and prevents unlimited new organizations from spending unlimited credit. Per organization, the server allows eight active model calls and 120 attempts per minute. Raising the global cap does not reset organization balances. Requests fail closed when budget storage is unavailable or a reservation cannot be funded. Budget data is stored in `enrichable.openai_budgets` and `enrichable.openai_reservations`; never delete those tables to redeploy or sign users out.
+The deployment-wide **lifetime cap starts at $1,000**, stored in `enrichable.credit_limits` under `openai`. This cap includes pending reservations and prevents unlimited new organizations from spending unlimited credit. Per organization, the server allows eight active model calls and 120 attempts per minute. Raising the global cap does not reset organization balances. Requests fail closed when budget storage is unavailable or a reservation cannot be funded. Budget data is stored in `enrichable.openai_budgets` and `enrichable.openai_reservations`; never delete those tables to redeploy or sign users out.
 
 Users can add their own OpenAI key to continue after trial credit is exhausted; those calls use their selected model and do not debit the trial. Sponsored OpenAI access requires a valid signed-in session and does not require the private-deployment password. Other server keys retain the password controls below. Configure a separate hard spend limit in the OpenAI project as an additional account-level cap.
 
@@ -40,25 +40,22 @@ Users can add their own OpenAI key to continue after trial credit is exhausted; 
 
 Set `ENRICHABLE_TYPESAFE_TRIAL_ENABLED=true` and a server-only `TYPESAFE_API_KEY`, then apply migration 011. Each verified organization receives **$1 in one-time TypeSafe credit** for decision columns (check, classify, score), shared by all its members, on a ledger separate from the AI trial. Settings shows TypeSafe as an included trial and the sidebar shows its remaining credit. Each decision reserves its request size as input tokens at TypeSafe's published rate ($42 per billion input tokens; output is free) and settles against the input tokens TypeSafe reports. Refused (429) or unsent requests are refunded; other failures and missing usage retain the reservation. When the credit runs out, decisions fall back to OpenAI (the AI trial or the organization's own key), or the cell asks for a TypeSafe key when no OpenAI access is available. A member's own TypeSafe key replaces the trial and is never debited.
 
-The default deployment-wide cap is **$100**, configured with `ENRICHABLE_TYPESAFE_TOTAL_BUDGET_USD` (maximum $10,000), with the same per-organization request limits as the AI trial. Budget data is stored in `enrichable.typesafe_budgets` and `enrichable.typesafe_reservations`. Like the AI trial, it is browser-only: MCP callers never use the deployment's TypeSafe key.
+The deployment-wide cap starts at **$100**, stored in `enrichable.credit_limits` under `typesafe`, with the same per-organization request limits as the AI trial. Budget data is stored in `enrichable.typesafe_budgets` and `enrichable.typesafe_reservations`. Like the AI trial, it is browser-only: MCP callers never use the deployment's TypeSafe key.
 
 Official-service funding configuration (not for self-hosting):
 
 ```dotenv
 ENRICHABLE_OPENAI_TRIAL_ENABLED=true
 OPENAI_API_KEY=
-ENRICHABLE_OPENAI_TOTAL_BUDGET_USD=500
 ENRICHABLE_TYPESAFE_TRIAL_ENABLED=true
 TYPESAFE_API_KEY=
-ENRICHABLE_TYPESAFE_TOTAL_BUDGET_USD=100
 ENRICHMENT_API_KEY=
 ENRICHMENT_API_URL=
-ENRICHABLE_ENRICHMENT_TOTAL_BUDGET_USD=205
 ```
 
 ## Email enrichment allowance
 
-The hosted email waterfall uses a server-only gateway and a separate allowance ledger. Configure `ENRICHMENT_API_KEY`, `ENRICHMENT_API_URL`, and optionally `ENRICHABLE_ENRICHMENT_TOTAL_BUDGET_USD`; apply migration 009. Provider selection and own-key setup are described in [email enrichment](email-enrichment.md); hosted reservation and reconciliation details follow below. These allowances are unavailable to anonymous self-hosted workspaces.
+The hosted email waterfall uses a server-only gateway and a separate allowance ledger. Configure `ENRICHMENT_API_KEY` and `ENRICHMENT_API_URL`; apply migrations 009 and 012. Provider selection and own-key setup are described in [email enrichment](email-enrichment.md); hosted reservation and reconciliation details follow below. These allowances are unavailable to anonymous self-hosted workspaces.
 
 ## Legacy MCP key backfill
 
@@ -97,7 +94,7 @@ LogoLink can connect automatically through Context.dev sign-in. Enrichable reque
 
 Included calls use the server-only `ENRICHMENT_API_KEY` and `ENRICHMENT_API_URL` HTTP gateway. The key needs only `runs:create` and `runs:get`. No SDK or browser-side gateway credential is used. Configure both variables locally and in the deployment, then apply migration 009. Environments sharing a database share the same allowance ledger.
 
-Each verified organization has one non-resetting $1 allowance. The deployment has a separate non-resetting $205 maximum, optionally lowered through `ENRICHABLE_ENRICHMENT_TOTAL_BUDGET_USD`. Transactions reserve each provider call's bounded cost under a global row lock before HTTP starts, preventing concurrent overspending. Final run cost settles the reservation once. Failed or rejected calls with confirmed zero cost refund their reservation. Unknown billing retains the reservation; it must not be automatically released. Upstream recurring budgets are independent of this ledger and must be configured in the upstream account.
+Each verified organization has one non-resetting $1 allowance. The deployment has a separate non-resetting cap starting at $1,000, stored in `enrichable.credit_limits` under `enrichment`. Transactions reserve each provider call's bounded cost under a global row lock before HTTP starts, preventing concurrent overspending. Final run cost settles the reservation once. Failed or rejected calls with confirmed zero cost refund their reservation. Unknown billing retains the reservation; it must not be automatically released. Upstream recurring budgets are independent of this ledger and must be configured in the upstream account.
 
 The gateway receives only server-selected provider endpoints and inputs. Every billable POST has an idempotency key; asynchronous runs are polled rather than resubmitted. Raw provider errors, payloads, and gateway credentials are never returned to clients. Cell metadata records ordered attempts, direct-key versus included-credit usage, and settled included cost. The credit balance is available at `/api/enrichment/usage` for the authenticated organization.
 
@@ -125,3 +122,20 @@ Apply migration 010 with `npm run db:migrate` before deploying this endpoint and
 The `users` object includes `totalObserved`, `firstSeenLast24Hours`, `firstSeenLast7Days`, `firstSeenLast30Days`, `trackingStartedAt`, and `firstSeenByDayUtc` for the current UTC day plus the preceding 29 days (days without sign-ins are omitted). Each organization also has a `users` count object. Rolling periods use database time and daily buckets use UTC. These are first-observed Enrichable sign-ins, not Context.dev account creation dates: previous signup dates were not recorded, and an existing user returning after tracking starts will be counted as newly observed. There is no historical signup backfill. No user identifiers are exposed in the report.
 
 This endpoint accepts GET (and Next.js's automatic HEAD/OPTIONS); mutation methods receive 405 after authorization. It has no operation for adding, removing, resetting or transferring credit. Both the proxy and route validate the dedicated bearer token. Browser sessions and the deployment password do not authorize access, and query-string tokens are ignored. Responses are private and uncached, database errors are redacted, and the database transaction is read-only. Anyone holding this secret can read all organizations' balances, so keep it in server or operator tooling and rotate it by changing the variable and redeploying.
+
+## Change deployment credit caps
+
+Migration 012 creates `enrichable.credit_limits` with $1,000 each for `openai` and `enrichment`, and $100 for `typesafe`. Caps are lifetime totals, including existing spend and in-flight reservations. Each organization still receives a separate $1 allowance in each ledger.
+
+After the migration and application change are deployed, an authorized database operator can change a cap without a PR, environment-variable update, restart, or redeploy. For example, to set AI and enrichment to $1,000 each:
+
+```sql
+UPDATE enrichable.credit_limits
+SET cap_nano = 1000::bigint * 1000000000
+WHERE kind IN ('openai', 'enrichment')
+RETURNING kind, cap_nano / 1000000000.0 AS cap_usd;
+```
+
+The server reads the cap inside each budget transaction, without caching. Cap updates serialize with active budget checks. Lowering a cap below existing spending blocks new reservations but preserves balances and lets existing calls settle. Missing cap rows fail closed. Values must be positive integer nanodollars within JavaScript's safe integer range ($9,007,199.254740991 maximum); this is a numeric storage limit, not a spending recommendation.
+
+Redeploying does not overwrite edited caps. The legacy `ENRICHABLE_OPENAI_TOTAL_BUDGET_USD`, `ENRICHABLE_ENRICHMENT_TOTAL_BUDGET_USD`, and `ENRICHABLE_TYPESAFE_TOTAL_BUDGET_USD` variables are ignored by the new code and may be removed after rollout. Never edit `spent_nano` or delete reservations to change a cap. Record the operator, reason, old value, and new value in your database change log.

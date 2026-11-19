@@ -2,7 +2,7 @@ import 'server-only';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { failureOf, newTrace } from './api-route';
 import { withDatabase, type Database } from './database';
-import { DOLLAR_NANO, LEDGER_KINDS, LEDGERS, ledgerCeiling, ORGANIZATION_GRANT_USD, RESERVATION_LEASE_SECONDS, type LedgerKind } from './credit-ledger';
+import { DOLLAR_NANO, LEDGER_KINDS, LEDGERS, readCreditCaps, ORGANIZATION_GRANT_USD, RESERVATION_LEASE_SECONDS, type LedgerKind } from './credit-ledger';
 
 export const CREDIT_REPORT_PATH = '/api/admin/credits';
 
@@ -18,8 +18,8 @@ export function creditReportAuthorized(request: Request, secret = process.env.EN
 const budgets = LEDGER_KINDS.map((kind) => `SELECT '${kind}' AS kind, id, spent_nano FROM ${LEDGERS[kind].budgets}`).join(' UNION ALL ');
 const reservations = LEDGER_KINDS.map((kind) => `SELECT '${kind}' AS kind, budget_id, CASE WHEN status = 'held' AND created_at < now() - interval '${RESERVATION_LEASE_SECONDS} seconds' THEN 'uncertain' ELSE status END AS status, reserved_nano, COALESCE(charged_nano, reserved_nano) AS charged_nano, created_at FROM ${LEDGERS[kind].reservations}`).join(' UNION ALL ');
 
-export async function readCreditReport(database: Database, limits: Record<LedgerKind, number>) {
-	const { signups, dailySignups, memberships, rows } = await database.transaction(async (client) => {
+export async function readCreditReport(database: Database) {
+	const { signups, dailySignups, memberships, rows, limits } = await database.transaction(async (client) => {
 		await client.query("SET LOCAL statement_timeout = '10s'");
 		const signups = (await client.query(`
 			SELECT (SELECT started_at FROM enrichable.signup_tracking WHERE id = true) AS tracking_started_at,
@@ -70,7 +70,7 @@ export async function readCreditReport(database: Database, limits: Record<Ledger
 			LEFT JOIN totals t ON t.budget_id = s.budget_id AND t.kind = k.kind
 			ORDER BY s.workspace_id NULLS FIRST, k.kind
 		`);
-		return { signups, dailySignups, memberships, rows };
+		return { signups, dailySignups, memberships, rows, limits: await readCreditCaps(client) };
 	}, { readOnly: true });
 	const balance = (row: Record<string, unknown>, grantedUsd: number) => {
 		const spentUsd = Number(row.spent_nano) / DOLLAR_NANO;
@@ -81,7 +81,7 @@ export async function readCreditReport(database: Database, limits: Record<Ledger
 	for (const row of rows) {
 		const kind = row.kind as LedgerKind;
 		if (row.workspace_id === null) {
-			deployment[kind] = balance(row, limits[kind]);
+			deployment[kind] = balance(row, limits[kind] / DOLLAR_NANO);
 			continue;
 		}
 		const workspaceId = String(row.workspace_id);
@@ -105,7 +105,7 @@ export async function readCreditReport(database: Database, limits: Record<Ledger
 	};
 }
 
-export const loadCreditReport = () => withDatabase((database) => readCreditReport(database, Object.fromEntries(LEDGER_KINDS.map((kind) => [kind, ledgerCeiling(kind) / DOLLAR_NANO])) as Record<LedgerKind, number>));
+export const loadCreditReport = () => withDatabase((database) => readCreditReport(database));
 
 export async function creditReportResponse(request: Request, load: () => Promise<unknown>) {
 	const headers = { 'Cache-Control': 'private, no-store', 'Vary': 'Authorization' };

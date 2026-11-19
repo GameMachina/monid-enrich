@@ -7,7 +7,8 @@ export const actor = (user = 'alice', org = 'one', issuer = 'https://identity.ex
 /** A ledger on the migrated test database. */
 export async function ledgerFixture(t: { after: (fn: () => Promise<void>) => void }, kind: LedgerKind, ceilingUsd?: number) {
 	const { db, database } = await testDatabase(t);
-	const ledger = new CreditLedger(kind, database, ceilingUsd === undefined ? undefined : ceilingUsd * DOLLAR_NANO);
+	if (ceilingUsd !== undefined) await db.query('UPDATE enrichable.credit_limits SET cap_nano=$2 WHERE kind=$1', [kind, ceilingUsd * DOLLAR_NANO]);
+	const ledger = new CreditLedger(kind, database);
 	const access: LedgerAccess = async (operation) => operation(ledger);
 	return { db, database, ledger, access };
 }

@@ -16,10 +16,10 @@ const MAX_ACTIVE = 8, MAX_PER_MINUTE = 120;
 
 export type LedgerKind = 'openai' | 'typesafe' | 'enrichment';
 export const LEDGERS = {
-	openai: { budgets: 'enrichable.openai_budgets', reservations: 'enrichable.openai_reservations', label: 'AI trial', ceilingEnv: 'ENRICHABLE_OPENAI_TOTAL_BUDGET_USD', defaultCeilingUsd: 500, maxCeilingUsd: 10_000, keyRequired: OPENAI_KEY_REQUIRED, provider: 'openai' },
-	typesafe: { budgets: 'enrichable.typesafe_budgets', reservations: 'enrichable.typesafe_reservations', label: 'TypeSafe trial', ceilingEnv: 'ENRICHABLE_TYPESAFE_TOTAL_BUDGET_USD', defaultCeilingUsd: 100, maxCeilingUsd: 10_000, keyRequired: 'Add your own TypeSafe key in Configuration to continue.', provider: 'typesafe' },
-	enrichment: { budgets: 'enrichable.enrichment_budgets', reservations: 'enrichable.enrichment_reservations', label: 'enrichment', ceilingEnv: 'ENRICHABLE_ENRICHMENT_TOTAL_BUDGET_USD', defaultCeilingUsd: 205, maxCeilingUsd: 205, keyRequired: 'Add your own provider keys in Configuration to continue enriching.', provider: 'email' },
-} as const satisfies Record<LedgerKind, { budgets: string; reservations: string; label: string; ceilingEnv: string; defaultCeilingUsd: number; maxCeilingUsd: number; keyRequired: string; provider: FailureProvider }>;
+	openai: { budgets: 'enrichable.openai_budgets', reservations: 'enrichable.openai_reservations', label: 'AI trial', keyRequired: OPENAI_KEY_REQUIRED, provider: 'openai' },
+	typesafe: { budgets: 'enrichable.typesafe_budgets', reservations: 'enrichable.typesafe_reservations', label: 'TypeSafe trial', keyRequired: 'Add your own TypeSafe key in Configuration to continue.', provider: 'typesafe' },
+	enrichment: { budgets: 'enrichable.enrichment_budgets', reservations: 'enrichable.enrichment_reservations', label: 'enrichment', keyRequired: 'Add your own provider keys in Configuration to continue enriching.', provider: 'email' },
+} as const satisfies Record<LedgerKind, { budgets: string; reservations: string; label: string; keyRequired: string; provider: FailureProvider }>;
 export const LEDGER_KINDS = Object.keys(LEDGERS) as LedgerKind[];
 
 export type BudgetReason = 'org_exhausted' | 'deployment_exhausted' | 'rate_limited';
@@ -36,12 +36,16 @@ export class CreditBudgetError extends EnrichError {
 	}
 }
 
-/** The deployment-wide ceiling in nanodollars, from the ledger's environment variable. */
-export function ledgerCeiling(kind: LedgerKind, value: string | undefined = process.env[LEDGERS[kind].ceilingEnv]) {
-	const { ceilingEnv, defaultCeilingUsd, maxCeilingUsd } = LEDGERS[kind];
-	const dollars = Number(value ?? defaultCeilingUsd);
-	if (!Number.isFinite(dollars) || dollars <= 0 || dollars > maxCeilingUsd) throw new Error(`${ceilingEnv} must be a positive dollar amount up to $${maxCeilingUsd}.`);
-	return Math.floor(dollars * DOLLAR_NANO);
+/** Caps are read on every operation, never cached in a process or taken from deployment environment variables. */
+export function creditCapNano(value: unknown): number {
+	const cap = Number(value);
+	if (!Number.isSafeInteger(cap) || cap <= 0) throw new Error('Missing or invalid deployment credit cap.');
+	return cap;
+}
+
+export async function readCreditCaps(client: Sql): Promise<Record<LedgerKind, number>> {
+	const { rows } = await client.query('SELECT kind, cap_nano FROM enrichable.credit_limits');
+	return Object.fromEntries(LEDGER_KINDS.map(kind => [kind, creditCapNano(rows.find(row => row.kind === kind)?.cap_nano)])) as Record<LedgerKind, number>;
 }
 
 /** Every statement a ledger runs, built once from its fixed LEDGERS table names; values travel only as bind parameters. */
@@ -63,10 +67,9 @@ function ledgerStatements({ budgets, reservations }: (typeof LEDGERS)[LedgerKind
 export class CreditLedger {
 	private readonly label: string;
 	private readonly sql: ReturnType<typeof ledgerStatements>;
-	constructor(readonly kind: LedgerKind, private database: Database, private ceiling: number = LEDGERS[kind].defaultCeilingUsd * DOLLAR_NANO) {
+	constructor(readonly kind: LedgerKind, private database: Database) {
 		this.label = LEDGERS[kind].label;
 		this.sql = ledgerStatements(LEDGERS[kind]);
-		if (!Number.isSafeInteger(ceiling) || ceiling <= 0 || ceiling > LEDGERS[kind].maxCeilingUsd * DOLLAR_NANO) throw new Error(`Invalid ${this.label} deployment budget.`);
 	}
 	private transaction<T>(operation: (client: Sql) => Promise<T>): Promise<T> {
 		return this.database.transaction(async (client) => {
@@ -84,12 +87,14 @@ export class CreditLedger {
 			if (!row) throw new Error(`The ${this.label} ledger is missing budget ${id}.`);
 			return Number(row.spent_nano);
 		};
-		return { organization: of(budget), deployment: of('global') };
+		// A cap edit waits for in-flight budget checks, so each reservation sees one atomic cap and debit.
+		const caps = await client.query('SELECT cap_nano FROM enrichable.credit_limits WHERE kind=$1 FOR SHARE', [this.kind]);
+		return { organization: of(budget), deployment: of('global'), ceiling: creditCapNano(caps.rows[0]?.cap_nano) };
 	}
 	async balance(account: Account) {
 		return this.transaction(async (client) => {
 			const spent = await this.spent(client, this.id(account));
-			return { grantedUsd: ORGANIZATION_GRANT_USD, remainingUsd: Math.max(0, ORGANIZATION_GRANT_USD * DOLLAR_NANO - spent.organization) / DOLLAR_NANO, deploymentAvailable: spent.deployment < this.ceiling };
+			return { grantedUsd: ORGANIZATION_GRANT_USD, remainingUsd: Math.max(0, ORGANIZATION_GRANT_USD * DOLLAR_NANO - spent.organization) / DOLLAR_NANO, deploymentAvailable: spent.deployment < spent.ceiling };
 		});
 	}
 	async reserve(account: Account, amount: number) {
@@ -98,7 +103,7 @@ export class CreditLedger {
 			const budget = this.id(account), id = randomUUID();
 			const spent = await this.spent(client, budget);
 			if (spent.organization + amount > ORGANIZATION_GRANT_USD * DOLLAR_NANO) throw new CreditBudgetError(this.kind, 'org_exhausted');
-			if (spent.deployment + amount > this.ceiling) throw new CreditBudgetError(this.kind, 'deployment_exhausted');
+			if (spent.deployment + amount > spent.ceiling) throw new CreditBudgetError(this.kind, 'deployment_exhausted');
 			// An expired hold keeps its whole debit (like any uncertain call) but stops occupying a throttle slot.
 			await client.query(this.sql.expireHolds, [budget, RESERVATION_LEASE_SECONDS]);
 			const counts = await client.query(this.sql.countHolds, [budget]);
@@ -122,8 +127,8 @@ export class CreditLedger {
 }
 
 export type LedgerAccess = <T>(operation: (ledger: CreditLedger) => Promise<T>) => Promise<T>;
-/** The ledger of `kind` with the deployment's configured ceiling. */
-export const creditLedger = (kind: LedgerKind, database: Database) => new CreditLedger(kind, database, ledgerCeiling(kind));
+/** The ledger of `kind` with its live database cap. */
+export const creditLedger = (kind: LedgerKind, database: Database) => new CreditLedger(kind, database);
 /** The ledger of `kind` on Neon, for the length of one operation. */
 const ledgerAccess = (kind: LedgerKind): LedgerAccess => (operation) => withDatabase((database) => operation(creditLedger(kind, database)));
 export const openaiLedger = ledgerAccess('openai');

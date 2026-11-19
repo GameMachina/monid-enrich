@@ -18,7 +18,12 @@ test('deployment migrations initialize an empty database and preserve data on re
 	t.after(() => db.close());
 	await migrateDatabase(transaction(db), resolve('migrations'));
 	await db.exec("INSERT INTO enrichable.workspaces (id,issuer,organization_id,name) VALUES ('preserved','https://example.com','one','Existing workspace'); INSERT INTO enrichable.openai_budgets (id,spent_nano) VALUES ('preserved',123);");
+	assert.deepEqual((await db.query('SELECT kind, cap_nano::text FROM enrichable.credit_limits ORDER BY kind')).rows, [
+		{ kind: 'enrichment', cap_nano: '1000000000000' }, { kind: 'openai', cap_nano: '1000000000000' }, { kind: 'typesafe', cap_nano: '100000000000' },
+	]);
+	await db.query("UPDATE enrichable.credit_limits SET cap_nano=2500000000000 WHERE kind='openai'");
 	await migrateDatabase(transaction(db), resolve('migrations'));
+	assert.equal((await db.query<{ cap: string }>("SELECT cap_nano::text AS cap FROM enrichable.credit_limits WHERE kind='openai'")).rows[0].cap, '2500000000000');
 	assert.deepEqual((await db.query('SELECT name FROM enrichable.workspaces WHERE id=$1', ['preserved'])).rows, [{ name: 'Existing workspace' }]);
 	assert.deepEqual((await db.query('SELECT spent_nano::int AS spent FROM enrichable.openai_budgets WHERE id=$1', ['preserved'])).rows, [{ spent: 123 }]);
 	for (const name of ['sheets', 'sheet_rows', 'mcp_keys', 'organization_providers', 'company_research', 'enrichment_budgets']) {
