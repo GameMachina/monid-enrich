@@ -3,19 +3,17 @@ import { test } from 'node:test';
 import { generateText, wrapLanguageModel, isStepCount, tool } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
-import { CreditBudgetError, CreditLedger, DOLLAR_NANO, LEDGER_KINDS, LEDGERS, ledgerCeiling, meteredCall, RESERVATION_LEASE_SECONDS, type BudgetReason } from '../../src/lib/server/credit-ledger';
-import { createDatabase } from '../../src/lib/server/database';
+import { CreditBudgetError, CreditLedger, DOLLAR_NANO, LEDGER_KINDS, LEDGERS, meteredCall, RESERVATION_LEASE_SECONDS, type BudgetReason } from '../../src/lib/server/credit-ledger';
 import { providerAccess } from '../../src/lib/server/provider-access';
 import { requestGrant } from './access-fixture';
 import { accountFromIdentity, seal, SESSION_COOKIE } from '../../src/lib/server/auth';
 import { trialCharge, trialInputBound, trialMiddleware, trialEnabled } from '../../src/lib/server/openai-trial';
 import { actor, ledgerFixture } from './ledger-fixture';
 
-const offline = createDatabase({ connect: () => Promise.reject(new Error('offline')), read: () => Promise.reject(new Error('offline')) });
 const refused = (reason: BudgetReason, pattern: RegExp) => (error: unknown) => error instanceof CreditBudgetError && error.reason === reason && pattern.test(error.message);
 
 for (const kind of LEDGER_KINDS) {
-	const { budgets, reservations, label, maxCeilingUsd } = LEDGERS[kind];
+	const { budgets, reservations, label } = LEDGERS[kind];
 
 	test(`${kind}: one dollar belongs to a verified organization, survives visits, and is shared concurrently`, async (t) => {
 		const { ledger } = await ledgerFixture(t, kind);
@@ -82,12 +80,28 @@ for (const kind of LEDGER_KINDS) {
 		assert.equal((await ledger.balance(actor())).remainingUsd, 1 - 8_400 / DOLLAR_NANO);
 	});
 
-	test(`${kind}: the deployment ceiling is read once from the environment and validated`, () => {
-		assert.equal(ledgerCeiling(kind, undefined), LEDGERS[kind].defaultCeilingUsd * DOLLAR_NANO);
-		assert.equal(ledgerCeiling(kind, '1.5'), 1.5 * DOLLAR_NANO);
-		for (const value of ['0', '-1', 'abc', '', String(maxCeilingUsd + 1)]) assert.throws(() => ledgerCeiling(kind, value), new RegExp(LEDGERS[kind].ceilingEnv));
-		assert.throws(() => new CreditLedger(kind, offline, (maxCeilingUsd + 1) * DOLLAR_NANO), /Invalid/);
-		assert.throws(() => new CreditLedger(kind, offline, 0), /Invalid/);
+	test(`${kind}: cap changes apply to existing ledger instances without changing organization spending`, async t => {
+		const { ledger, db, database } = await ledgerFixture(t, kind, 1);
+		await ledger.settle(await ledger.reserve(actor(), 600_000_000), null);
+		await assert.rejects(ledger.reserve(actor('bob', 'two'), 500_000_000), refused('deployment_exhausted', /deployment/));
+		await db.query('UPDATE enrichable.credit_limits SET cap_nano=$2 WHERE kind=$1', [kind, 2 * DOLLAR_NANO]);
+		const second = new CreditLedger(kind, database);
+		await second.reserve(actor('bob', 'two'), 500_000_000);
+		await ledger.reserve(actor(), 100_000_000);
+		assert.equal((await ledger.balance(actor())).remainingUsd, .3);
+		await db.query('UPDATE enrichable.credit_limits SET cap_nano=$2 WHERE kind=$1', [kind, DOLLAR_NANO]);
+		assert.equal((await ledger.balance(actor())).deploymentAvailable, false);
+		await assert.rejects(second.reserve(actor('carol', 'three'), 1), refused('deployment_exhausted', /deployment/));
+		await db.query('DELETE FROM enrichable.credit_limits WHERE kind=$1', [kind]);
+		await assert.rejects(ledger.reserve(actor(), 1), /Missing or invalid/);
+		await assert.rejects(ledger.balance(actor()), /Missing or invalid/);
+	});
+
+	test(`${kind}: database constraints reject invalid caps`, async t => {
+		const { db } = await ledgerFixture(t, kind);
+		for (const cap of ['0', '-1', '9007199254740992']) {
+			await assert.rejects(db.query('UPDATE enrichable.credit_limits SET cap_nano=$2 WHERE kind=$1', [kind, cap]), /check constraint/);
+		}
 	});
 }
 
