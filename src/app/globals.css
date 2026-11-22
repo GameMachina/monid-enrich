@@ -1,6 +1,6 @@
 @import 'tailwindcss';
 
-/* Enrichable design tokens. Mirrors the Context.dev / brand.dev dashboard system: flat white surfaces on a
+/* Spreadsheet design tokens. Match the reference's flat white surfaces on a
    near-white canvas, one brand blue, neutrals derived from black at fixed opacities, hairline cards. */
 @theme {
 	--font-sans: var(--font-rethink-sans), system-ui, sans-serif;

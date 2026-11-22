@@ -46,7 +46,7 @@ export function CompanyEditor({ value, onChange, onSelect, onCommit, onCancel, o
 	const [dismissed, setDismissed] = useState(false);
 	const [active, setActive] = useState(-1);
 	const query = value.trim();
-	const canSearch = Boolean(settings.contextKey || server?.context);
+	const canSearch = Boolean(settings.monidKey || server?.monid);
 	const open = focused && !dismissed && !query.startsWith('=');
 	const eligible = open && typed && canSearch && searchable(query);
 	const current = useCompanySearch(query, eligible);
@@ -100,22 +100,22 @@ export function CompanyEditor({ value, onChange, onSelect, onCommit, onCancel, o
 const optionId = (listId: string, active: number, companies: CompanySuggestion[]) => active >= 0 && companies[active] ? `${listId}-${active}` : undefined;
 
 function searchMessage(canSearch: boolean, typed: boolean, query: string, current: Search | null) {
-	if (!canSearch) return 'Connect Context.dev in Configuration to search companies.';
+	if (!canSearch) return 'Connect Monid in Configuration to search companies.';
 	if (!typed || query.length < 3) return 'Type at least 3 characters to search companies.';
 	if (query.length > 200) return 'Use up to 200 characters to search.';
 	return current?.error ?? (!current ? 'Searching…' : 'No companies found. You can enter a name manually.');
 }
 
-/** Debounced, cached Context.dev company search for `query` while `eligible`; null until results for it arrive. */
+/** Debounced, cached Monid company search for `query` while `eligible`; null until results for it arrive. */
 function useCompanySearch(query: string, eligible: boolean) {
-	const { settings } = useSettings();
+	const { settings, connections } = useSettings();
 	const [search, setSearch] = useState<Search | null>(null);
 	const cache = useRef(new Map<string, CompanySuggestion[]>());
 	useEffect(() => {
 		if (!eligible) return;
 		const controller = new AbortController();
 		const timer = setTimeout(() => {
-			const cacheKey = JSON.stringify([query.toLowerCase(), settings.contextKey, settings.accessPassword]);
+			const cacheKey = JSON.stringify([query.toLowerCase(), connections.monid.state]);
 			const cached = cache.current.get(cacheKey);
 			if (cached) { setSearch({ query, companies: cached }); return; }
 			void contextRequest('/api/companies/search', { method: 'POST', headers: keyHeaders(settings), body: JSON.stringify({ query }), signal: controller.signal })
@@ -133,7 +133,7 @@ function useCompanySearch(query: string, eligible: boolean) {
 				});
 		}, COMPANY_SEARCH_DELAY_MS);
 		return () => { clearTimeout(timer); controller.abort(); };
-	}, [eligible, query, settings]);
+	}, [connections.monid.state, eligible, query, settings]);
 	return search?.query === query ? search : null;
 }
 

@@ -2,16 +2,17 @@
 
 import { DEFAULT_MODEL } from './types';
 import { accountHeaders, accountStorageKey } from './account-storage';
-import { providerField, type OrganizationSettings, type Provider } from './organization-settings';
+import { PROVIDERS, providerField, type OrganizationSettings, type Provider } from './organization-settings';
+import { DEFAULT_ALLOWED_PHONE_PROVIDERS, type PhoneProvider } from './phone-strategy';
 
-/* Settings come from one of two adapters, chosen once at startup:
- * - browser-local: self-hosted workspaces (and hosted sessions without organization storage) keep keys in localStorage;
- * - organization: hosted sessions keep secrets in the encrypted server vault and hold only preferences and connection status here.
- * Only unsaved key verification sends secret request headers. Logo Link uses a public client ID. */
+/* Saved API keys live in the server vault. The browser keeps public preferences and sends a raw key only while the user
+ * is entering or explicitly verifying it. Older localStorage keys are migrated once and removed. */
 
 export interface Settings {
 	companyDomain?: string;
 	openaiKey: string;
+	monidKey: string;
+	/** Legacy fields are only retained to clear old browser settings during migration. */
 	contextKey: string;
 	typesafeKey: string;
 	hunterKey: string;
@@ -19,10 +20,8 @@ export interface Settings {
 	apolloKey: string;
 	contactoutKey: string;
 	prospeoKey: string;
-	/** Public client ID for Context.dev Logo Link image delivery. */
+	/** Retained for old settings migration; the standalone app does not use a remote logo service. */
 	logolinkKey: string;
-	/** Optional: the deployment's ENRICHABLE_PASSWORD, when the host set server-side keys. */
-	accessPassword: string;
 	model: string;
 	/** Decisions API by default; otherwise an independent OpenAI model ID. */
 	classifierModel: string;
@@ -31,14 +30,17 @@ export interface Settings {
 	concurrency: number;
 	/** When true, check/classify/score columns prefer Jev; otherwise OpenAI. */
 	preferJev: boolean;
+	/** Workspace-level allowlist for mobile enrichment providers, all routed through Monid. */
+	 mobilePhoneProviders: PhoneProvider[];
 }
 
 const STORAGE_KEY = 'enrichable.settings.v1';
 const listeners = new Set<() => void>();
 const publish = () => { for (const listener of listeners) listener(); };
 
-export const DEFAULT_SETTINGS: Settings = { openaiKey: '', contextKey: '', typesafeKey: '', hunterKey: '', quickenrichKey: '', apolloKey: '', contactoutKey: '', prospeoKey: '', logolinkKey: '', accessPassword: '', model: DEFAULT_MODEL, classifierModel: 'decisions', openaiBaseUrl: '', concurrency: 4, preferJev: true };
-const publicFields = ['model', 'classifierModel', 'openaiBaseUrl', 'concurrency', 'preferJev', 'logolinkKey', 'companyDomain'] as const;
+export const DEFAULT_SETTINGS: Settings = { openaiKey: '', monidKey: '', contextKey: '', typesafeKey: '', hunterKey: '', quickenrichKey: '', apolloKey: '', contactoutKey: '', prospeoKey: '', logolinkKey: '', model: DEFAULT_MODEL, classifierModel: 'decisions', openaiBaseUrl: '', concurrency: 4, preferJev: false, mobilePhoneProviders: [...DEFAULT_ALLOWED_PHONE_PROVIDERS] };
+const publicFields = ['model', 'classifierModel', 'openaiBaseUrl', 'concurrency', 'preferJev', 'companyDomain', 'mobilePhoneProviders'] as const;
+let localWorkspaceRevision = 0;
 
 // Browser-local adapter.
 let cached: Settings | null = null;
@@ -52,7 +54,7 @@ function loadLocalSettings(): Settings {
 		const raw = window.localStorage.getItem(key);
 		if (cached && cachedStorageKey === key && cachedRaw === raw) return cached;
 		const saved = raw ? JSON.parse(raw) as Partial<Settings> : {};
-		cached = { ...DEFAULT_SETTINGS, ...saved, classifierModel: saved.classifierModel || (saved.preferJev === false ? saved.model || DEFAULT_MODEL : 'decisions') };
+		cached = { ...DEFAULT_SETTINGS, ...saved, openaiKey: '', monidKey: '', contextKey: '', typesafeKey: '', hunterKey: '', quickenrichKey: '', apolloKey: '', contactoutKey: '', prospeoKey: '', logolinkKey: '', classifierModel: saved.classifierModel || saved.model || DEFAULT_MODEL, preferJev: false };
 		cachedStorageKey = key;
 		cachedRaw = raw;
 		return cached;
@@ -62,8 +64,25 @@ function loadLocalSettings(): Settings {
 	}
 }
 
+/** Read secrets from the pre-vault browser version only long enough to migrate them to the server. */
+function readLegacyLocalSettings(): Partial<Settings> {
+	if (typeof window === 'undefined') return {};
+	try {
+		const raw = window.localStorage.getItem(accountStorageKey(STORAGE_KEY));
+		return raw ? JSON.parse(raw) as Partial<Settings> : {};
+	} catch { return {}; }
+}
+
+function clearLegacyLocalSecrets(preferences: Partial<Settings>) {
+	try {
+		const safe: Partial<Settings> = Object.fromEntries(publicFields.flatMap((field) => preferences[field] === undefined ? [] : [[field, preferences[field]]])) as Partial<Settings>;
+		window.localStorage.removeItem(accountStorageKey(STORAGE_KEY));
+		if (Object.keys(safe).length) saveLocalSettings(safe);
+	} catch { /* The encrypted server copy is already saved; never put secrets back in local storage. */ }
+}
+
 function saveLocalSettings(patch: Partial<Settings>) {
-	const next = { ...loadLocalSettings(), ...patch };
+	const next = { ...loadLocalSettings(), ...patch, openaiKey: '', monidKey: '', contextKey: '', typesafeKey: '', hunterKey: '', quickenrichKey: '', apolloKey: '', contactoutKey: '', prospeoKey: '', logolinkKey: '' };
 	const key = accountStorageKey(STORAGE_KEY);
 	const raw = JSON.stringify(next);
 	window.localStorage.setItem(key, raw);
@@ -80,7 +99,6 @@ type OrganizationState =
 	| { kind: 'failed'; error: string }
 	| { kind: 'loaded'; organization: OrganizationSettings; snapshot: Settings };
 let organizationState: OrganizationState = { kind: 'off' };
-let legacySettings: Settings | null = null;
 let pendingSave: Promise<unknown> = Promise.resolve();
 
 export function loadSettings(): Settings {
@@ -89,8 +107,23 @@ export function loadSettings(): Settings {
 	return organizationState.kind === 'loaded' ? organizationState.snapshot : DEFAULT_SETTINGS;
 }
 
-export function saveSettings(patch: Partial<Settings>) {
+async function saveStandaloneCredentials(patch: Partial<Settings>) {
+	const providers: Record<string, string | null> = {};
+	if (patch.monidKey !== undefined) providers.monid = patch.monidKey.trim() || null;
+	if (patch.openaiKey !== undefined) providers.openai = patch.openaiKey.trim() || null;
+	if (!Object.keys(providers).length) return;
+	const response = await fetch('/api/local-connections', { method: 'POST', headers: { ...accountHeaders(), 'content-type': 'application/json' }, body: JSON.stringify({ providers }), cache: 'no-store' });
+	if (!response.ok) throw new Error((await response.json().catch(() => null))?.error || 'Could not save this connection securely on the server.');
+}
+
+export async function saveSettings(patch: Partial<Settings>) {
 	if (organizationState.kind !== 'off') return saveOrganizationSettings(patch);
+	await saveStandaloneCredentials(patch);
+	if (patch.mobilePhoneProviders !== undefined) {
+		const local = await organizationRequest('PATCH', { revision: localWorkspaceRevision, preferences: { mobilePhoneProviders: patch.mobilePhoneProviders } });
+		if (!local.local) throw new Error('The workspace settings storage changed. Reload before saving.');
+		localWorkspaceRevision = local.revision;
+	}
 	saveLocalSettings(patch);
 }
 
@@ -105,14 +138,7 @@ export function subscribeSettings(listener: () => void) {
 export function keyHeaders(settings: Settings = loadSettings()): Record<string, string> {
 	const headers: Record<string, string> = { 'content-type': 'application/json', ...accountHeaders() };
 	if (settings.openaiKey) headers['x-openai-key'] = settings.openaiKey;
-	if (settings.contextKey) headers['x-context-key'] = settings.contextKey;
-	if (settings.typesafeKey) headers['x-typesafe-key'] = settings.typesafeKey;
-	if (settings.hunterKey) headers['x-hunter-key'] = settings.hunterKey;
-	if (settings.quickenrichKey) headers['x-quickenrich-key'] = settings.quickenrichKey;
-	if (settings.apolloKey) headers['x-apollo-key'] = settings.apolloKey;
-	if (settings.contactoutKey) headers['x-contactout-key'] = settings.contactoutKey;
-	if (settings.prospeoKey) headers['x-prospeo-key'] = settings.prospeoKey;
-	if (settings.accessPassword) headers['x-enrichable-password'] = settings.accessPassword;
+	if (settings.monidKey) headers['x-monid-key'] = settings.monidKey;
 	if (settings.model) headers['x-openai-model'] = settings.model;
 	if (settings.classifierModel) headers['x-classifier-model'] = settings.classifierModel;
 	if (settings.openaiBaseUrl) headers['x-openai-base-url'] = settings.openaiBaseUrl;
@@ -127,7 +153,6 @@ export function maskKey(key: string): string {
 
 export const organizationSettingsEnabled = () => organizationState.kind !== 'off';
 export const organizationSettingsSnapshot = () => organizationState.kind === 'loaded' ? organizationState.organization : null;
-export const localSettingsToImport = () => legacySettings;
 
 function publishOrganization(organization: OrganizationSettings) {
 	organizationState = { kind: 'loaded', organization, snapshot: { ...DEFAULT_SETTINGS, ...organization.preferences } };
@@ -146,7 +171,7 @@ async function organizationRequest(method: string, body?: unknown) {
 export function initializeOrganizationSettings(): Promise<boolean> {
 	if (organizationState.kind === 'loading') return organizationState.promise;
 	if (organizationState.kind === 'loaded') return Promise.resolve(true);
-	const promise = connectOrganization(loadLocalSettings()).catch((error: unknown) => {
+	const promise = connectOrganization(readLegacyLocalSettings()).catch((error: unknown) => {
 		organizationState = { kind: 'failed', error: error instanceof Error ? error.message : 'Could not load workspace settings.' };
 		publish();
 		throw error;
@@ -155,13 +180,31 @@ export function initializeOrganizationSettings(): Promise<boolean> {
 	publish();
 	return promise;
 }
-async function connectOrganization(previous: Settings) {
-	const data = await organizationRequest('POST', { action: 'connect-signin' });
-	if (data.local) { organizationState = { kind: 'off' }; publish(); return false; }
-	legacySettings = previous !== DEFAULT_SETTINGS && Object.values(providerField).some((field) => previous[field]) ? previous : null;
-	// Public preferences can also be imported even when this browser has no manual keys.
-	try { if (!legacySettings && window.localStorage.getItem(accountStorageKey(STORAGE_KEY))) legacySettings = previous; } catch {}
-	publishOrganization(data);
+async function connectOrganization(previous: Partial<Settings>) {
+	const data = await organizationRequest('GET');
+	if (data.local) {
+		if (previous.monidKey || previous.openaiKey) await saveStandaloneCredentials({ monidKey: previous.monidKey, openaiKey: previous.openaiKey });
+		clearLegacyLocalSecrets(previous);
+		localWorkspaceRevision = data.revision ?? 0;
+		if (data.revision === 0 && previous.mobilePhoneProviders) {
+			const migrated = await organizationRequest('PATCH', { revision: data.revision, preferences: { mobilePhoneProviders: previous.mobilePhoneProviders } });
+			localWorkspaceRevision = migrated.revision;
+			saveLocalSettings({ mobilePhoneProviders: migrated.preferences.mobilePhoneProviders });
+		} else if (data.preferences?.mobilePhoneProviders) {
+			saveLocalSettings({ mobilePhoneProviders: data.preferences.mobilePhoneProviders });
+		}
+		organizationState = { kind: 'off' }; publish(); return false;
+	}
+	const providers = Object.fromEntries([
+		...(!data.providers.monid?.configured && previous.monidKey ? [['monid', previous.monidKey]] : []),
+		...(!data.providers.openai?.configured && previous.openaiKey ? [['openai', previous.openaiKey]] : []),
+	]) as Partial<Record<'monid' | 'openai', string>>;
+	const preferences = Object.fromEntries(publicFields.flatMap((field) => previous[field] === undefined ? [] : [[field, previous[field]]])) as Partial<Settings>;
+	const migrated = Object.keys(providers).length || Object.keys(preferences).length
+		? await organizationRequest('PATCH', { revision: data.revision, providers, preferences })
+		: data;
+	clearLegacyLocalSecrets(previous);
+	publishOrganization(migrated);
 	return true;
 }
 
@@ -178,7 +221,7 @@ export function saveOrganizationSettings(patch: Partial<Settings>, expectedRevis
 	const save = pendingSave.catch(() => {}).then(async () => {
 		const organization = loadedOrganization();
 		const preferences = Object.fromEntries(publicFields.filter((field) => patch[field] !== undefined).map((field) => [field, patch[field]]));
-		const providers = Object.fromEntries(Object.entries(providerField).filter(([, field]) => Boolean(patch[field]?.trim())).map(([provider, field]) => [provider, patch[field]!.trim()]));
+		const providers = Object.fromEntries(PROVIDERS.flatMap((provider) => { const field = providerField[provider]; return patch[field]?.trim() ? [[provider, patch[field]!.trim()]] : []; }));
 		try { publishOrganization(await organizationRequest('PATCH', { revision: expectedRevision ?? organization.revision, preferences, providers })); }
 		catch (error) { await refreshAfterConflict(); throw error; }
 	});
@@ -193,17 +236,4 @@ export async function disconnectOrganizationProvider(provider: Provider) {
 	await pendingSave.catch(() => {});
 	const organization = loadedOrganization();
 	publishOrganization(await organizationRequest('PATCH', { revision: organization.revision, providers: { [provider]: null } }));
-}
-
-export async function importLocalOrganizationSettings() {
-	await pendingSave.catch(() => {});
-	const organization = loadedOrganization();
-	const legacy = legacySettings;
-	if (!legacy) return;
-	const preferences = Object.fromEntries(publicFields.map((field) => [field, legacy[field]]));
-	const providers = Object.fromEntries(Object.entries(providerField).filter(([provider, field]) => !organization.providers[provider as Provider] && Boolean(legacy[field])).map(([provider, field]) => [provider, legacy[field]]));
-	publishOrganization(await organizationRequest('PATCH', { revision: organization.revision, preferences, providers, importOnly: true }));
-	try { window.localStorage.removeItem(accountStorageKey(STORAGE_KEY)); } catch { throw new Error('Settings imported. Clear this browser’s old saved provider settings to remove its local copy.'); }
-	legacySettings = null;
-	publish();
 }

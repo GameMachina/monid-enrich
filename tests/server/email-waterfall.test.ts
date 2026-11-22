@@ -166,13 +166,12 @@ test('a transport timeout retains the reservation and never retries the billable
  await assert.rejects(includedRun(signedIn(), sharedRequest('hunter', { name: 'Ada Lovelace', domain: 'example.com', company: '', profileUrl: '' }), access), /Credit remains reserved/);
  assert.equal(calls, 1); assert.equal((await store.balance(actor())).remainingUsd, .9755);
 });
-test('all provider requests disable phone and personal email add-ons', () => {
+test('email lookup uses the inspected Monid email-finder query', () => {
  const identity = { name: 'Ada Lovelace', domain: 'example.com', company: 'Example', profileUrl: 'https://www.linkedin.com/in/ada' };
- assert.equal((sharedRequest('apollo', identity).input.queryParams as Record<string, unknown>).reveal_phone_number, false);
- assert.equal((sharedRequest('apollo', identity).input.queryParams as Record<string, unknown>).reveal_personal_emails, false);
- assert.equal((sharedRequest('prospeo', identity).input.body as Record<string, unknown>).enrichMobile, false);
- assert.equal((sharedRequest('prospeo', identity).input.body as Record<string, unknown>).onlyVerifiedEmail, false);
- assert.deepEqual((sharedRequest('contactout', identity).input.body as Record<string, unknown>).include, ['work_email']);
+ const request = sharedRequest('monid', identity);
+ assert.equal(request.operation, 'email.find');
+ assert.deepEqual(request.input.queryParams, { full_name: 'Ada Lovelace', domain: 'example.com', max_duration: 10, first_name: 'Ada', last_name: 'Lovelace', linkedin_handle: 'ada' });
+ assert.equal(request.boundUsd, 0.0245);
 });
 test('included credit reports a rate limit as a retryable wait and exhaustion as add keys, never the reverse', async t => {
  const { db, ledger, access } = await fixture(t);

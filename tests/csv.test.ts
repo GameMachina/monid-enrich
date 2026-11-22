@@ -35,7 +35,7 @@ test('csvToRecords names blank headers and nulls empty cells', () => {
 test('toCsv escapes and includes meta columns when asked', () => {
 	const columns: Column[] = [
 		{ id: 'a', name: 'Name', type: 'source', width: 100, createdAt: 0 },
-		{ id: 'b', name: 'Free?', type: 'enriched', width: 100, createdAt: 0, op: { kind: 'check', question: 'q', decider: 'jev', threshold: 0.5 } },
+		{ id: 'b', name: 'Free?', type: 'enriched', width: 100, createdAt: 0, op: { kind: 'check', question: 'q', decider: 'openai', threshold: 0.5 } },
 	];
 	const rows: Row[] = [{ id: 'r', sheetId: 's', order: 0, createdAt: 0, cells: { a: { v: 'Acme, "Inc"', s: 'done', t: 0 }, b: { v: true, s: 'done', t: 0, m: { probability: 0.91, sources: ['https://x.com/pricing'] } } } }];
 	const csv = toCsv(columns, rows, { includeMeta: true });

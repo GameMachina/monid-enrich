@@ -1,13 +1,13 @@
 import 'server-only';
 import { hkdfSync } from 'node:crypto';
 import { SELF_HOSTED_ISSUER, type Account } from '../auth-identity';
-import { PROVIDERS, organizationPreferencesSchema, organizationSettingsPatchSchema, type OrganizationSettings, type Provider } from '../organization-settings';
+import { organizationPreferencesSchema, organizationSettingsPatchSchema, type OrganizationSettings, type Provider } from '../organization-settings';
 import { parseInput, WorkspaceError } from '../workspace';
 import { decryptSecret, encryptSecret, ensureSafeEndpoint, safeBaseUrl } from './credentials';
 import type { Database, Sql } from './database';
 
 /** Signed-in organizations keep settings and connections on the server; production always does, so a missing database fails loudly. */
-export const organizationPersistenceEnabled = (actor: Account | null | undefined) => Boolean(actor && actor.issuer !== SELF_HOSTED_ISSUER && (process.env.DATABASE_URL || process.env.NODE_ENV === 'production'));
+export const organizationPersistenceEnabled = (actor: Account | null | undefined) => Boolean(actor && (actor.issuer !== SELF_HOSTED_ISSUER ? process.env.DATABASE_URL || process.env.NODE_ENV === 'production' : process.env.DATABASE_URL));
 
 export class OrganizationStore {
  constructor(private database: Database, private encryptionSecret = () => process.env.ENRICHABLE_MCP_ENCRYPTION_SECRET) {}
@@ -48,7 +48,7 @@ export class OrganizationStore {
    const savedPreferences = (await sql.query('SELECT preferences FROM enrichable.organization_settings WHERE workspace_id=$1', [workspace])).rows[0]?.preferences as Record<string, unknown>;
    if (args.importOnly && Object.keys(savedPreferences ?? {}).length > 0) throw new WorkspaceError('Organization settings already exist. Import cannot overwrite them.', 409);
    const preferences = parseInput(organizationPreferencesSchema, { ...current.preferences, ...args.preferences });
-   for (const provider of PROVIDERS) {
+   for (const provider of ['openai', 'monid'] as const) {
     const secret = args.providers?.[provider];
     if (secret === undefined) continue;
     if (args.importOnly && current.providers[provider]) throw new WorkspaceError('An organization provider already exists. Import cannot overwrite it.', 409);

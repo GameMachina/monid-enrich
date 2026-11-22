@@ -1,118 +1,196 @@
 import 'server-only';
-
-import { z } from 'zod';
-import { renderTemplate, toDomain } from '../template';
+import { renderTemplate, toDomain, toUrl } from '../template';
 import type { CellMeta, CellValue, ColumnOp, EnrichResponse } from '../types';
-import { CredentialError } from './credentials';
 import type { ProviderAccess } from './provider-access';
-import { classifyFailure, EnrichError, failure, inputError } from './enrich-failure';
+import { EnrichError, failure, inputError } from './enrich-failure';
+import { runMonidOperation, type MonidOperationInputs } from './monid';
+import { PHONE_STRATEGY_INFO, type PhoneProvider, type PhoneProviderStrategy } from '../phone-strategy';
 
-type Provider = 'hunter' | 'prospeo';
-type ContactOp = Extract<ColumnOp, { kind: Provider }>;
-const text = z.string().nullable().optional();
-const hunterSchema = z.object({ data: z.object({ email: text, status: text, score: z.number().nullable().optional(), verification: z.object({ status: text }).nullable().optional(), sources: z.array(z.object({ uri: text })).optional() }).nullable() });
-const contact = z.object({ revealed: z.boolean().optional(), email: text, mobile: text, status: text }).nullable().optional();
-const prospeoSchema = z.object({ error: z.literal(false), free_enrichment: z.boolean().optional(), person: z.object({ full_name: text, current_job_title: text, linkedin_url: text, email: contact, mobile: contact, location: z.object({ city: text, state: text, country: text }).nullable().optional() }).nullable(), company: z.object({ name: text, website: text }).nullable().optional() });
-const failureSchema = z.object({ error: z.boolean().optional(), error_code: z.string().optional(), errors: z.array(z.object({ id: z.string().optional() })).optional() });
+type ContactOp = Extract<ColumnOp, { kind: 'hunter' | 'prospeo' }>;
+type ObjectValue = Record<string, unknown>;
+const object = (value: unknown): ObjectValue => value && typeof value === 'object' && !Array.isArray(value) ? value as ObjectValue : {};
+const text = (value: unknown) => typeof value === 'string' ? value : '';
+const email = (value: unknown) => typeof value === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value) ? value : null;
+const verifiedEmailStatus = (status: string) => ['valid', 'verified', 'good'].includes(status.toLowerCase());
 
-const providerName = (provider: Provider) => provider === 'hunter' ? 'Hunter' : 'Prospeo';
-const errorCode = (data: unknown) => {
-	const parsed = failureSchema.safeParse(data);
-	return parsed.success ? parsed.data.error_code ?? parsed.data.errors?.[0]?.id : undefined;
-};
-
-function providerError(provider: Provider, status: number, code?: string): EnrichError {
-	const name = providerName(provider);
-	if (status === 401 || code === 'INVALID_API_KEY') return new CredentialError(`${name} rejected this API key. Update it in Configuration.`, 401, 'credential_invalid', 'email');
-	if (code === 'INSUFFICIENT_CREDITS' || code === 'not_enough_credits' || status === 402 || provider === 'hunter' && status === 429) return new EnrichError(`${name} credits or usage quota exhausted. Check your provider account.`, failure('credits_exhausted', 'email'));
-	if (status === 429 || provider === 'hunter' && status === 403) return new EnrichError(`${name} rate limited (429). Wait a moment and try again.`, failure('rate_limited', 'email'));
-	if (code === 'INVALID_DATAPOINTS' || code === 'INVALID_REQUEST') return inputError(`${name} could not use these inputs. Check the name, domain, email or LinkedIn URL.`, 'email');
-	return new EnrichError(`${name} request failed (${status}). Check your provider account and inputs.`, failure('provider_error', 'email'));
+function metaFromRun(run: { runId: string; provider: string; endpoint: string; status: string; cost?: { value?: number }; billedUnits?: number; price?: { type?: string; amount?: number; currency?: string }; resultCount?: number | null; completedAt?: string }): CellMeta {
+	return { monidRuns: [{ runId: run.runId, provider: run.provider, endpoint: run.endpoint, status: run.status, costUsd: run.cost?.value, billedUnits: run.billedUnits, price: run.price, resultCount: run.resultCount ?? undefined, completedAt: run.completedAt }] };
 }
 
-/** Fixed provider hosts, header-only secrets, and errors that never echo upstream bodies. */
-async function requestProvider(transport: typeof fetch, provider: Provider, key: string, path: string, body?: unknown): Promise<{ data: unknown; response: Response }> {
-	let response: Response;
-	try {
-		response = await transport(`${provider === 'hunter' ? 'https://api.hunter.io/v2' : 'https://api.prospeo.io'}/${path}`, {
-			method: body ? 'POST' : 'GET',
-			headers: provider === 'hunter' ? { 'X-API-KEY': key } : { 'X-KEY': key, 'Content-Type': 'application/json' },
-			...(body ? { body: JSON.stringify(body) } : {}),
-			cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(25_000),
-		});
-	} catch (error) {
-		throw new EnrichError(`${providerName(provider)} request timed out or could not connect. Try again.`, classifyFailure(error, 'email') ?? failure('provider_error', 'email'));
-	}
-	if (!response.ok) {
-		const code = errorCode(await response.json().catch(() => null));
-		if (provider === 'prospeo' && response.status === 400 && code === 'NO_MATCH') return { data: null, response };
-		throw providerError(provider, response.status, code);
-	}
-	let data: unknown;
-	try { data = await response.json(); } catch { throw new EnrichError(`${providerName(provider)} returned an unreadable response (${response.status}).`, failure('provider_error', 'email')); }
-	const failed = failureSchema.safeParse(data);
-	if (failed.success && (failed.data.error || failed.data.errors?.length)) throw providerError(provider, response.status, errorCode(data));
-	return { data, response };
+type MobileInput = { name: string; company: string; profileUrl: string; workEmail?: string; strategy?: PhoneProviderStrategy };
+
+function mobileOutput(run: { output?: unknown }, provider: PhoneProvider) {
+	const root = object(run.output);
+	const data = object(root.data ?? root.result ?? root);
+	const candidates = provider === 'clay' ? [data['Mobile Phone'], data.mobile, data.phone] : [data.mobile, data.mobilePhone, data.phone, data['Mobile Phone']];
+	const phone = candidates.find((value) => typeof value === 'string' && value.trim());
+	const rawSources = data.sources ?? root.sources;
+	const sources = Array.isArray(rawSources) ? rawSources.flatMap((source) => {
+		const uri = text(object(source).url ?? object(source).uri ?? source);
+		return /^https?:\/\//i.test(uri) ? [uri] : [];
+	}) : [];
+	return { phone: text(phone).trim() || null, sources };
 }
 
-export async function verifyContactProvider(provider: Provider, key: string): Promise<{ ok: boolean; message?: string }> {
-	try {
-		const { data } = await requestProvider(fetch, provider, key, provider === 'hunter' ? 'account' : 'account-information');
-		if (!data || typeof data !== 'object' || (provider === 'hunter' && !('data' in data))) return { ok: false, message: 'Provider returned an unexpected account response.' };
-		return { ok: true };
-	} catch (error) {
-		return { ok: false, message: error instanceof Error ? error.message : 'Could not check provider.' };
-	}
-}
-
-/** The provider's own verification status travels beside the cell result, never inside its display text. */
-export async function contactLookup(access: ProviderAccess, op: ContactOp, row: Record<string, CellValue>): Promise<{ result: EnrichResponse; verification: string | null }> {
-	const key = access.requireKey(op.kind);
-	const input = (value?: string) => renderTemplate(value ?? '', row);
-	const fullName = input(op.name), domain = toDomain(input(op.domain)), email = input(op.email);
-	const meta: CellMeta = { provider: op.kind };
-	if (op.kind === 'hunter') {
-		const params = new URLSearchParams();
-		if (op.action === 'find') {
-			if (!fullName || !domain) throw inputError('Hunter email finder needs a name and company domain for this row.', 'email');
-			params.set('full_name', fullName); params.set('domain', domain);
-		} else {
-			if (!email) throw inputError('Hunter verification needs an email for this row.', 'email');
-			params.set('email', email);
-		}
-		const { data, response } = await requestProvider(access.fetch('hunter'), 'hunter', key, `email-${op.action === 'find' ? 'finder' : 'verifier'}?${params}`);
-		const parsed = hunterSchema.safeParse(data);
-		if (!parsed.success) throw new EnrichError('Hunter returned an unexpected enrichment response.', failure('provider_error', 'email'));
-		const result = parsed.data.data;
-		const used = response.headers.get('x-credits-used');
-		if (used !== null && Number.isFinite(Number(used)) && Number(used) >= 0) { meta.providerCredits = Number(used); meta.providerCreditUnit = response.headers.get('x-credits-unit') ?? 'credit'; }
-		meta.sources = result?.sources?.flatMap((source) => source.uri && /^https?:\/\//i.test(source.uri) ? [source.uri] : []);
-		if (result?.score != null) meta.confidence = Math.max(0, Math.min(1, result.score / 100));
-		const verification = result?.status ?? result?.verification?.status ?? null;
-		meta.reasoning = verification ?? (result?.email ? 'Email found by Hunter' : 'No email found');
-		return { result: { value: op.action === 'find' ? result?.email ?? null : result?.status ?? null, meta }, verification };
-	}
-	const profileUrl = input(op.profileUrl);
-	if (!email && !profileUrl && !(fullName && domain)) throw inputError('Prospeo needs an email, LinkedIn URL, or name and company domain for this row.', 'email');
-	const identity = { ...(fullName ? { full_name: fullName } : {}), ...(domain ? { company_website: domain } : {}), ...(email ? { email } : {}), ...(profileUrl ? { linkedin_url: profileUrl } : {}) };
-	const { data } = await requestProvider(access.fetch('prospeo'), 'prospeo', key, 'enrich-person', { data: identity, only_verified_email: op.onlyVerifiedEmail, enrich_mobile: op.field === 'mobile' });
-	if (data === null) return { result: { value: null, meta: { ...meta, providerCredits: 0, reasoning: 'No matching person met the lookup requirements.' } }, verification: null };
-	const parsed = prospeoSchema.safeParse(data);
-	if (!parsed.success) throw new EnrichError('Prospeo returned an unexpected enrichment response.', failure('provider_error', 'email'));
-	const { person, company, free_enrichment } = parsed.data;
-	if (free_enrichment) meta.providerCredits = 0;
-	if (person?.linkedin_url && /^https?:\/\//i.test(person.linkedin_url)) meta.sources = [person.linkedin_url];
-	const values = {
-		email: person?.email?.revealed ? person.email.email ?? null : null,
-		mobile: person?.mobile?.revealed ? person.mobile.mobile ?? null : null,
-		full_name: person?.full_name, title: person?.current_job_title,
-		company: company?.name, company_domain: company?.website ? toDomain(company.website) : null,
-		linkedin: person?.linkedin_url,
-		location: person?.location ? [person.location.city, person.location.state, person.location.country].filter(Boolean).join(', ') || null : null,
+function leadMagicBody(input: MobileInput): MonidOperationInputs['people.mobilePhone.leadmagic']['body'] | null {
+	const profileUrl = toUrl(input.profileUrl);
+	const workEmail = input.workEmail?.trim() ?? '';
+	const body: MonidOperationInputs['people.mobilePhone.leadmagic']['body'] = {
+		...(profileUrl ? { profileUrl } : {}),
+		...(email(workEmail) ? { workEmail } : {}),
 	};
-	const verification = op.field === 'email' ? person?.email?.status ?? null : null;
-	meta.reasoning = op.field === 'email' ? verification ?? 'No email available' : op.field === 'mobile' ? person?.mobile?.status ?? 'No mobile available' : 'Person data from Prospeo';
-	return { result: { value: values[op.field] ?? null, meta }, verification };
+	return body.profileUrl || body.workEmail ? body : null;
+}
+
+function clayBody(input: MobileInput): MonidOperationInputs['people.mobilePhone']['body'] | null {
+	const name = input.name.trim();
+	const company = input.company.trim();
+	const profileUrl = toUrl(input.profileUrl);
+	const workEmail = input.workEmail?.trim() ?? '';
+	if (!name || !company || !profileUrl || !/linkedin\.com\/in\//i.test(profileUrl)) return null;
+	const maybeDomain = toDomain(company);
+	const companyDomain = /^[a-z0-9-]+(?:\.[a-z0-9-]+)+$/i.test(maybeDomain) ? maybeDomain : undefined;
+	return {
+		'Social Profile URL': profileUrl,
+		'Full Name': name,
+		'Company Name': company,
+		...(companyDomain ? { 'Company Domain': companyDomain } : {}),
+		...(email(workEmail) ? { 'Work Email': workEmail } : {}),
+	};
+}
+
+function mobileInputError(input: MobileInput) {
+	if (!input.name.trim()) return 'Add the person’s full name before looking up a mobile number.';
+	if (!input.company.trim()) return 'Add the person’s current company before looking up a mobile number.';
+	if (!toUrl(input.profileUrl) || !/linkedin\.com\/in\//i.test(toUrl(input.profileUrl) ?? '')) return 'Add a LinkedIn personal profile URL before looking up a mobile number.';
+	return 'Add a LinkedIn profile URL or a valid work email for the selected mobile provider strategy.';
+}
+
+/** Mobile-number requests use only inspected Monid routes. A waterfall advances only on a completed no-match. */
+export async function lookupMobilePhone(access: ProviderAccess, input: MobileInput) {
+	const profileUrl = toUrl(input.profileUrl);
+	const strategy = input.strategy ?? 'clay'; // Existing columns without a saved strategy retain their historical behavior.
+	const providers = PHONE_STRATEGY_INFO[strategy].providers;
+	const disallowed = providers.filter((provider) => !access.allowedPhoneProviders.includes(provider));
+	if (disallowed.length) throw inputError(`This column uses ${disallowed.join(' and ')}, which the workspace has disabled. Choose an enabled strategy in the column settings.`, 'monid');
+	const key = access.requireKey('monid');
+	const reasons: string[] = [];
+	for (const provider of providers) {
+		let run;
+		if (provider === 'leadmagic') {
+			const body = leadMagicBody(input);
+			if (!body) { reasons.push('LeadMagic skipped because this row is missing its required identifiers'); continue; }
+			run = await runMonidOperation(key, 'people.mobilePhone.leadmagic', { body }, { spend: access.spend, actor: access.account, timeoutMs: 60_000 });
+		} else {
+			const body = clayBody(input);
+			if (!body) { reasons.push('Clay skipped because this row is missing its required identifiers'); continue; }
+			run = await runMonidOperation(key, 'people.mobilePhone', { body }, { spend: access.spend, actor: access.account, timeoutMs: 180_000 });
+		}
+		const result = mobileOutput(run, provider);
+		if (profileUrl && !result.sources.includes(profileUrl)) result.sources.push(profileUrl);
+		if (result.phone) return { value: result.phone, meta: { ...metaFromRun(run), sources: result.sources, reasoning: `${provider === 'leadmagic' ? 'LeadMagic' : 'Clay'} found a mobile phone number through Monid.${reasons.length ? ` ${reasons.join('; ')}.` : ''}` } };
+		reasons.push(`${provider === 'leadmagic' ? 'LeadMagic' : 'Clay'} completed with no match`);
+	}
+	if (reasons.length && reasons.every((reason) => reason.includes('skipped'))) throw inputError(mobileInputError(input), 'monid');
+	return { value: null, meta: { sources: profileUrl ? [profileUrl] : [], reasoning: `No mobile number was returned. ${reasons.join('; ')}.` } };
+}
+
+async function findWorkEmail(access: ProviderAccess, name: string, domain: string, profileUrl?: string) {
+	if (!name || !domain) throw inputError('Monid email finder needs a name and company domain for this row.', 'monid');
+	const parts = name.trim().split(/\s+/);
+	const queryParams: MonidOperationInputs['email.find']['queryParams'] = { full_name: name, domain, max_duration: 10 };
+	if (parts.length >= 2) { queryParams.first_name = parts[0]; queryParams.last_name = parts.slice(1).join(' '); }
+	const linkedinHandle = profileUrl?.match(/linkedin\.com\/in\/([^/?#]+)/i)?.[1];
+	if (linkedinHandle) queryParams.linkedin_handle = linkedinHandle;
+	const run = await runMonidOperation(access.requireKey('monid'), 'email.find', { queryParams }, { spend: access.spend, actor: access.account, timeoutMs: 120_000 });
+	const root = object(run.output), data = object(root.data !== undefined ? root.data : root);
+	const matchScore = typeof data.score === 'number' ? Math.max(0, Math.min(1, data.score / 100)) : undefined;
+	const sources = Array.isArray(data.sources) ? data.sources.flatMap((source) => { const uri = text(object(source).uri ?? object(source).url); return /^https?:\/\//i.test(uri) ? [uri] : []; }) : [];
+	return { value: email(data.email), confidence: matchScore, sources, status: text(data.status) || text(object(data.verification).status) || 'unknown', meta: metaFromRun(run) };
+}
+
+async function verifyEmail(access: ProviderAccess, address: string) {
+	if (!email(address)) throw inputError('Enter a valid email address to verify.', 'monid');
+	const run = await runMonidOperation(access.requireKey('monid'), 'email.verify', { body: { email: address } }, { spend: access.spend, actor: access.account, timeoutMs: 120_000 });
+	const data = object(run.output), status = text(data.status) || 'unknown';
+	return { value: status, status, confidence: typeof data.score === 'number' ? Math.max(0, Math.min(1, data.score / 100)) : undefined, sources: [], meta: metaFromRun(run) };
+}
+
+function personClues(op: Extract<ContactOp, { kind: 'prospeo' }>, row: Record<string, CellValue>) {
+	const name = op.name ? renderTemplate(op.name, row).trim() : '';
+	const company = op.domain ? renderTemplate(op.domain, row).trim() : '';
+	const domain = toDomain(company);
+	const address = op.email ? renderTemplate(op.email, row).trim() : '';
+	const profile = op.profileUrl ? toUrl(renderTemplate(op.profileUrl, row)) : '';
+	const body: Record<string, unknown> = {};
+	if (profile) body.social_urls = [profile];
+	if (email(address)) body.email = address;
+	if (name) {
+		const parts = name.split(/\s+/);
+		if (parts.length >= 2) body.name = { first: parts[0], last: parts.slice(1).join(' ') };
+	}
+	if (company) body.company = domain && /\.[a-z]{2,}$/i.test(domain) ? { domain } : { name: company };
+	return { name, company, address, profile, body };
+}
+
+function personValue(person: ObjectValue, field: string): CellValue {
+	const current = object(person.current_role), organization = object(current.organization), location = object(person.location);
+	switch (field) {
+		case 'full_name': return text(object(person.name).full) || [object(person.name).first, object(person.name).last].filter(Boolean).join(' ') || null;
+		case 'title': return text(current.title) || null;
+		case 'company': return text(organization.name) || null;
+		case 'company_domain': return text(organization.domain) || null;
+		case 'linkedin': return (Array.isArray(person.social_urls) ? person.social_urls.find((url) => typeof url === 'string' && url.includes('linkedin.com')) : null) as CellValue ?? null;
+		case 'location': return text(location.display) || [location.city, location.region, location.country].filter(Boolean).join(', ') || null;
+		case 'email': return email(person.email);
+		case 'mobile': throw new EnrichError('Mobile-number enrichment is not supported by the configured Monid operations.', failure('input_invalid', 'monid', false));
+		case 'skills': return Array.isArray(person.skills) ? person.skills.filter((entry): entry is string => typeof entry === 'string') : null;
+		case 'schools': return Array.isArray(person.education) ? person.education.map((entry) => text(object(object(entry).institution).name)).filter(Boolean) : null;
+		default: return null;
+	}
+}
+
+/** All email and contact lookups execute only via Monid's current inspected endpoints. */
+export async function contactLookup(access: ProviderAccess, op: ContactOp, row: Record<string, CellValue>): Promise<{ result: EnrichResponse; verification: string | null }> {
+	if (op.kind === 'hunter') {
+		if (op.action === 'verify') {
+			const address = op.email ? renderTemplate(op.email, row).trim() : '';
+			const result = await verifyEmail(access, address);
+			return { result: { value: result.value, meta: { ...result.meta, confidence: result.confidence, sources: result.sources, reasoning: `Monid verification verdict: ${result.status}.` } }, verification: result.status };
+		}
+		const name = op.name ? renderTemplate(op.name, row).trim() : '';
+		const domain = op.domain ? toDomain(renderTemplate(op.domain, row)) : '';
+		const found = await findWorkEmail(access, name, domain);
+		return { result: { value: found.value, meta: { ...found.meta, confidence: found.confidence, sources: found.sources, reasoning: found.value ? `Monid match status: ${found.status}.` : 'No email found.' } }, verification: found.status };
+	}
+	const clues = personClues(op, row);
+	if (op.field === 'mobile') {
+		const result = await lookupMobilePhone(access, { name: clues.name, company: clues.company, profileUrl: clues.profile ?? '', workEmail: clues.address, strategy: op.phoneStrategy });
+		return { result: { value: result.value, meta: result.meta }, verification: null };
+	}
+	if (op.field === 'email' && !clues.address && clues.name && clues.body.company) {
+		const found = await findWorkEmail(access, clues.name, toDomain(clues.company) ?? '', clues.profile ?? undefined);
+		const value = op.onlyVerifiedEmail && !verifiedEmailStatus(found.status) ? null : found.value;
+		return { result: { value, meta: { ...found.meta, confidence: found.confidence, sources: found.sources, reasoning: `Monid match status: ${found.status}.${found.value && !value ? ' The result was hidden because a verified address was requested.' : ''}` } }, verification: found.status };
+	}
+	if (clues.address && op.field === 'email') {
+		const result = await verifyEmail(access, clues.address);
+		const value = op.onlyVerifiedEmail && !verifiedEmailStatus(result.status) ? null : clues.address;
+		return { result: { value, meta: { ...result.meta, confidence: result.confidence, reasoning: `Monid verification verdict: ${result.status}.${value ? '' : ' The result was hidden because a verified address was requested.'}` } }, verification: result.status };
+	}
+	if (!Object.keys(clues.body).length) throw inputError('Provide a name with a company, a work email, or a profile URL for this row.', 'monid');
+	const response = await access.context().people.enrich(clues.body as never, { timeout: 120_000 });
+	const match = object(response.match), person = object(match.person);
+	let value = match.status === 'candidate' ? personValue(person, op.field) : null;
+	const confidence = typeof match.score === 'number' ? Math.max(0, Math.min(1, Number(match.score) > 1 ? Number(match.score) / 100 : Number(match.score))) : undefined;
+	const sources = Array.isArray(person.social_urls) ? person.social_urls.filter((url): url is string => typeof url === 'string' && /^https?:\/\//i.test(url)) : [];
+	let verificationMeta: CellMeta | undefined;
+	if (op.field === 'email' && typeof value === 'string' && op.onlyVerifiedEmail) {
+		const checked = await verifyEmail(access, value);
+		verificationMeta = checked.meta;
+		if (!verifiedEmailStatus(checked.status)) value = null;
+	}
+	return { result: { value, meta: { ...verificationMeta, confidence, sources, reasoning: match.status === 'candidate' ? (value === null && op.field === 'email' && op.onlyVerifiedEmail ? 'Person matched, but no verified email was found.' : 'Person profile matched by Monid.') : 'No matching person found.' } }, verification: null };
 }
 
 export async function runContactProvider(access: ProviderAccess, op: ContactOp, row: Record<string, CellValue>): Promise<EnrichResponse> {

@@ -39,12 +39,12 @@ export function SheetFormulaBar({ sheet, content, selection, commands, onSave }:
 	return <FormulaBar onEnter={onEnter} height={height} onHeightChange={setHeight} key={active ? `${active.rowId}:${active.columnId}` : 'none'} address={address} cell={activeCell} disabled={!active || activeCell?.s === 'running' || activeCell?.s === 'queued' || commands.isPending(active.rowId, active.columnId)} onSave={(value) => { if (active) onSave(active.rowId, active.columnId, value); }} />;
 }
 
-type GridAreaProps = { sheetId: string; sheet: Sheet; allRows: Row[]; commands: SheetCommands; content: SheetRows; selection: SheetSelection; overlays: SheetOverlayState; actions: SheetActions; view: SheetViewState; halt?: SheetRunStatus['halt']; onFind: () => void; onLeave: () => void };
+type GridAreaProps = { sheetId: string; sheet: Sheet; allRows: Row[]; commands: SheetCommands; content: SheetRows; selection: SheetSelection; overlays: SheetOverlayState; actions: SheetActions; view: SheetViewState; halt?: SheetRunStatus['halt']; onFind: () => void };
 
 const blankRow = (row: Row) => Object.values(row.cells).every((cell) => !cell.f && (cell.v === null || cell.v === undefined || cell.v === ''));
 
 /** The grid and the details panel for the open cell. A sheet with nothing typed yet also offers to fill it. */
-export function SheetGridArea({ sheetId, sheet, allRows, commands, content, selection, overlays, actions, view, halt, onFind, onLeave }: GridAreaProps) {
+export function SheetGridArea({ sheetId, sheet, allRows, commands, content, selection, overlays, actions, view, halt, onFind }: GridAreaProps) {
 	const collaboration = useSyncExternalStore(collaborationStore.subscribe, collaborationStore.getSnapshot, collaborationStore.getServerSnapshot);
 	const { rows, populate } = content;
 	const { providerReady, report, request } = actions;
@@ -109,13 +109,13 @@ export function SheetGridArea({ sheetId, sheet, allRows, commands, content, sele
 				/>
 			</RunPausedContext>
 			{blank && <BlankSheetHint top={HEADER_HEIGHT + (allRows.length + 1) * ROW_HEIGHT + 40} onFind={onFind} onImport={() => overlays.setImportOpen(true)} />}
-			<SheetCellPanel sheet={sheet} content={content} selection={selection} overlays={overlays} actions={actions} halt={halt} onLeave={onLeave} />
+			<SheetCellPanel sheet={sheet} content={content} selection={selection} overlays={overlays} actions={actions} halt={halt} />
 		</div>
 	);
 }
 
 /** Details for the open cell. A cell that failed on a lost connection offers the fix in place. */
-function SheetCellPanel({ sheet, content, selection, overlays, actions, halt, onLeave }: { sheet: Sheet; content: SheetRows; selection: SheetSelection; overlays: SheetOverlayState; actions: SheetActions; halt?: SheetRunStatus['halt']; onLeave: () => void }) {
+function SheetCellPanel({ sheet, content, selection, overlays, actions, halt }: { sheet: Sheet; content: SheetRows; selection: SheetSelection; overlays: SheetOverlayState; actions: SheetActions; halt?: SheetRunStatus['halt'] }) {
 	const { activeRow, activeColumn, activeCell } = selection;
 	if (!selection.panelOpen || !activeRow || !activeColumn) return null;
 	const credentialHalt = halt && (halt.reason === 'credential_missing' || halt.reason === 'credential_invalid') ? halt : undefined;
@@ -127,8 +127,8 @@ function SheetCellPanel({ sheet, content, selection, overlays, actions, halt, on
 			onSave={content.saveCell}
 			onClose={() => selection.setPanelOpen(false)}
 			onRerun={() => actions.runCells([activeRow], [activeColumn], 'all')}
-			onEditColumn={() => overlays.setEditor({ column: activeColumn })}
-			errorAction={credentialHalt && activeCell?.s === 'error' && activeCell.e === credentialHalt.message ? <ConnectionFix halt={credentialHalt} size="xs" onLeave={onLeave} /> : undefined}
+			onEditColumn={() => activeColumn.action ? overlays.setActionColumn({ column: activeColumn }) : overlays.setEditor({ column: activeColumn })}
+			errorAction={credentialHalt && activeCell?.s === 'error' && activeCell.e === credentialHalt.message ? <ConnectionFix size="xs" /> : undefined}
 		/>
 	);
 }

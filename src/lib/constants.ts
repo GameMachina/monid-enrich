@@ -1,8 +1,8 @@
-export const GITHUB_URL = 'https://github.com/context-dot-dev/enrichable';
-export const DOCS_URL = `${GITHUB_URL}/blob/main/docs/usage.md`;
-export const CONTEXT_URL = 'https://link.context.dev/enrichable';
-export const CONTEXT_API_KEYS_URL = 'https://link.context.dev/enrichable/api-keys';
+export const GITHUB_URL = 'https://github.com/GameMachina/monid-enrich';
+export const DOCS_URL = `${GITHUB_URL}/blob/main/README.md`;
+export const MONID_URL = 'https://app.monid.ai';
 
-export const SITE_TITLE = 'Enrichable: open-source AI spreadsheet for data enrichment';
-export const SITE_LEDE = 'Describe the companies or people you want. Enrichable finds them, then researches every row with AI and live web data.';
-export const SITE_DESCRIPTION = 'Free, open-source AI spreadsheet for data enrichment. Build lead lists from a prompt, research every row with live web data, and find work emails.';
+export const PRODUCT_NAME = 'Monid Enrich';
+export const SITE_TITLE = `${PRODUCT_NAME}: spreadsheet research and enrichment`;
+export const SITE_LEDE = 'Describe the companies or people you need. Find rows, enrich each one with Monid, and review every answer in a spreadsheet.';
+export const SITE_DESCRIPTION = 'A standalone spreadsheet for company and people research, enrichment, and review, powered by Monid.';

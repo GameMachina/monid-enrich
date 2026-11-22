@@ -117,7 +117,7 @@ export function PopulateDialog({ sheet, rowCount, initialEntity, onClose, onGene
 		if (result.phase === 'stopped' || result.phase === 'idle') { onClose(); return; }
 		if (result.phase === 'finished' && result.added > 0) { toast(`Added ${entityCount(entity, result.added)}`, 'success'); onClose(); return; }
 		setView('form');
-		if (result.phase === 'finished') setNotice(`No ${NOUNS[entity][1]} matched. Try a broader description${result.request?.countries?.length ? ' or remove country filters' : ''}.`);
+		if (result.phase === 'finished') setNotice(`Search finished: no ${NOUNS[entity][1]} matched. Try a broader description${result.request?.countries?.length ? ' or remove country filters' : ''}.`);
 		else setError({ message: result.error ?? 'Could not find rows. Try again.', failure: result.failure });
 	}
 	const presentHandoff = useEffectEvent((result: PopulateState, late: boolean) => {

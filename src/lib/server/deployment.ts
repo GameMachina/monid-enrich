@@ -1,7 +1,7 @@
 import 'server-only';
 
-export const OFFICIAL_SITE_URL = 'https://www.enrichable.io';
-const OFFICIAL_HOSTS = ['enrichable.io', 'www.enrichable.io'];
+export const OFFICIAL_SITE_URL = 'http://localhost:3000';
+const OFFICIAL_HOSTS: string[] = [];
 
 /** Parses a configured URL, naming the variable when it is malformed rather than failing with a bare "Invalid URL". */
 export function configuredUrl(name: string, value: string) {
@@ -10,13 +10,7 @@ export function configuredUrl(name: string, value: string) {
 }
 
 export function contextSignInEnabled() {
-	try {
-		const app = new URL(process.env.ENRICHABLE_APP_URL || 'http://localhost:3000');
-		if (app.protocol === 'https:' && OFFICIAL_HOSTS.includes(app.hostname)) return true;
-		// Keep the real OAuth flow available for local development and browser tests.
-		return process.env.NODE_ENV !== 'production' && ['localhost', '127.0.0.1', '[::1]'].includes(app.hostname)
-			&& Boolean(process.env.CONTEXT_OAUTH_CLIENT_ID && process.env.CONTEXT_OAUTH_CLIENT_SECRET);
-	} catch { return false; }
+	return false;
 }
 
 export const selfHostedEnabled = () => !contextSignInEnabled() && !(process.env.NODE_ENV === 'development' && process.env.ENRICHABLE_DEV_AUTH === 'true');

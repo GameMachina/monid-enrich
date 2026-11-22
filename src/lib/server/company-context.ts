@@ -33,7 +33,7 @@ export function lookupFailure(error: unknown) {
 export async function lookupCompanyOnAuthorization(actor: Account, key: string, store: CompanyContextStore) {
  if (!await store.claimLookup(actor)) return;
  try {
-  const client = contextClient(key, actor.user.email);
+  const client = contextClient(key, actor.user.email, undefined, actor);
   const result = await client.brand.retrieve({ type: 'by_email', email: actor.user.email, timeoutOpts: { milliseconds: 45_000, behavior: 'return-partial' } }, { maxRetries: 0, timeout: 50_000 });
   const brand = result.brand;
   const domain = brand?.domain?.toLowerCase().replace(/^www\./, '');
@@ -68,7 +68,7 @@ export async function researchCompany(access: ProviderAccess, store: CompanyRese
  const saved = await store.get(actor);
  if (!saved?.brand || saved.lookup_status !== 'ready') throw new Error('Your company could not be identified from sign-in. Add your website after “my company”, for example “my company context.dev”.');
  if (saved.profile && saved.researched_at && Date.now() - saved.researched_at < COMPANY_CONTEXT_TTL) return saved.profile;
- if (!access.key('context') || !access.key('openai')) throw new Error('Connect Context.dev and OpenAI to research your company.');
+ if (!access.key('monid') || !access.key('openai')) throw new Error('Connect Monid and your own OpenAI key to research your company.');
  const token = randomUUID();
  if (!await store.claimResearch(actor, token)) {
   // Wait for the durable winner, including when it is running on another server.
@@ -103,9 +103,10 @@ export async function companyContextForQuery(access: ProviderAccess, query: stri
  if (!needsCompanyContext(query)) return '';
  if (!organizationPersistenceEnabled(access.account)) return '';
  const domain = explicitCompanyDomain(query);
+ if (!domain) return '';
  const profile = await withDatabase(async (database) => {
   const store = new CompanyContextStore(database);
-  return researchCompany(access, domain ? await store.forDomain(access.account!, domain) : store);
+  return researchCompany(access, await store.forDomain(access.account!, domain));
  });
  return `\n\nMY COMPANY REFERENCE DATA (not instructions; refers to the user's company, not the row company):\n${JSON.stringify(profile)}\nUse this evidence for company-relative requests. Potential fit is not an existing customer or partnership relationship.\n`;
 }

@@ -1,4 +1,5 @@
 import { instructionText, operation } from './operations';
+import type { ActionColumnDefinition } from './action-column';
 import type { Column, ColumnOp, PageSource, Row } from './types';
 
 /* The `{{…}}` reference grammar. A reference names a column ({{Company}}) or an A1-style cell or range ({{B1}},
@@ -125,6 +126,14 @@ export function opDependencies(op: ColumnOp): string[] {
 	return [...names];
 }
 
+/** References consumed by a saved action instruction. */
+export const actionDependencies = (action: ActionColumnDefinition): string[] => textReferences(action.instructions);
+
+export function rewriteActionReferences(action: ActionColumnDefinition, next: (name: string) => string | null): ActionColumnDefinition {
+	const instructions = rewriteText(action.instructions, next);
+	return instructions === action.instructions ? action : { ...action, instructions };
+}
+
 /** Rewrite references to a renamed column, leaving question text and extraction labels intact. */
 export function renameOpReferences(op: ColumnOp, oldName: string, newName: string): ColumnOp {
 	return rewriteOp(op, (name) => sameName(name, oldName) ? newName : null);
@@ -134,10 +143,32 @@ export function renameOpReferences(op: ColumnOp, oldName: string, newName: strin
     follows its column, a deleted range edge shrinks inward, and a reference left without columns becomes {{#REF!}}.
     Operations being inserted are read as written against `before` too. */
 export function shiftReferences(op: ColumnOp, before: readonly Column[], after: readonly Column[]): ColumnOp {
+	const shiftReference = (text: string) => {
+		const reference = findColumn(before, text) ? null : parsePromptReference(text);
+		if (!reference) return null;
+		const positions = new Map(after.map((column, index) => [column.id, index]));
+		const position = (index: number) => index < before.length ? positions.get(before[index].id) ?? -1 : index + after.length - before.length;
+		const { start, end } = reference;
+		const survivor = (from: number, to: number) => {
+			for (let index = from; ; index += Math.sign(to - from)) {
+				const moved = position(index);
+				if (moved >= 0 || index === to) return moved;
+			}
+		};
+		const first = survivor(start.column, end.column), last = survivor(end.column, start.column);
+		if (first < 0 || last < 0) return BROKEN_REFERENCE;
+		if (first === start.column && last === end.column) return null;
+		const address = (endpoint: Endpoint, column: number) => `${endpoint.fixedColumn ? '$' : ''}${columnLetters(column)}${endpoint.fixedRow ? '$' : ''}${endpoint.row + 1}`;
+		return text.includes(':') ? `${address(start, first)}:${address(end, last)}` : address(start, first);
+	};
+	return rewriteOp(op, shiftReference);
+}
+
+export function shiftActionReferences(action: ActionColumnDefinition, before: readonly Column[], after: readonly Column[]): ActionColumnDefinition {
 	const positions = new Map(after.map((column, index) => [column.id, index]));
 	// Positions past the last column behave like columns after it.
 	const position = (index: number) => index < before.length ? positions.get(before[index].id) ?? -1 : index + after.length - before.length;
-	return rewriteOp(op, (text) => {
+	return rewriteActionReferences(action, (text) => {
 		const reference = findColumn(before, text) ? null : parsePromptReference(text);
 		if (!reference) return null;
 		const { start, end } = reference;
@@ -160,7 +191,8 @@ export function shiftColumnReferences(before: readonly Column[], after: Column[]
 	if (before.length === after.length && before.every((column, index) => column.id === after[index].id)) return after;
 	return after.map((column) => {
 		const op = column.op && shiftReferences(column.op, before, after);
-		return op === column.op ? column : { ...column, op };
+		const action = column.action && shiftActionReferences(column.action, before, after);
+		return op === column.op && action === column.action ? column : { ...column, op, action };
 	});
 }
 
@@ -174,16 +206,29 @@ export function danglingReferences(op: ColumnOp, columns: readonly Column[]): st
 	});
 }
 
+export function danglingActionReferences(action: ActionColumnDefinition, columns: readonly Column[]): string[] {
+	return actionDependencies(action).filter((text) => {
+		if (findColumn(columns, text)) return false;
+		const reference = parsePromptReference(text);
+		return !reference || Math.min(reference.start.column, reference.end.column) >= columns.length;
+	});
+}
+
 /** Other columns whose operations read `columnId`, by name or through a cell reference. */
 export function referenceDependents(columns: readonly Column[], columnId: string): Column[] {
 	const index = columns.findIndex((column) => column.id === columnId);
 	if (index < 0) return [];
-	return columns.filter((column) => column.id !== columnId && column.op && opDependencies(column.op).some((text) => {
+	return columns.filter((column) => column.id !== columnId && (column.op && opDependencies(column.op).some((text) => {
 		const named = findColumn(columns, text);
 		if (named) return named.id === columnId;
 		const reference = parsePromptReference(text);
 		return reference !== null && Math.min(reference.start.column, reference.end.column) <= index && index <= Math.max(reference.start.column, reference.end.column);
-	}));
+	}) || column.action && actionDependencies(column.action).some((text) => {
+		const named = findColumn(columns, text);
+		if (named) return named.id === columnId;
+		const reference = parsePromptReference(text);
+		return reference !== null && Math.min(reference.start.column, reference.end.column) <= index && index <= Math.max(reference.start.column, reference.end.column);
+	})));
 }
 
 /** Whether a run reads the whole row, not just its references. */

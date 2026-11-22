@@ -1,7 +1,5 @@
 'use client';
 
-import { reconnectContext } from '@/components/app/providers';
-import { useSettings } from '@/components/app/settings-context';
 import { announce } from '@/components/ui/announcer';
 import { Button, IconButton } from '@/components/ui/button';
 import { buttonClassName } from '@/components/ui/button-class';
@@ -11,44 +9,37 @@ import { CirclePause, ExternalLink, X } from 'lucide-react';
 import Link from 'next/link';
 import { useEffect } from 'react';
 
-const CONTEXT_BILLING_URL = 'https://context.dev/dashboard/subscription';
-const PROVIDER_NAMES: Record<FailureProvider, string> = { context: 'Context.dev', openai: 'OpenAI', typesafe: 'TypeSafe', email: 'Your email provider' };
+const MONID_BILLING_URL = 'https://app.monid.ai';
+const PROVIDER_NAMES: Record<FailureProvider, string> = { monid: 'Monid', context: 'Monid', openai: 'OpenAI', typesafe: 'OpenAI', email: 'your data provider' };
 
 /** What a fix needs to know: a halted run, a failed Find rows, or a failed key check. */
 export type ConnectionIssue = { reason: string; provider?: FailureProvider };
 
 const isCredential = (issue: ConnectionIssue) => issue.reason === 'credential_missing' || issue.reason === 'credential_invalid';
-/** On hosted Context.dev sign-in, a missing or expired connection is fixed by signing in again, never by pasting a key. */
-const reconnects = (issue: ConnectionIssue, contextSignIn: boolean) => contextSignIn && issue.provider === 'context';
-
-function headline(halt: RunHalt, contextSignIn: boolean) {
+function headline(halt: RunHalt) {
 	const name = halt.provider ? PROVIDER_NAMES[halt.provider] : 'A provider';
 	switch (halt.reason) {
 		case 'credits_exhausted': return halt.provider === 'email' ? 'Your email provider is out of credits' : `${halt.provider ? name : 'Your provider'} credits are used up`;
-		case 'credential_missing': return reconnects(halt, contextSignIn) ? 'Context.dev isn’t connected' : halt.provider === 'email' ? 'Add an email provider key to keep enriching' : `Add ${halt.provider ? `a ${name}` : 'an'} API key to keep enriching`;
-		case 'credential_invalid': return reconnects(halt, contextSignIn) ? 'Your Context.dev connection expired' : `${name} rejected the API key`;
+		case 'credential_missing': return halt.provider === 'email' ? 'Connect Monid to keep enriching' : `Add ${halt.provider ? `a ${name}` : 'an'} API key to keep enriching`;
+		case 'credential_invalid': return `${name} rejected the API key`;
 		case 'save_failed': return 'Results couldn’t be saved';
 	}
 }
 
-/** Reconnect (hosted Context.dev) or open Connections: the fix for a missing or rejected credential. */
-export function ConnectionFix({ halt, size = 'sm', onLeave }: { halt: ConnectionIssue; size?: 'xs' | 'sm'; onLeave?: () => void }) {
-	const { contextSignIn } = useSettings();
-	if (reconnects(halt, contextSignIn)) return <Button size={size} variant="brand" onClick={() => { onLeave?.(); reconnectContext(); }}>Reconnect Context.dev</Button>;
+export function ConnectionFix({ size = 'sm' }: { size?: 'xs' | 'sm' }) {
 	return <Link href="/app/settings" className={buttonClassName('outline', size)}>Open Connections</Link>;
 }
 
-/** The one fix for a failure no retry solves: credits to buy, or a key to add or replace (a sign-in to renew, on hosted Context.dev). */
-export function FailureFix({ issue, size = 'xs', onLeave }: { issue: ConnectionIssue; size?: 'xs' | 'sm'; onLeave?: () => void }) {
-	if (issue.reason === 'credits_exhausted' && issue.provider === 'context') return <a href={CONTEXT_BILLING_URL} target="_blank" rel="noopener noreferrer" className={buttonClassName('outline', size)}>Get credits<ExternalLink aria-hidden strokeWidth={1.75} /></a>;
-	if (isCredential(issue) || issue.reason === 'credits_exhausted') return <ConnectionFix halt={issue} size={size} onLeave={onLeave} />;
+/** The fix for a failure no retry solves: Monid balance or connection settings. */
+export function FailureFix({ issue, size = 'xs' }: { issue: ConnectionIssue; size?: 'xs' | 'sm' }) {
+	if (issue.reason === 'credits_exhausted' && (issue.provider === 'monid' || issue.provider === 'context')) return <a href={MONID_BILLING_URL} target="_blank" rel="noopener noreferrer" className={buttonClassName('outline', size)}>Manage Monid balance<ExternalLink aria-hidden strokeWidth={1.75} /></a>;
+	if (isCredential(issue) || issue.reason === 'credits_exhausted') return <ConnectionFix size={size} />;
 	return null;
 }
 
 /** Shown when the runner paused this sheet because every further request would fail the same way. */
-export function HaltedBanner({ halt, waiting, onRetry, onDismiss, onLeave }: { halt: RunHalt; waiting: number; onRetry: () => void; onDismiss: () => void; onLeave: () => void }) {
-	const { contextSignIn } = useSettings();
-	const title = headline(halt, contextSignIn);
+export function HaltedBanner({ halt, waiting, onRetry, onDismiss }: { halt: RunHalt; waiting: number; onRetry: () => void; onDismiss: () => void }) {
+	const title = headline(halt);
 	const detail = [
 		'Enrichment paused',
 		halt.failedCells > 0 && `${halt.failedCells.toLocaleString()} failed`,
@@ -64,8 +55,8 @@ export function HaltedBanner({ halt, waiting, onRetry, onDismiss, onLeave }: { h
 				<span>{halt.reason === 'save_failed' ? halt.message : detail}</span>
 			</p>
 			<div className="ml-auto flex shrink-0 items-center gap-1.5 max-md:ml-7 max-md:w-[calc(100%-1.75rem)]">
-				<FailureFix issue={halt} onLeave={onLeave} />
-				<Button size="xs" variant={isCredential(halt) && reconnects(halt, contextSignIn) ? 'outline' : 'brand'} onClick={onRetry}>{halt.reason === 'credits_exhausted' ? 'Retry failed' : 'Resume'}</Button>
+				<FailureFix issue={halt} />
+				<Button size="xs" variant="brand" onClick={onRetry}>{halt.reason === 'credits_exhausted' ? 'Retry failed' : 'Resume'}</Button>
 				<IconButton size="sm" label={waiting > 0 ? 'Dismiss and stop waiting cells' : 'Dismiss'} onClick={onDismiss} className="text-warning-strong hover:text-fg max-md:ml-auto"><X /></IconButton>
 			</div>
 		</div>

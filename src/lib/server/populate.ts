@@ -23,6 +23,10 @@ import { classifyFailure } from './enrich-failure';
 const MAX_STEPS = 60;
 /** Profile photos are a per-row extra lookup; a few in flight keeps a page of results fast without bursting Context.dev. */
 const PHOTO_CONCURRENCY = 4;
+const objectValue = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+const textValue = (value: unknown): string | null => typeof value === 'string' ? value : null;
+const cellValue = (value: unknown): CellValue => typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean' || value === null ? value : null;
+const stringList = (value: unknown): string[] => Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string') : [];
 
 export function populateStream(access: ProviderAccess, request: PopulateRequest): ReadableStream<Uint8Array> {
 	const encoder = new TextEncoder();
@@ -57,13 +61,18 @@ async function runPopulate(access: ProviderAccess, request: PopulateRequest, emi
 	const requestedTarget = promptResultCount(request.query) ?? request.target;
 	const limitError = populateLimitError(requestedTarget);
 	if (limitError) throw new Error(limitError);
-	request = { ...request, target: Math.min(requestedTarget, request.availableRows ?? 100) };
+	request = { ...request, target: Math.min(requestedTarget, request.availableRows ?? 1000) };
+	if (!access.key('openai')) {
+		if (!access.key('monid')) throw new Error('Connect Monid to find rows.');
+		await populateDirectMonid(access, request, emit, signal);
+		return;
+	}
 	const model = access.openai();
 	if (request.entity === 'people') {
 		emit({ type: 'status', message: 'Checking for a supplied list of people…' });
 		const plan = await planPeopleInput(access, request.query, signal);
 		if (plan.mode === 'list') {
-			if (plan.people.length > 100) throw new Error('Only 100 at a time. Provide 100 or fewer people.');
+			if (plan.people.length > 1000) throw new Error('A single Find rows request can include up to 1,000 people.');
 			await populatePeopleList(access, request, plan.people, emit, signal);
 			return;
 		}
@@ -76,11 +85,17 @@ async function runPopulate(access: ProviderAccess, request: PopulateRequest, emi
 	const countries = request.countries?.length ? request.countries.map((c) => c.toUpperCase()) : undefined;
 	const searchInOrder = createPopulateSearchQueue(signal);
 
+	let runCursor = access.spend.monidRuns.length;
+	const nextRunMeta = () => {
+		const monidRuns = access.spend.monidRuns.slice(runCursor);
+		runCursor = access.spend.monidRuns.length;
+		return monidRuns.length ? { monidRuns } : undefined;
+	};
 	const push = (rows: FoundRow[]) => {
 		const accepted = rows.slice(0, Math.max(0, target - state.added));
 		if (accepted.length) {
 			state.added += accepted.length;
-			emit({ type: 'rows', rows: accepted, key: foundRowKeyField(request.entity) });
+			emit({ type: 'rows', rows: accepted, key: foundRowKeyField(request.entity), meta: nextRunMeta() });
 		}
 		return accepted;
 	};
@@ -212,6 +227,72 @@ async function runPopulate(access: ProviderAccess, request: PopulateRequest, emi
 	});
 	const summary = result.text?.trim();
 	emit({ type: 'done', total: state.added, message: summary && summary.length < 400 ? summary : undefined });
+}
+
+/** Direct Monid discovery keeps natural-language row search available when the user has not connected OpenAI. */
+async function populateDirectMonid(access: ProviderAccess, request: PopulateRequest, emit: (event: PopulateEvent) => void, signal: AbortSignal) {
+	const client = access.context();
+	const target = request.target;
+	const query = normalizeDiscoveryQuery(request.query);
+	const countries = request.countries?.length ? request.countries.map((country) => country.toUpperCase()) : undefined;
+	const seen = new Set((request.existingKeys ?? []).map(foundRowKey).filter(Boolean));
+	let added = 0, cursor: string | undefined, calls = 0;
+	let runCursor = access.spend.monidRuns.length;
+	emit({ type: 'status', message: `Searching Monid for ${request.entity}…` });
+	while (added < target && calls < 20) {
+		signal.throwIfAborted();
+		calls++;
+		let rows: FoundRow[] = [], nextCursor: string | null = null;
+		if (request.entity === 'companies') {
+			const result = await companySearch(client, { query, filters: { countries }, cursor });
+			nextCursor = result.next_cursor;
+			rows = result.results.map(companyRow);
+		} else if (request.entity === 'people') {
+			const response = await client.people.search({ query, mode: query.length > 500 ? 'ultra' : 'fast', filters: { countries }, cursor }, { signal });
+			nextCursor = response.next_cursor ?? null;
+			rows = response.results.map((entry: unknown) => {
+				const hit = objectValue(entry), role = objectValue(hit.role), company = objectValue(role.company), location = objectValue(hit.location);
+				const profiles = stringList(hit.profiles);
+				return {
+					Name: textValue(hit.name),
+					Title: textValue(role.title),
+					Company: textValue(company.name),
+					'Company domain': textValue(company.domain),
+					Location: [location.city, location.region, location.country_code].filter((part): part is string => typeof part === 'string' && Boolean(part)).join(', ') || null,
+					LinkedIn: profiles.find((url) => url.includes('linkedin.com')) ?? profiles[0] ?? null,
+					Schools: stringList(hit.schools), Skills: stringList(hit.skills).slice(0, 15),
+					'Years of experience': cellValue(hit.years_of_experience), Summary: textValue(hit.description),
+				};
+			});
+		} else {
+			const result = await webSearchCountries(client, query.slice(0, 500), countries, { numResults: Math.min(50, target - added) }, signal);
+			rows = result.results.map((hit) => ({ URL: hit.url, Title: hit.title, Description: hit.description }));
+		}
+		const keyField = foundRowKeyField(request.entity);
+		const unique = rows.filter((row) => { const key = foundRowKey(row[keyField]); if (!key || seen.has(key)) return false; seen.add(key); return true; }).slice(0, target - added);
+		if (unique.length) {
+			added += unique.length;
+			const monidRuns = access.spend.monidRuns.slice(runCursor);
+			runCursor = access.spend.monidRuns.length;
+			emit({ type: 'rows', rows: unique, key: foundRowKeyField(request.entity), meta: monidRuns.length ? { monidRuns } : undefined });
+		}
+		emit({ type: 'status', message: `Added ${added} of ${target}` });
+		if (request.entity === 'websites' || !nextCursor || unique.length === 0) break;
+		cursor = nextCursor;
+	}
+	emit({ type: 'done', total: added, message: added ? `Found ${added} ${request.entity} with Monid.` : 'No results found. Try a more specific query.' });
+}
+
+const DISCOVERY_LEAD = /^(?:please\s+)?(?:find|search(?:\s+for)?|look\s+for|show(?:\s+me)?|give(?:\s+me)?|return|list|get|discover)(?:\s+me)?\s+/i;
+const DISCOVERY_COUNT = /^(?:(?:up\s+to|the|top|first|exactly|around|about|roughly|some)\s+)*\d[\d,]*\+?\s+/i;
+const OUTPUT_REQUEST = /\b(?:i\s+need|i\s+want|please\s+include|include|provide|return|give\s+me)\s+(?:(?:their|the)\s+)?(?:linkedin\s+(?:urls?|profiles?|links?)|profile\s+(?:urls?|links?)|emails?(?:\s+addresses?)?|phone\s+numbers?|contact\s+(?:details?|information))\b/gi;
+
+/** Monid accepts a plain search description; strip request counts and output-only instructions without dropping criteria. */
+export function normalizeDiscoveryQuery(description: string) {
+	const stripped = description.trim().replace(DISCOVERY_LEAD, '').replace(DISCOVERY_COUNT, '').replace(OUTPUT_REQUEST, ' ');
+	const clauses = stripped.split(/(?<=[.!?])\s+/).map((part) => part.replace(/[.!?]+$/g, '').trim()).filter(Boolean);
+	const query = clauses.map((part, index) => index ? part[0]!.toLowerCase() + part.slice(1) : part).join(' ').replace(/\s+/g, ' ').trim();
+	return query || description.trim();
 }
 
 function companyRow(hit: Awaited<ReturnType<typeof companySearch>>['results'][number]): FoundRow {

@@ -11,13 +11,13 @@ export async function POST(request: Request) {
 			return jsonError('Enter between 3 and 200 characters to search companies.', 400);
 		}
 		const access = await browserAccess(request);
-		if (!access.key('context')) return jsonError('Connect Context.dev in Configuration to search companies.', 401);
+		if (!access.key('monid')) return jsonError('Connect Monid in Configuration to search companies.', 401);
 		const companies = await searchCompanySuggestions(access.context(), body.query, request.signal);
 		return Response.json({ companies }, { headers: NO_STORE_HEADERS });
 	} catch (error) {
 		if (error instanceof CredentialError) return jsonError(error.message, error.status);
 		if (error instanceof SyntaxError) return jsonError('Provide a company search query.', 400);
 		const status = (error as { status?: number }).status;
-		return jsonError(status === 401 ? 'Context.dev rejected this key. Check your connection in Configuration.' : status === 429 ? 'Too many searches. Wait a moment and try again.' : 'Company search is unavailable. You can still enter a company manually.', status === 401 ? 401 : status === 429 ? 429 : 502);
+		return jsonError(status === 401 ? 'Monid rejected this key. Check your connection in Configuration.' : status === 429 ? 'Monid rate limited the search. Wait a moment and try again.' : 'Company search is unavailable. You can still enter a company manually.', status === 401 ? 401 : status === 429 ? 429 : 502);
 	}
 }

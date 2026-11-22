@@ -3,11 +3,11 @@ import { test } from 'node:test';
 import { documentBrand, documentClientDomain } from '../src/lib/document-branding';
 import type { Row, Sheet } from '../src/lib/types';
 
-test('brand selection prefers light-compatible wordmarks and validates accent colors', () => {
+test('brand selection keeps text and accent metadata without remote logo assets', () => {
  const brand = documentBrand({ title: 'Example', colors: [{ hex: 'invalid' }, { hex: '#f05' }], logos: [{ mode: 'dark', type: 'logo', url: 'https://example.com/white.png' }, { type: 'icon', url: 'https://example.com/icon.png' }, { mode: 'light', type: 'logo', url: 'https://example.com/logo.png' }] }, 'example.com');
- assert.equal(brand.logoUrl, 'https://example.com/logo.png');
+	assert.equal(brand.name, 'Example');
  assert.equal(brand.accentColor, '#f05');
- assert.equal(documentBrand({ logos: [{ url: 'javascript:alert(1)' }] }, 'example.com').logoUrl, undefined);
+	assert.equal(documentBrand({ logos: [{ url: 'javascript:alert(1)' }] }, 'example.com').logoUrl, undefined);
 });
 
 test('client defaults require an unambiguous row company and do not use arbitrary links', () => {

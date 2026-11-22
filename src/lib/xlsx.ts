@@ -1,4 +1,4 @@
-import { zipSync, strToU8 } from 'fflate';
+import { strFromU8, unzipSync, zipSync, strToU8 } from 'fflate';
 import { exportValue } from './cell-admission';
 import { formatValue } from './template';
 import type { Column, Row } from './types';
@@ -57,4 +57,83 @@ export function toXlsx(sheetName: string, columns: Column[], rows: Row[]): Blob 
 	};
 	const zipped = zipSync(files, { level: 6 });
 	return new Blob([zipped.buffer as ArrayBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+}
+
+const REL_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+const xmlElements = (parent: Document | Element, name: string) => Array.from(parent.getElementsByTagNameNS('*', name));
+
+function normalizeZipPath(value: string) {
+	const parts: string[] = [];
+	for (const part of value.replace(/^\//, '').split('/')) {
+		if (!part || part === '.') continue;
+		if (part === '..') parts.pop(); else parts.push(part);
+	}
+	return parts.join('/');
+}
+
+function parseXml(bytes: Uint8Array, label: string): Document {
+	const parsed = new DOMParser().parseFromString(strFromU8(bytes), 'application/xml');
+	if (parsed.querySelector('parsererror')) throw new Error(`This workbook has invalid ${label} XML.`);
+	return parsed;
+}
+
+function excelColumnIndex(reference: string) {
+	const letters = reference.match(/^[A-Z]+/i)?.[0]?.toUpperCase();
+	if (!letters) return -1;
+	let value = 0;
+	for (const letter of letters) value = value * 26 + letter.charCodeAt(0) - 64;
+	return value - 1;
+}
+
+/** Reads the first worksheet of standard .xlsx files and values written by this app. */
+export function fromXlsx(bytes: Uint8Array): { headers: string[]; records: Record<string, string | number | boolean | null>[] } {
+	if (bytes.byteLength > 25 * 1024 * 1024) throw new Error('Choose an XLSX file smaller than 25 MB.');
+	let archive: Record<string, Uint8Array>;
+	try { archive = unzipSync(bytes); } catch { throw new Error('This XLSX file could not be opened.'); }
+	const workbookBytes = archive['xl/workbook.xml'];
+	const relsBytes = archive['xl/_rels/workbook.xml.rels'];
+	if (!workbookBytes || !relsBytes) throw new Error('This file is missing workbook metadata.');
+	const workbook = parseXml(workbookBytes, 'workbook');
+	const relations = parseXml(relsBytes, 'workbook relationship');
+	const firstSheet = xmlElements(workbook, 'sheet')[0];
+	const relationId = firstSheet?.getAttributeNS(REL_NS, 'id') ?? firstSheet?.getAttribute('r:id');
+	if (!relationId) throw new Error('This workbook does not contain a worksheet.');
+	const target = xmlElements(relations, 'Relationship').find((entry) => entry.getAttribute('Id') === relationId)?.getAttribute('Target');
+	if (!target) throw new Error('This workbook does not contain a worksheet.');
+	const sheetPath = normalizeZipPath(target.startsWith('/') ? target : `xl/${target}`);
+	const sheetBytes = archive[sheetPath];
+	if (!sheetBytes) throw new Error('The first worksheet is missing from this workbook.');
+	const strings = archive['xl/sharedStrings.xml'] ? xmlElements(parseXml(archive['xl/sharedStrings.xml'], 'shared strings'), 'si').map((entry) => entry.textContent ?? '') : [];
+	const worksheet = parseXml(sheetBytes, 'worksheet');
+	const matrix: Array<Array<string | number | boolean | null>> = [];
+	for (const row of xmlElements(worksheet, 'row')) {
+		const number = Number(row.getAttribute('r')) || matrix.length + 1;
+		const values: Array<string | number | boolean | null> = matrix[number - 1] ?? [];
+		for (const cell of xmlElements(row, 'c')) {
+			const index = excelColumnIndex(cell.getAttribute('r') ?? '');
+			if (index < 0) continue;
+			const type = cell.getAttribute('t');
+			const value = xmlElements(cell, 'v')[0]?.textContent ?? '';
+			if (type === 'inlineStr') values[index] = xmlElements(cell, 't').map((part) => part.textContent ?? '').join('');
+			else if (type === 's') values[index] = strings[Number(value)] ?? '';
+			else if (type === 'b') values[index] = value === '1';
+			else if (type === 'e' || value === '') values[index] = null;
+			else if (type === 'str') values[index] = value;
+			else { const numeric = Number(value); values[index] = Number.isFinite(numeric) ? numeric : value; }
+		}
+		matrix[number - 1] = values;
+	}
+	const headerIndex = matrix.findIndex((row) => row?.some((value) => value !== null && String(value).trim() !== ''));
+	if (headerIndex < 0) return { headers: [], records: [] };
+	const rawHeaders = matrix[headerIndex] ?? [];
+	const headers: string[] = [];
+	for (let index = 0; index < rawHeaders.length; index++) headers.push(String(rawHeaders[index] ?? '').trim() || `Column ${index + 1}`);
+	const uniqueHeaders: string[] = [];
+	for (const header of headers) {
+		let candidate = header, suffix = 2;
+		while (uniqueHeaders.some((item) => item.toLocaleLowerCase() === candidate.toLocaleLowerCase())) candidate = `${header} (${suffix++})`;
+		uniqueHeaders.push(candidate);
+	}
+	const records = matrix.slice(headerIndex + 1).filter((row) => row?.some((value) => value !== null && String(value).trim() !== '')).map((row) => Object.fromEntries(uniqueHeaders.map((header, index) => [header, row[index] ?? null])));
+	return { headers: uniqueHeaders, records };
 }

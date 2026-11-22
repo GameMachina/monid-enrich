@@ -11,6 +11,8 @@ import { HelpTooltip } from '@/components/ui/help-tooltip';
 import { Sortable, SortableItem, SortableItemHandle } from '@/components/ui/sortable';
 import { ColumnPrompt } from './column-prompt';
 import { EmailWaterfallPicker } from './email-waterfall-picker';
+import { useSettings } from '@/components/app/settings-context';
+import { allowedPhoneStrategies, DEFAULT_ALLOWED_PHONE_PROVIDERS, PHONE_STRATEGY_INFO, type PhoneProviderStrategy } from '@/lib/phone-strategy';
 
 type OpOf<K extends OpKind> = Extract<ColumnOp, { kind: K }>;
 interface Shared { columns: Column[]; domainColumn?: string; jevAvailable: boolean }
@@ -51,6 +53,7 @@ const PERSON_FIELDS: Array<{ value: OpOf<'person'>['field']; label: string }> = 
 	{ value: 'location', label: 'Location' },
 	{ value: 'linkedin', label: 'LinkedIn URL' },
 	{ value: 'email', label: 'Email' },
+	{ value: 'mobile', label: 'Mobile number' },
 	{ value: 'bio', label: 'Bio' },
 	{ value: 'schools', label: 'Schools' },
 	{ value: 'degrees', label: 'Degrees' },
@@ -123,41 +126,41 @@ function AskFields({ op, set, columns, domainColumn }: FieldsProps<'ai'>) {
 		<PromptField label="Question" help="Type / to insert a column, cell or range; otherwise the whole row is sent. Use $ to lock coordinates, e.g. $A$1." columns={columns} rows={3} value={op.prompt} onChange={(prompt) => set({ prompt })} placeholder="Who is the CEO of {{Company}}?" />
 		<div className="grid gap-4 sm:grid-cols-2">
 			<OutputField value={op.output} onChange={(output) => set({ output })} />
-			<Field label="Research">{(id) => <Select id={id} value={op.research} onValueChange={(value) => set({ research: value as 'none' | 'web' })}><option value="web">Search and read the web (Context.dev)</option><option value="none">Row only, no web</option></Select>}</Field>
+			<Field label="Research">{(id) => <Select id={id} value={op.research} onValueChange={(value) => set({ research: value as 'none' | 'web' })}><option value="web">Search and read the web through Monid</option><option value="none">Row only, no web</option></Select>}</Field>
 		</div>
 		<PageField label="Read a page first" page={op.page} optional columns={columns} domainColumn={domainColumn} onChange={(page) => set({ page })} />
 	</>;
 }
 
-function CheckFields({ op, set, columns, domainColumn, jevAvailable }: FieldsProps<'check'>) {
+function CheckFields({ op, set, columns, domainColumn }: FieldsProps<'check'>) {
 	return <>
 		<PromptField label="True/false question" help="Asked against the row and, when set, the page below." columns={columns} rows={2} value={op.question} onChange={(question) => set({ question })} placeholder="Does this pricing page offer a free tier?" />
 		<PageField label="Read a page first" page={op.page} optional columns={columns} domainColumn={domainColumn} onChange={(page) => set({ page })} />
 		<div className="grid gap-4 sm:grid-cols-3">
-			<DeciderField value={op.decider} onChange={(decider) => set({ decider })} jevAvailable={jevAvailable} />
+			<DeciderField value={op.decider} onChange={(decider) => set({ decider })} />
 			<NumberField label="True threshold" help="Probability at or above which the cell is true (0.05–0.95)." value={op.threshold} min={0.05} max={0.95} step={0.05} onChange={(threshold) => set({ threshold })} />
 			<Field label="Exact text (optional)" help="Skip the model: true when the page contains this text.">{(id) => <Input id={id} value={op.literal ?? ''} onChange={(event) => set({ literal: event.target.value || undefined })} placeholder="free tier" />}</Field>
 		</div>
 	</>;
 }
 
-function ClassifyFields({ op, set, columns, domainColumn, jevAvailable }: FieldsProps<'classify'>) {
+function ClassifyFields({ op, set, columns, domainColumn }: FieldsProps<'classify'>) {
 	return <>
 		<PromptField label="Question" columns={columns} rows={2} value={op.question} onChange={(question) => set({ question })} placeholder="Which segment does this company belong to?" />
 		<ListEditor label="Options" help="Each row gets exactly one option. A short description helps the model choose." item="Option" detail="Description (optional)" placeholders={['e.g. Strong fit', 'e.g. Weak fit']} detailPlaceholder="e.g. B2B SaaS with 50–500 employees" minRows={2} max={20}
 			items={op.options.map((option) => ({ label: option.label, detail: option.description }))} onChange={(items) => set({ options: items.map((item) => ({ label: item.label, description: item.detail })) })} />
 		<PageField label="Read a page first" page={op.page} optional columns={columns} domainColumn={domainColumn} onChange={(page) => set({ page })} />
-		<DeciderField value={op.decider} onChange={(decider) => set({ decider })} jevAvailable={jevAvailable} />
+		<DeciderField value={op.decider} onChange={(decider) => set({ decider })} />
 	</>;
 }
 
-function ScoreFields({ op, set, columns, domainColumn, jevAvailable }: FieldsProps<'score'>) {
+function ScoreFields({ op, set, columns, domainColumn }: FieldsProps<'score'>) {
 	return <>
 		<PromptField label="Question" columns={columns} rows={2} value={op.question} onChange={(question) => set({ question })} placeholder="How mature is this company's developer documentation?" />
 		<ListEditor label="Levels, lowest to highest" help="Drag to reorder. The first level is the lowest score." item="Level" placeholders={['e.g. None', 'e.g. Basic', 'e.g. Thorough']} minRows={2} max={10}
 			items={op.levels.map((label) => ({ label }))} onChange={(items) => set({ levels: items.map((item) => item.label) })} />
 		<PageField label="Read a page first" page={op.page} optional columns={columns} domainColumn={domainColumn} onChange={(page) => set({ page })} />
-		<DeciderField value={op.decider} onChange={(decider) => set({ decider })} jevAvailable={jevAvailable} />
+		<DeciderField value={op.decider} onChange={(decider) => set({ decider })} />
 	</>;
 }
 
@@ -194,8 +197,23 @@ function CompanyFields({ op, set, columns }: FieldsProps<'company'>) {
 }
 
 function PersonFields({ op, set, columns }: FieldsProps<'person'>) {
+	const { settings, memberPreferences } = useSettings();
+	const allowed = settings.mobilePhoneProviders?.length ? settings.mobilePhoneProviders : DEFAULT_ALLOWED_PHONE_PROVIDERS;
+	const strategies = allowedPhoneStrategies(allowed);
+	const phoneStrategy = op.phoneStrategy ?? memberPreferences.defaultPhoneStrategy;
+	const strategyAllowed = strategies.includes(phoneStrategy);
 	const text = (key: 'name' | 'company' | 'email' | 'profileUrl') => (value: string) => set({ [key]: value || undefined });
 	return <>
+		{op.field === 'mobile' && <>
+			<p role="note" className="rounded-lg border border-line-subtle bg-surface-secondary px-3 py-2 text-caption text-fg-muted">Mobile lookups run through Monid and are billed to the workspace wallet. LeadMagic accepts a LinkedIn profile or email and bills no-match requests. Clay needs a full name, company, and LinkedIn profile; its no-match results are not billed. A waterfall advances only after a completed no-match.</p>
+			<Field label="Provider strategy" help="This column keeps the selected strategy even if your personal default changes later.">
+				{(id) => <Select id={id} value={phoneStrategy} onValueChange={(value) => set({ phoneStrategy: value as PhoneProviderStrategy })}>
+					{!strategyAllowed && <option value={phoneStrategy}>{PHONE_STRATEGY_INFO[phoneStrategy].label} · disabled by workspace</option>}
+					{strategies.map((strategy) => <option key={strategy} value={strategy}>{PHONE_STRATEGY_INFO[strategy].label}</option>)}
+				</Select>}
+			</Field>
+			{!strategyAllowed && <p role="alert" className="text-caption text-danger">The workspace disabled a provider in this strategy. Choose an enabled strategy before saving or running this column.</p>}
+		</>}
 		<div className="grid gap-4 sm:grid-cols-2">
 			<PromptField label="Name" columns={columns} value={op.name ?? ''} onChange={text('name')} placeholder="{{Name}}" />
 			<PromptField label="Company (name or domain)" columns={columns} value={op.company ?? ''} onChange={text('company')} placeholder="{{Company}}" />
@@ -222,13 +240,13 @@ function FindEmailFields({ op, set, columns }: FieldsProps<'email-enrichment'>) 
 	</>;
 }
 
-function ProviderNote({ provider }: { provider: 'Hunter' | 'Prospeo' }) {
-	return <p className="text-caption text-fg-subtle">Uses your {provider} key. Connect {provider} in <Link href="/app/settings" target="_blank" className="text-brand underline-offset-4 hover:underline">Configuration → Connections</Link>. Type / to insert a column.</p>;
+function ProviderNote({ feature }: { feature: 'email lookup' | 'person details' }) {
+	return <p className="text-caption text-fg-subtle">Uses the Monid {feature} operation. Connect Monid in <Link href="/app/settings" target="_blank" className="text-brand underline-offset-4 hover:underline">Configuration → Connections</Link>. Type / to insert a column.</p>;
 }
 
 function HunterFields({ op, set, columns }: FieldsProps<'hunter'>) {
 	return <>
-		<ProviderNote provider="Hunter" />
+		<ProviderNote feature="email lookup" />
 		{/* Finding is covered by the Work email waterfall; older columns that find with Hunter keep the choice. */}
 		{op.action === 'find' && <Field label="Action">{(id) => <Select id={id} value={op.action} onValueChange={(value) => set({ action: value as 'find' | 'verify' })}><option value="find">Find work email</option><option value="verify">Verify email (returns status)</option></Select>}</Field>}
 		{op.action === 'find' ? <div className="grid gap-4 sm:grid-cols-2">
@@ -239,8 +257,13 @@ function HunterFields({ op, set, columns }: FieldsProps<'hunter'>) {
 }
 
 function ProspeoFields({ op, set, columns }: FieldsProps<'prospeo'>) {
+	const { settings, memberPreferences } = useSettings();
+	const allowed = settings.mobilePhoneProviders?.length ? settings.mobilePhoneProviders : DEFAULT_ALLOWED_PHONE_PROVIDERS;
+	const strategies = allowedPhoneStrategies(allowed);
+	const phoneStrategy = op.phoneStrategy ?? memberPreferences.defaultPhoneStrategy;
+	const strategyAllowed = strategies.includes(phoneStrategy);
 	return <>
-		<ProviderNote provider="Prospeo" />
+		<ProviderNote feature="person details" />
 		<Field label="Look up">{(id) => <Select id={id} value={op.field} onValueChange={(value) => set({ field: value as OpOf<'prospeo'>['field'] })}>{PROSPEO_FIELDS.map((field) => <option key={field} value={field}>{PROSPEO_LABELS[field]}</option>)}</Select>}</Field>
 		<div className="grid gap-4 sm:grid-cols-2">
 			<PromptField label="Full name" columns={columns} value={op.name ?? ''} onChange={(name) => set({ name })} placeholder="{{Name}}" />
@@ -248,17 +271,26 @@ function ProspeoFields({ op, set, columns }: FieldsProps<'prospeo'>) {
 			<PromptField label="Email" columns={columns} value={op.email ?? ''} onChange={(email) => set({ email })} placeholder="{{Email}}" />
 			<PromptField label="LinkedIn URL" help="Provide a LinkedIn URL, an email, or a full name and company domain." columns={columns} value={op.profileUrl ?? ''} onChange={(profileUrl) => set({ profileUrl })} placeholder="{{LinkedIn}}" />
 		</div>
-		<div className="flex items-center justify-between gap-3"><span className="text-body-sm">Only return people with a verified email</span><Switch checked={op.onlyVerifiedEmail} onChange={(onlyVerifiedEmail) => set({ onlyVerifiedEmail })} label="Only verified email" /></div>
-		{op.field === 'mobile' && <p className="rounded-lg border border-warning-line bg-warning-soft px-3 py-2 text-caption text-warning-strong">Mobile lookup can cost 10 Prospeo credits per number found. Turn off the verified email requirement to include people who only have a mobile.</p>}
+		{op.field === 'email' && <div className="flex items-center justify-between gap-3"><span className="text-body-sm">Only return verified email addresses</span><Switch checked={op.onlyVerifiedEmail} onChange={(onlyVerifiedEmail) => set({ onlyVerifiedEmail })} label="Only verified email" /></div>}
+		{op.field === 'mobile' && <>
+			<p role="note" className="rounded-lg border border-line-subtle bg-surface-secondary px-3 py-2 text-caption text-fg-muted">Mobile lookups run through Monid and are billed to the workspace wallet. LeadMagic accepts a LinkedIn profile or email and bills no-match requests. Clay needs a full name, company, and LinkedIn profile; its no-match results are not billed. A waterfall advances only after a completed no-match.</p>
+			<Field label="Provider strategy" help="This column keeps the selected strategy even if your personal default changes later.">
+				{(id) => <Select id={id} value={phoneStrategy} onValueChange={(value) => set({ phoneStrategy: value as PhoneProviderStrategy })}>
+					{!strategyAllowed && <option value={phoneStrategy}>{PHONE_STRATEGY_INFO[phoneStrategy].label} · disabled by workspace</option>}
+					{strategies.map((strategy) => <option key={strategy} value={strategy}>{PHONE_STRATEGY_INFO[strategy].label}</option>)}
+				</Select>}
+			</Field>
+			{!strategyAllowed && <p role="alert" className="text-caption text-danger">The workspace disabled a provider in this strategy. Choose an enabled strategy before saving or running this column.</p>}
+		</>}
 	</>;
 }
 
 function ResearchFields({ op, set, columns }: FieldsProps<'answer'>) {
 	return <>
-		<PromptField label="Research task" help="Context.dev researches this across the web and returns a sourced answer." columns={columns} rows={3} value={op.task} onChange={(task) => set({ task })} placeholder="What is {{Company}}'s most recent funding round, amount and lead investor?" />
+		<PromptField label="Research task" help="OpenAI reasons over live web research from Monid and returns a sourced answer." columns={columns} rows={3} value={op.task} onChange={(task) => set({ task })} placeholder="What is {{Company}}'s most recent funding round, amount and lead investor?" />
 		<div className="grid gap-4 sm:grid-cols-2">
 			<OutputField value={op.output} onChange={(output) => set({ output })} />
-			<Field label="Depth">{(id) => <Select id={id} value={op.mode} onValueChange={(value) => set({ mode: value as 'fast' | 'ultra' })}><option value="fast">Fast · about 10 credits per row</option><option value="ultra">Ultra · about 100 credits per row</option></Select>}</Field>
+			<Field label="Depth" help="Monid bills according to the endpoint and returned results; actual usage is shown with the cell result.">{(id) => <Select id={id} value={op.mode} onValueChange={(value) => set({ mode: value as 'fast' | 'ultra' })}><option value="fast">Fast</option><option value="ultra">Ultra · deeper research</option></Select>}</Field>
 		</div>
 	</>;
 }
@@ -343,9 +375,8 @@ function OutputField({ value, onChange }: { value: (typeof OUTPUT_TYPES)[number]
 	</Select>}</Field>;
 }
 
-function DeciderField({ value, onChange, jevAvailable }: { value: 'jev' | 'openai'; onChange: (value: 'jev' | 'openai') => void; jevAvailable: boolean }) {
-	return <Field label="Decide with" help={jevAvailable ? undefined : 'Connect TypeSafe in Configuration → Connections for calibrated answers.'}>{(id) => <Select id={id} value={value} onValueChange={(next) => onChange(next as 'jev' | 'openai')}>
-		<option value="jev" disabled={!jevAvailable}>TypeSafe · calibrated answers</option>
+function DeciderField({ value, onChange }: { value: 'openai'; onChange: (value: 'openai') => void }) {
+	return <Field label="Reason with" help="Requires your optional OpenAI API key. Monid remains the data provider.">{(id) => <Select id={id} value={value} onValueChange={() => onChange('openai')}>
 		<option value="openai">OpenAI · structured answer</option>
 	</Select>}</Field>;
 }

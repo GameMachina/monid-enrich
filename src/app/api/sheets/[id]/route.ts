@@ -3,7 +3,7 @@ import { parseInput } from '@/lib/workspace';
 import { apiRoute, readJson } from '@/lib/server/api-route';
 import { WorkspaceStore } from '@/lib/server/workspace-store';
 
-const pageSchema = z.object({ offset: z.coerce.number().int().min(0).max(1000).default(0), revision: z.coerce.number().int().positive().optional() });
+const pageSchema = z.object({ offset: z.coerce.number().int().min(0).max(Number.MAX_SAFE_INTEGER).default(0), revision: z.coerce.number().int().positive().optional() });
 const revisionSchema = z.coerce.number().int().positive();
 const query = (request: Request) => new URL(request.url).searchParams;
 

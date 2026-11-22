@@ -15,7 +15,7 @@ import type { EntityField } from '@/lib/entity-fields';
 import type { Column, Row, Sheet, Sort } from '@/lib/types';
 import { defaultRangeExtractor, useVirtualizer } from '@tanstack/react-virtual';
 import clsx from 'clsx';
-import { ArrowDown, ArrowUp, Check, ChevronDown, MoreHorizontal, Play, Plus, RefreshCw, Sparkles } from 'lucide-react';
+import { ArrowDown, ArrowUp, Check, ChevronDown, MoreHorizontal, MousePointerClick, Play, Plus, RefreshCw, Sparkles } from 'lucide-react';
 import { type CSSProperties, type KeyboardEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, memo, useCallback, useEffect, useInsertionEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Select } from '@/components/ui/select';
 import { CellView } from './cell-view';
@@ -423,7 +423,7 @@ const HeaderCell = memo(function HeaderCell({ column, address, sort, onStartDrag
 				{sort === 'desc' && <ArrowDown className="ml-auto size-3 shrink-0 text-brand" strokeWidth={2} />}
 			</button>}
 			<button type="button" aria-label={`Column menu for ${column.name}`} onClick={(event) => onMenu(column, event.currentTarget.getBoundingClientRect())} className={clsx('relative mr-0.5 grid size-6 shrink-0 place-items-center rounded-md text-fg-subtle transition-opacity group-hover/header:opacity-100 group-focus-within/header:opacity-100 hover:bg-tint/[0.06] hover:text-fg focus-visible:opacity-100', renaming || column.type === 'enriched' ? 'opacity-100' : 'opacity-100 md:opacity-0 [@media(hover:none)]:opacity-100')}>
-				{column.type === 'enriched' && !renaming && <Sparkles aria-hidden="true" className="absolute size-3.5 text-brand group-hover/header:opacity-0 group-focus-within/header:opacity-0 [@media(hover:none)]:opacity-0" strokeWidth={1.75} />}
+				{column.action && !renaming ? <MousePointerClick aria-hidden="true" className="absolute size-3.5 text-brand group-hover/header:opacity-0 group-focus-within/header:opacity-0 [@media(hover:none)]:opacity-0" strokeWidth={1.75} /> : column.op && !renaming ? <Sparkles aria-hidden="true" className="absolute size-3.5 text-brand group-hover/header:opacity-0 group-focus-within/header:opacity-0 [@media(hover:none)]:opacity-0" strokeWidth={1.75} /> : null}
 				<MoreHorizontal aria-hidden="true" className={clsx('size-3.5', column.type === 'enriched' && !renaming && 'opacity-0 group-hover/header:opacity-100 group-focus-within/header:opacity-100 [@media(hover:none)]:opacity-100')} strokeWidth={1.75} />
 			</button>
 			<div role="separator" tabIndex={-1} aria-label={`Resize ${column.name}`} aria-orientation="vertical" aria-valuenow={width} aria-valuemin={MIN_COLUMN_WIDTH} aria-valuemax={MAX_COLUMN_WIDTH} onPointerDown={startResize} onDoubleClick={() => onResize(column.id, 220)} className="absolute top-0 -right-[3px] z-10 h-full w-[7px] touch-none cursor-col-resize select-none hover:bg-brand/40 active:bg-brand/60" />

@@ -1,12 +1,29 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { foundRowKey } from '../../src/lib/found-rows';
-import { populateStream } from '../../src/lib/server/populate';
+import { normalizeDiscoveryQuery, populateStream } from '../../src/lib/server/populate';
 import type { PopulateEvent } from '../../src/lib/types';
 import { rowSchema } from '../../src/lib/workspace';
 import { testAccess } from './access-fixture';
 
 const access = testAccess({ keys: { openai: 'test-openai', context: 'test-context' }, model: 'test-model', openaiBaseUrl: 'https://model.example/v1' });
+
+test('Monid-only discovery sends a clean search description while preserving the country constraint', async (t) => {
+	const requests: Array<{ url: string; body: { input: { body: Record<string, unknown> } } }> = [];
+	t.mock.method(globalThis, 'fetch', async (input: string | URL | Request, options?: RequestInit) => {
+		const request = new Request(input, options);
+		const body = await request.json() as { input: { body: Record<string, unknown> } };
+		requests.push({ url: request.url, body });
+		return Response.json({ runId: 'people-search', provider: 'context.dev', endpoint: '/people/search', status: 'COMPLETED', resultCount: 1, cost: { value: 0.02, currency: 'USD' }, output: { results: [{ name: 'Alex Smith', role: { title: 'Head of Growth', company: { name: 'Acme', domain: 'acme.example' } }, location: { country_code: 'US' }, profiles: ['https://www.linkedin.com/in/alex-smith'], schools: [], skills: [] }] } });
+	});
+	const query = 'Find 10 heads of growth in the US. I need their LinkedIn URLs. At SaaS companies';
+	assert.equal(normalizeDiscoveryQuery(query), 'heads of growth in the US at SaaS companies');
+	const events: PopulateEvent[] = (await new Response(populateStream(testAccess({ keys: { monid: 'test-monid' } }), { query, entity: 'people', target: 10, countries: ['US'] })).text()).trim().split('\n').map((line) => JSON.parse(line));
+	assert.deepEqual(requests.map(({ url }) => new URL(url).pathname), ['/v1/run']);
+	assert.deepEqual(requests[0]?.body.input.body, { query: 'heads of growth in the US at SaaS companies', mode: 'fast', filters: { countries: ['US'] } });
+	assert.equal(events.flatMap((event) => event.type === 'rows' ? event.rows : []).length, 1);
+	assert.equal(events.at(-1)?.type, 'done');
+});
 
 test('company discovery skips companies the sheet lists and maps funding rounds to persistable Stage cells', async (t) => {
 	t.mock.method(globalThis, 'fetch', async (input: string | URL | Request, options?: RequestInit) => {

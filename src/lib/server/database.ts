@@ -5,8 +5,10 @@ import WebSocket from 'ws';
 import { lookup } from 'node:dns';
 import type { LookupFunction } from 'node:net';
 import { Agent, fetch as databaseFetch } from 'undici';
+import { join, resolve } from 'node:path';
 import type { Account } from '../auth-identity';
 import { WorkspaceError } from '../workspace';
+import { openEmbeddedDriver } from './embedded-database';
 
 // Keep database networking independent of the process-wide fetch/DNS defaults.
 // Prefer IPv4 while retaining IPv6 fallback on networks with broken IPv6 routes.
@@ -74,12 +76,38 @@ export function createDatabase(driver: Driver): Database {
 
 // Checked on first use, so requests that never touch storage work on deployments without it.
 function databaseUrl() {
-	if (!process.env.DATABASE_URL) throw new WorkspaceError('Cloud storage is not configured. Connect the Enrichable Neon database.', 503);
-	return process.env.DATABASE_URL;
+	const url = process.env.DATABASE_URL?.trim();
+	if (!url) throw new WorkspaceError('Database storage is not configured for this workspace.', 503);
+	return url;
 }
 
-/** Neon for the length of `run`: reads over HTTP, transactions over a WebSocket pool opened on first use and closed after. */
+// Next emits route handlers as separate server bundles. Keep one PGlite session for the process across those bundles.
+type EmbeddedWorkspaceHandle = { database: Database; close: () => Promise<void> };
+const localDatabaseState = globalThis as typeof globalThis & { __monidEnrichEmbeddedDatabase?: Promise<EmbeddedWorkspaceHandle> };
+async function embeddedWorkspaceDatabase() {
+	if (!localDatabaseState.__monidEnrichEmbeddedDatabase) {
+		const path = process.env.ENRICHABLE_LOCAL_DATABASE_PATH?.trim() || join(process.cwd(), '.data', 'database');
+		const directory = resolve(process.cwd(), 'migrations');
+		localDatabaseState.__monidEnrichEmbeddedDatabase = openEmbeddedDriver({ dataDirectory: path, migrationsDirectory: directory }).then(({ driver, close }) => ({ database: createDatabase(driver), close }));
+	}
+	const pending = localDatabaseState.__monidEnrichEmbeddedDatabase;
+	try { return (await pending).database; }
+	catch (error) {
+		if (localDatabaseState.__monidEnrichEmbeddedDatabase === pending) delete localDatabaseState.__monidEnrichEmbeddedDatabase;
+		throw error;
+	}
+}
+
+/** Gracefully close the local database, primarily for test/process shutdown hooks. */
+export async function closeEmbeddedWorkspaceDatabase() {
+	const pending = localDatabaseState.__monidEnrichEmbeddedDatabase;
+	delete localDatabaseState.__monidEnrichEmbeddedDatabase;
+	if (pending) await (await pending).close();
+}
+
+/** Use embedded PGlite for one local process, or Neon for a shared deployment. Neon resources last only for `run`. */
 export async function withDatabase<T>(run: (database: Database) => Promise<T>): Promise<T> {
+	if (!process.env.DATABASE_URL?.trim()) return run(await embeddedWorkspaceDatabase());
 	let pool: Pool | undefined, http: NeonQueryFunction<false, false> | undefined;
 	try {
 		return await run(createDatabase({

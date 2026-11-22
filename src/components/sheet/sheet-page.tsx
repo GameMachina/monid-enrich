@@ -70,7 +70,7 @@ function SheetWorkspace({ sheetId, sheet, allRows, commands }: { sheetId: string
 	const openFilter = () => setFilterOpenRequest((value) => value + 1);
 	const menus = useSheetMenus({ sheetId, sheet, allRows, commands, content, selection, overlays, actions, view, onFilter: openFilter });
 	const findButtonRef = useRef<HTMLButtonElement>(null);
-	const onLeave = useLeaveGuard(runStatus.pending > 0 || populate.running);
+	useBeforeUnloadGuard(runStatus.pending > 0 || populate.running);
 	useDocumentTitle(sheet.name);
 	const { runCells, report } = actions;
 	const halt = runStatus.halt;
@@ -114,10 +114,10 @@ function SheetWorkspace({ sheetId, sheet, allRows, commands }: { sheetId: string
 					selection={{ onRun: (mode) => runCells(selection.selectedRows, enrichedColumns, mode), onDelete: () => actions.confirmDeleteRows(selection.selectedRows), onClear: () => selection.setSelected(new Set()) }}
 					onRename={(name) => updateSheet(sheetId, { name })}
 					onMobileRename={() => overlays.setRenamingSheet(true)}
-					banner={halt && <HaltedBanner halt={halt} waiting={runStatus.queued} onRetry={() => void commands.retryHalted().catch(report('Could not resume'))} onDismiss={() => void commands.dismissHalt().catch(report('Could not stop these cells'))} onLeave={onLeave} />}
+					banner={halt && <HaltedBanner halt={halt} waiting={runStatus.queued} onRetry={() => void commands.retryHalted().catch(report('Could not resume'))} onDismiss={() => void commands.dismissHalt().catch(report('Could not stop these cells'))} />}
 				/>
 				<SheetFormulaBar sheet={sheet} content={content} selection={selection} commands={commands} onSave={actions.editCell} />
-				<SheetGridArea sheetId={sheetId} sheet={sheet} allRows={allRows} commands={commands} content={content} selection={selection} overlays={overlays} actions={actions} view={view} halt={halt} onFind={openFind} onLeave={onLeave} />
+				<SheetGridArea sheetId={sheetId} sheet={sheet} allRows={allRows} commands={commands} content={content} selection={selection} overlays={overlays} actions={actions} view={view} halt={halt} onFind={openFind} />
 			</div>
 
 			<SheetMenus overlays={overlays} menus={menus} />
@@ -126,27 +126,24 @@ function SheetWorkspace({ sheetId, sheet, allRows, commands }: { sheetId: string
 	);
 }
 
-/** Queued cells and Find rows live in this tab: closing it drops them, so ask first. Returns the call for leaving on purpose (reconnecting). */
-function useLeaveGuard(working: boolean) {
-	const leaving = useRef(false);
+/** Queued cells and Find rows live in this tab: closing it drops them, so ask first. */
+function useBeforeUnloadGuard(working: boolean) {
 	useEffect(() => {
 		if (!working) return;
 		const guard = (event: BeforeUnloadEvent) => {
-			if (leaving.current) return;
 			event.preventDefault();
 			event.returnValue = '';
 		};
 		window.addEventListener('beforeunload', guard);
 		return () => window.removeEventListener('beforeunload', guard);
 	}, [working]);
-	return () => { leaving.current = true; };
 }
 
 function useDocumentTitle(sheetName: string) {
 	useEffect(() => {
 		if (!sheetName) return;
 		const previous = document.title;
-		document.title = `${sheetName} · Enrichable`;
+		document.title = `${sheetName} · Monid Enrich`;
 		return () => { document.title = previous; };
 	}, [sheetName]);
 }

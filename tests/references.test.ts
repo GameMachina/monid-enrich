@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { BROKEN_REFERENCE, danglingReferences, nameTaken, opDependencies, referenceDependents, referenceTokens, renameOpReferences, shiftColumnReferences, shiftReferences, uniqueName } from '../src/lib/references';
+import { actionDependencies, BROKEN_REFERENCE, danglingActionReferences, danglingReferences, nameTaken, opDependencies, referenceDependents, referenceTokens, renameOpReferences, rewriteActionReferences, shiftColumnReferences, shiftReferences, uniqueName } from '../src/lib/references';
 import type { Column, ColumnOp } from '../src/lib/types';
 
 const column = (id: string, name = id, op?: ColumnOp): Column => ({ id, name, type: op ? 'enriched' : 'source', op, width: 160, createdAt: 0 });
@@ -20,7 +20,7 @@ test('renames rewrite every reference to the column, whatever its spelling, and 
 	const cases: Array<[ColumnOp, ColumnOp]> = [
 		[template('{{Domain}} {{ domain }} {{Domain suffix}} {{B1}}'), template('{{Website}} {{Website}} {{Domain suffix}} {{B1}}')],
 		[{ kind: 'scrape', page: { type: 'column', column: ' domain' }, mode: 'extract', fields: [{ name: 'Domain' }], maxChars: 2000 }, { kind: 'scrape', page: { type: 'column', column: 'Website' }, mode: 'extract', fields: [{ name: 'Domain' }], maxChars: 2000 }],
-		[{ kind: 'check', question: 'Is {{Domain}} live?', literal: '{{Domain}}', decider: 'jev', threshold: 0.5 }, { kind: 'check', question: 'Is {{Website}} live?', literal: '{{Domain}}', decider: 'jev', threshold: 0.5 }],
+		[{ kind: 'check', question: 'Is {{Domain}} live?', literal: '{{Domain}}', decider: 'openai', threshold: 0.5 }, { kind: 'check', question: 'Is {{Website}} live?', literal: '{{Domain}}', decider: 'openai', threshold: 0.5 }],
 	];
 	for (const [before, after] of cases) assert.deepEqual(renameOpReferences(before, 'Domain', 'Website'), after);
 	const untouched = template('{{Name}}');
@@ -59,6 +59,18 @@ test('every operation in a layout is shifted, and an unchanged layout is returne
 	assert.equal(after[0], b, 'columns without operations are reused');
 	const created = column('n', 'New', template('{{C1}}'));
 	assert.equal(text(shiftColumnReferences(sheet, [created, ...sheet])[0].op!), '{{D1}}', 'a new column’s references were written against the old layout');
+});
+
+test('action column instructions keep row references when columns move or rename', () => {
+	const action: Column = { id: 'action', name: 'LinkedIn action', type: 'enriched', action: { channel: 'linkedin', action: 'send_message', instructions: 'Use {{Name}} and {{B1}} to prepare a message.' }, width: 220, createdAt: 0 };
+	const shifted = shiftColumnReferences([...sheet, action], [b, a, c, action]);
+	assert.equal(shifted[3].action?.instructions, 'Use {{Name}} and {{A1}} to prepare a message.');
+	const renamed = rewriteActionReferences(action.action!, (name) => name.toLowerCase() === 'name' ? 'Full name' : null);
+	assert.equal(renamed.instructions, 'Use {{Full name}} and {{B1}} to prepare a message.');
+	assert.deepEqual(actionDependencies(action.action!), ['Name', 'B1']);
+	assert.deepEqual(danglingActionReferences(action.action!, sheet), []);
+	assert.ok(referenceDependents([...sheet, action], 'a').includes(action));
+	assert.deepEqual(danglingActionReferences({ ...action.action!, instructions: 'Use {{Removed column}}' }, sheet), ['Removed column']);
 });
 
 test('dangling references are the ones that resolve to no column', () => {

@@ -82,7 +82,7 @@ test('a plan gates on keys, explains no-ops, and runs only what is unfinished', 
 	const rows = [row('r1', { CEO: done('Ada') }), row('r2'), row('r3', { CEO: { v: null, s: 'error', e: 'Failed', t: 1 } })];
 	const { commands, enqueued, grid } = harness({ pending: ['r2:CEO'] });
 	const options = { ready: () => true, grid: grid(rows) };
-	assert.deepEqual(commands.plan(rows, [ceo], 'unfinished', { ...options, ready: () => false }), { kind: 'needs-keys', providers: ['openai'] });
+	assert.deepEqual(commands.plan(rows, [ceo], 'unfinished', { ...options, ready: () => false }), { kind: 'needs-keys', providers: ['openai', 'monid'] });
 	const plan = commands.plan(rows, [ceo], 'unfinished', options);
 	assert.equal(plan.kind, 'run');
 	if (plan.kind !== 'run') return;
@@ -147,16 +147,16 @@ test('runs ask only for the providers their operations need', () => {
 	const cases: Array<{ name: string; op: ColumnOp; connected: Provider[]; missing: Provider[] }> = [
 		{ name: 'template', op: template, connected: [], missing: [] },
 		{ name: 'email template', op: { kind: 'email-draft', mode: 'template', prompt: '', to: '{{Email}}', cc: '', bcc: '', subject: 'Hi', body: 'Hello {{Name}}' }, connected: [], missing: [] },
-		{ name: 'AI email draft', op: { kind: 'email-draft', mode: 'ai', prompt: 'Intro', to: '', cc: '', bcc: '', subject: '', body: '' }, connected: ['context'], missing: ['openai'] },
-		{ name: 'company data with only Context.dev', op: { kind: 'company', domain: '{{Domain}}', field: 'industry' }, connected: ['context'], missing: [] },
-		{ name: 'web search without Context.dev', op: { kind: 'search', query: '{{Domain}}', pick: 'url', numResults: 3 }, connected: ['openai'], missing: ['context'] },
-		{ name: 'ask AI without a page needs only OpenAI', op: ask, connected: ['openai'], missing: [] },
-		{ name: 'ask AI reading a page', op: { ...ask, page: { type: 'homepage', column: 'Domain' } } as ColumnOp, connected: ['openai'], missing: ['context'] },
-		{ name: 'check decided by TypeSafe', op: { kind: 'check', question: 'B2B?', decider: 'jev', threshold: 0.5 }, connected: ['typesafe'], missing: [] },
-		{ name: 'check without a decider', op: { kind: 'check', question: 'B2B?', decider: 'jev', threshold: 0.5 }, connected: ['context'], missing: ['typesafe'] },
-		{ name: 'exact-text check on the row', op: { kind: 'check', question: 'Mentions Acme?', literal: 'Acme', decider: 'jev', threshold: 0.5 }, connected: [], missing: [] },
-		{ name: 'email waterfall', op: { kind: 'email-enrichment', name: '{{Name}}', company: '', domain: '{{Domain}}', profileUrl: '', providers: ['hunter'] }, connected: [], missing: [] },
-		{ name: 'Hunter', op: { kind: 'hunter', action: 'verify', email: '{{Email}}' }, connected: ['context', 'openai'], missing: ['hunter'] },
+		{ name: 'AI email draft', op: { kind: 'email-draft', mode: 'ai', prompt: 'Intro', to: '', cc: '', bcc: '', subject: '', body: '' }, connected: [], missing: ['openai'] },
+		{ name: 'company data with Monid', op: { kind: 'company', domain: '{{Domain}}', field: 'industry' }, connected: ['monid'], missing: [] },
+		{ name: 'web search without Monid', op: { kind: 'search', query: '{{Domain}}', pick: 'url', numResults: 3 }, connected: ['openai'], missing: ['monid'] },
+		{ name: 'ask AI from the row alone needs only OpenAI', op: { ...ask, research: 'none' }, connected: ['openai'], missing: [] },
+		{ name: 'ask AI reading a page', op: { ...ask, page: { type: 'homepage', column: 'Domain' } } as ColumnOp, connected: ['openai'], missing: ['monid'] },
+		{ name: 'check decided by OpenAI', op: { kind: 'check', question: 'B2B?', decider: 'openai', threshold: 0.5 }, connected: ['openai'], missing: [] },
+		{ name: 'check without OpenAI', op: { kind: 'check', question: 'B2B?', decider: 'openai', threshold: 0.5 }, connected: ['monid'], missing: ['openai'] },
+		{ name: 'exact-text check on a row', op: { kind: 'check', question: 'Mentions Acme?', literal: 'Acme', decider: 'openai', threshold: 0.5 }, connected: [], missing: [] },
+		{ name: 'email waterfall', op: { kind: 'email-enrichment', name: '{{Name}}', company: '', domain: '{{Domain}}', profileUrl: '', providers: ['hunter'] }, connected: ['monid'], missing: [] },
+		{ name: 'email lookup', op: { kind: 'hunter', action: 'verify', email: '{{Email}}' }, connected: ['monid'], missing: [] },
 	];
 	for (const { name, op, connected, missing } of cases) {
 		const plan = commands.plan(rows, [column('Out', { type: 'enriched', op })], 'all', { ready: (provider) => connected.includes(provider), grid: grid(rows) });
@@ -165,7 +165,7 @@ test('runs ask only for the providers their operations need', () => {
 	}
 });
 
-test('every bulk run shares the cost rule', () => {
+test('every bulk run shares the cell-count confirmation rule', () => {
 	const { commands, grid } = harness();
 	const many = Array.from({ length: 60 }, (_, i) => row(`r${i}`));
 	const options = { ready: () => true, grid: grid(many) };
@@ -173,8 +173,8 @@ test('every bulk run shares the cost rule', () => {
 	const big = commands.plan(many, [column('CEO', { type: 'enriched', op: ask })], 'all', options);
 	const costly = commands.plan(many.slice(0, 2), [column('Funding', { type: 'enriched', op: ultra })], 'all', options);
 	assert.ok(cheap.kind === 'run' && !cheap.estimate.confirm);
-	assert.ok(big.kind === 'run' && big.estimate.confirm && big.estimate.message === '~60 cells × ~4 credits ≈ 240 credits');
-	assert.ok(costly.kind === 'run' && costly.estimate.confirm, 'two Ultra research cells cost more than the threshold');
+	assert.ok(big.kind === 'run' && big.estimate.confirm && big.estimate.message === '~60 cells');
+	assert.ok(costly.kind === 'run' && !costly.estimate.confirm, 'Monid usage varies by endpoint and result count');
 });
 
 test('retry plans only failed cells', async () => {
@@ -201,7 +201,7 @@ test('fill recalculates formulas and runs enrichments copied down their own colu
 	assert.ok(plan?.kind === 'run');
 	await plan.execute();
 	assert.deepEqual(enqueued, [{ rows: ['r2'], columns: ['CEO'], options: { limitToRows: undefined, optimisticStart: true, unfinished: false } }], 'the pending target is left alone');
-	assert.deepEqual(await commands.fill([{ source: { rowId: 'r1', columnId: 'CEO' }, target: { rowId: 'r2', columnId: 'CEO' } }], { ready: () => false }), { kind: 'needs-keys', providers: ['openai'] });
+	assert.deepEqual(await commands.fill([{ source: { rowId: 'r1', columnId: 'CEO' }, target: { rowId: 'r2', columnId: 'CEO' } }], { ready: () => false }), { kind: 'needs-keys', providers: ['openai', 'monid'] });
 });
 
 test('entity columns are inserted after their source with unique names, then planned for the chosen rows', async () => {
@@ -310,7 +310,7 @@ test('an unsaved column’s plan counts the never-run AI inputs it reads, so the
 	assert.deepEqual([alone.estimate.cells, alone.estimate.confirm], [30, false], 'the column by itself looks small');
 	const preview = commands.plan(rows, [draft], 'unfinished', { ...options, sheetColumns: [...sheet.columns, draft] });
 	assert.ok(preview.kind === 'run');
-	assert.deepEqual([preview.estimate.cells, preview.estimate.credits, preview.estimate.confirm], [60, 120, true], 'thirty Greeting cells and the thirty CEO cells they wait on');
+	assert.deepEqual([preview.estimate.cells, preview.estimate.credits, preview.estimate.confirm], [60, 0, true], 'thirty Greeting cells and the thirty CEO cells they wait on');
 });
 
 test('drag-fill never runs a cell another tab or an agent is running, or a finished one that cannot run', async () => {

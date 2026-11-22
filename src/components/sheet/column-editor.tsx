@@ -23,6 +23,7 @@ import { defaultOp, type EditorKind, type EditorOp, guessDomainColumn, guessEnti
 import { FormulaBuilder } from './formula-builder';
 import { RunScopeButton, type RunScope } from './run-scope-button';
 import { plural } from './sheet-page-utils';
+import { PHONE_STRATEGY_INFO, type PhoneProviderStrategy } from '@/lib/phone-strategy';
 import './populate-dialog.css';
 import './column-editor.css';
 
@@ -39,11 +40,11 @@ interface SavedRun { scope: RunScope; seen?: RunEstimate }
 interface Composed { version: number; formula: string; formulaAsk: string; autoFormula: boolean }
 
 const NAMED_BY_QUESTION = new Set<EditorKind>(['ai', 'answer', 'check', 'classify', 'score']);
-const FIELD_HINTS: Record<string, string> = { prompt: 'Add a question', question: 'Add a question', task: 'Add a research task', query: 'Add a search query', template: 'Add a template', name: 'Add the person’s name', domain: 'Add a company domain', email: 'Add an email', options: 'Add at least 2 options', levels: 'Add at least 2 levels', providers: 'Choose at least one provider', page: 'Choose a page', fields: 'Add a field or instructions to extract' };
+const FIELD_HINTS: Record<string, string> = { prompt: 'Add a question', question: 'Add a question', task: 'Add a research task', query: 'Add a search query', template: 'Add a template', name: 'Add the person’s name', company: 'Add the person’s current company', profileUrl: 'Add a LinkedIn personal profile URL', domain: 'Add a company domain', email: 'Add an email', options: 'Add at least 2 options', levels: 'Add at least 2 levels', providers: 'Choose at least one provider', page: 'Choose a page', fields: 'Add a field or instructions to extract' };
 
 function ColumnPromptHelp() {
 	return <HelpTooltip label="About AI columns">
-		<span>Describe what you want to know about each row. Enrichable picks the operation and fills every cell. For simple changes to existing data it writes a formula and checks it on up to 10 rows first.</span>
+								<span>Describe what you want to know about each row. Monid Enrich picks the operation and fills every cell. For simple changes to existing data it writes a formula and checks it on up to 10 rows first.</span>
 		<span>Type / to insert a column, a cell or a range (A1, $A$1, A1:B3). References move with each row; $ locks a coordinate.</span>
 	</HelpTooltip>;
 }
@@ -51,10 +52,27 @@ function ColumnPromptHelp() {
 interface ComposerInput { sheet: Sheet; column?: Column; initialOp?: ColumnOp; initialName?: string; sampleRow?: Row; jevAvailable: boolean; columnOptions: Column[]; formulaColumns: Column[]; formulaColumn: Column; onReplace: () => void; setError: (error: string | null) => void }
 
 /** The op and name being edited, and the AI composition that can replace them. Only the newest composition may apply. */
+function legacyPhoneStrategy(op: ColumnOp): ColumnOp {
+	if (op.kind === 'person' && op.field === 'mobile' && !op.phoneStrategy) return { ...op, phoneStrategy: 'clay' };
+	if (op.kind === 'prospeo' && op.field === 'mobile' && !op.phoneStrategy) return { ...op, phoneStrategy: 'clay' };
+	return op;
+}
+
+function phoneStrategyAllowed(op: ColumnOp, fallback: PhoneProviderStrategy, allowed: readonly string[]) {
+	const strategy = op.kind === 'person' && op.field === 'mobile' || op.kind === 'prospeo' && op.field === 'mobile' ? op.phoneStrategy ?? fallback : null;
+	return !strategy || PHONE_STRATEGY_INFO[strategy].providers.every((provider) => allowed.includes(provider));
+}
+
+function withPhoneStrategy(op: ColumnOp, fallback: PhoneProviderStrategy): ColumnOp {
+	if (op.kind === 'person' && op.field === 'mobile') return { ...op, phoneStrategy: op.phoneStrategy ?? fallback };
+	if (op.kind === 'prospeo' && op.field === 'mobile') return { ...op, phoneStrategy: op.phoneStrategy ?? fallback };
+	return op;
+}
+
 function useColumnComposer({ sheet, column, initialOp, initialName, sampleRow, jevAvailable, columnOptions, formulaColumns, formulaColumn, onReplace, setError }: ComposerInput) {
 	const [step, setStep] = useState<Step>(column || initialOp ? { step: 'setup', rationale: null } : { step: 'ask' });
 	const [ask, setAsk] = useState('');
-	const [op, setOp] = useState<EditorOp>(column?.op ?? initialOp ?? defaultOp('ai', sheet.columns, jevAvailable));
+	const [op, setOp] = useState<EditorOp>(column?.op ? legacyPhoneStrategy(column.op) : initialOp ?? defaultOp('ai', sheet.columns, jevAvailable));
 	const [name, setName] = useState(column?.name ?? initialName ?? '');
 	const nameEdited = useRef(Boolean(column || initialName));
 	const [composed, setComposed] = useState<Composed>({ version: 0, formula: '=', formulaAsk: '', autoFormula: false });
@@ -139,15 +157,17 @@ function editorSize(dedicatedEmail: boolean, kind: EditorKind) {
 type ColumnWrites = Pick<SheetCommands, 'addColumns' | 'editColumn'>;
 
 /** The column as it is saved: the edited column with its new name and operation, or a new AI column. */
-function savedColumn(column: Column | undefined, name: string, op: ColumnOp): Column {
-	if (column) return { ...column, name, op };
-	return newColumn({ name, type: 'enriched', op, ...(op.kind === 'email-enrichment' ? { format: 'email' as const } : {}), width: op.kind === 'scrape' && op.mode === 'markdown' ? 320 : 220 });
+function savedColumn(column: Column | undefined, name: string, op: ColumnOp, defaultPhoneStrategy: PhoneProviderStrategy): Column {
+	const savedOp = withPhoneStrategy(op, defaultPhoneStrategy);
+	if (column) return { ...column, name, op: savedOp };
+	return newColumn({ name, type: 'enriched', op: savedOp, ...(savedOp.kind === 'email-enrichment' ? { format: 'email' as const } : {}), width: savedOp.kind === 'scrape' && savedOp.mode === 'markdown' ? 320 : 220 });
 }
 
 /** Add or edit an AI column: describe it in plain English (AI picks the operation) or set it up by hand. */
 export function ColumnEditorDialog({ sheet, column, sampleRow, rows, insertAt, initialOp, initialName, remainingRows = 1, totalRows = remainingRows, commands, planRun, onClose, onSaved }: { sheet: Sheet; column?: Column; sampleRow?: Row; rows: Row[]; insertAt?: number; initialOp?: ColumnOp; initialName?: string; onClose: () => void; remainingRows?: number; totalRows?: number; commands: ColumnWrites; planRun: (column: Column, scope: RunScope) => RunPlan; onSaved: (column: Column, run: SavedRun | null) => void }) {
-	const { hasJev, settings } = useSettings();
+	const { hasJev, settings, memberPreferences } = useSettings();
 	const jevAvailable = hasJev && settings.preferJev;
+	const allowedPhoneProviders = settings.mobilePhoneProviders?.length ? settings.mobilePhoneProviders : ['leadmagic', 'clay'];
 	const dedicatedEmail = initialOp?.kind === 'email-enrichment' || column?.op?.kind === 'email-enrichment';
 	const columnOptions = useMemo(() => sheet.columns.filter((entry) => entry.id !== column?.id), [sheet.columns, column?.id]);
 	const formulaColumn = useMemo(() => newColumn({ name: 'Formula', type: 'source' }), []);
@@ -158,7 +178,10 @@ export function ColumnEditorDialog({ sheet, column, sampleRow, rows, insertAt, i
 	const { op, name } = draft;
 	const composing = draft.step.step === 'composing';
 	const composerOnly = isComposerOnly(column, dedicatedEmail, draft.step);
-	const { validation, dangling, duplicateName, valid } = checkColumn(op, name, sheet.columns, columnOptions);
+	const candidateOp = op.kind === 'formula' && 'request' in op ? op : withPhoneStrategy(op as ColumnOp, memberPreferences.defaultPhoneStrategy);
+	const { validation, dangling, duplicateName } = checkColumn(candidateOp, name, sheet.columns, columnOptions);
+	const routeAllowed = op.kind === 'formula' && 'request' in op || phoneStrategyAllowed(candidateOp as ColumnOp, memberPreferences.defaultPhoneStrategy, allowedPhoneProviders);
+	const valid = checkColumn(op, name, sheet.columns, columnOptions).valid && routeAllowed;
 
 	async function save(run: SavedRun | null) {
 		if (!validation.success || !valid) return;
@@ -166,8 +189,8 @@ export function ColumnEditorDialog({ sheet, column, sampleRow, rows, insertAt, i
 		setError(null);
 		try {
 			const parsedOp = validation.data;
-			const saved = savedColumn(column, name.trim(), parsedOp);
-			if (column) await commands.editColumn(column.id, { name: saved.name, op: parsedOp });
+			const saved = savedColumn(column, name.trim(), parsedOp, memberPreferences.defaultPhoneStrategy);
+			if (column) await commands.editColumn(column.id, { name: saved.name, op: saved.op });
 			else await commands.addColumns([saved], { kind: parsedOp.kind, position: insertAt });
 			onSaved(saved, run);
 			onClose();
@@ -180,7 +203,7 @@ export function ColumnEditorDialog({ sheet, column, sampleRow, rows, insertAt, i
 	/** Previews the run on the draft column, including the never-run AI columns it reads, before anything is saved. */
 	const run = (scope: RunScope) => {
 		if (!validation.success || !valid) return;
-		const preview = planRun(savedColumn(column, name.trim(), validation.data), scope);
+		const preview = planRun(savedColumn(column, name.trim(), validation.data, memberPreferences.defaultPhoneStrategy), scope);
 		const seen = preview.kind === 'run' ? preview.estimate : undefined;
 		if (seen?.confirm) setSubmit({ state: 'confirm', scope, estimate: seen });
 		else void save({ scope, seen });

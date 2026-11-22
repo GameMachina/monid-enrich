@@ -1,9 +1,11 @@
 import { DATE_FORMATS } from './date-format';
 import { z } from 'zod';
 import { ColumnOpSchema, PopulateRequestSchema, COLUMN_FORMATS } from './types';
+import { ActionColumnSchema } from './action-column';
 
-export const MAX_SHEETS = 10;
-export const MAX_ROWS = 1000;
+// No product-level sheet/row cap. Database writes and grid reads remain paginated/bounded by request size.
+export const MAX_SHEETS = Number.MAX_SAFE_INTEGER;
+export const MAX_ROWS = Number.MAX_SAFE_INTEGER;
 /** Sheets saved before version 1 may still call their website column "Domain", and before version 2 may hold results
     fingerprinted by column name (`v1:`); see `upgradeGrid`. */
 export const SHEET_DATA_VERSION = 2;
@@ -11,7 +13,14 @@ const identifier = z.string().min(1).max(128);
 const cellValue = z.union([z.string(), z.number().finite(), z.boolean(), z.null(), z.array(z.string())]);
 export const sheetSchema = z.object({
 	id: identifier, name: z.string().min(1).max(300),
-	columns: z.array(z.object({ id: identifier, name: z.string().max(300), type: z.enum(['source', 'enriched']), op: ColumnOpSchema.optional(), width: z.number().finite().positive(), hidden: z.boolean().optional(), format: z.enum(COLUMN_FORMATS).optional(), categoryOptions: z.array(z.string().trim().min(1).max(200)).min(1).max(100).refine((options) => new Set(options).size === options.length, 'Categories must be unique.').optional(), categoryColors: z.record(z.string().min(1).max(200), z.string().regex(/^#[a-f0-9]{6}$/i)).refine((colors) => Object.keys(colors).length <= 100, 'Up to 100 category colors.').optional(), currency: z.enum(['USD', 'EUR', 'GBP', 'CAD', 'AUD', 'INR', 'JPY']).optional(), unit: z.string().max(30).optional(), dateFormat: z.enum(DATE_FORMATS).optional(), useGrouping: z.boolean().optional(), decimalPlaces: z.number().int().min(0).max(10).optional(), createdAt: z.number().finite() })).max(200).refine((columns) => columns.every((column) => column.format !== 'category' || Boolean(column.categoryOptions?.length)), 'Add at least one category.'),
+	columns: z.array(z.object({ id: identifier, name: z.string().max(300), type: z.enum(['source', 'enriched']), op: ColumnOpSchema.optional(), action: ActionColumnSchema.optional(), width: z.number().finite().positive(), hidden: z.boolean().optional(), format: z.enum(COLUMN_FORMATS).optional(), categoryOptions: z.array(z.string().trim().min(1).max(200)).min(1).max(100).refine((options) => new Set(options).size === options.length, 'Categories must be unique.').optional(), categoryColors: z.record(z.string().min(1).max(200), z.string().regex(/^#[a-f0-9]{6}$/i)).refine((colors) => Object.keys(colors).length <= 100, 'Up to 100 category colors.').optional(), currency: z.enum(['USD', 'EUR', 'GBP', 'CAD', 'AUD', 'INR', 'JPY']).optional(), unit: z.string().max(30).optional(), dateFormat: z.enum(DATE_FORMATS).optional(), useGrouping: z.boolean().optional(), decimalPlaces: z.number().int().min(0).max(10).optional(), createdAt: z.number().finite() })).max(200)
+		.superRefine((columns, context) => {
+			columns.forEach((column, index) => {
+				const configured = Number(Boolean(column.op)) + Number(Boolean(column.action));
+				if (column.type === 'enriched' ? configured !== 1 : configured !== 0) context.addIssue({ code: 'custom', path: [index], message: 'Enriched columns need exactly one operation or action setup; source columns cannot have either.' });
+				if (column.format === 'category' && !column.categoryOptions?.length) context.addIssue({ code: 'custom', path: [index, 'categoryOptions'], message: 'Add at least one category.' });
+			});
+		}),
 	filters: z.array(z.object({ id: identifier, columnId: identifier, op: z.enum(['contains', 'not_contains', 'equals', 'not_equals', 'empty', 'not_empty', 'true', 'false', 'gt', 'lt', 'error']), value: z.string().optional() })),
 	sort: z.object({ columnId: identifier, dir: z.enum(['asc', 'desc']) }).nullable(),
 	populate: PopulateRequestSchema.optional(), dataVersion: z.number().int().positive().optional(), createdAt: z.number().finite(), updatedAt: z.number().finite(),

@@ -10,10 +10,11 @@ test('explicit result counts override the default without interpreting company a
 	assert.equal(promptResultCount('Find companies with 80 employees founded in 2020'), undefined);
 	assert.equal(promptResultCount('Find me 1,000 companies'), 1000);
 	assert.equal(populateLimitError(100), null);
-	assert.match(populateLimitError(101)!, /Only 100/);
+	assert.equal(populateLimitError(101), null);
+	assert.match(populateLimitError(1001)!, /up to 1,000/);
 	assert.ok(populateLimitError(0));
 	assert.equal(PopulateRequestSchema.parse({ query: 'software', entity: 'companies' }).target, 20);
-	assert.equal(PopulateRequestSchema.safeParse({ query: 'software', entity: 'companies', target: 101 }).success, false);
+	assert.equal(PopulateRequestSchema.safeParse({ query: 'software', entity: 'companies', target: 101 }).success, true);
 });
 
 test('sheet names come from the prompt: short, sentence-cased, without the request verb or count', () => {

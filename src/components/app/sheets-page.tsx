@@ -20,7 +20,6 @@ import { FailureFix, type ConnectionIssue } from '@/components/sheet/halted-bann
 import { populateRunner } from '@/lib/populate-runner';
 import { sheetNameFromPrompt } from '@/lib/populate-limit';
 import { trackEvent } from '@/lib/analytics';
-import { MAX_SHEETS } from '@/lib/workspace';
 
 // The sheet page still imports NameDialog from here.
 export { NameDialog };
@@ -71,7 +70,6 @@ export function SheetsPage() {
 	const [renaming, setRenaming] = useState<Sheet | null>(null);
 	const [deleting, setDeleting] = useState<Sheet | null>(null);
 	const count = sheets?.length ?? 0;
-	const full = count >= MAX_SHEETS;
 
 	/** One empty row to type into, created with the sheet. */
 	async function createBlank() {
@@ -106,11 +104,9 @@ export function SheetsPage() {
 				<div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
 					<div className="flex min-w-0 items-baseline gap-3">
 						<h1 className="text-h4 text-fg">Sheets</h1>
-						{sheets !== undefined && <span className={`text-body-sm tabular-nums ${full ? 'text-warning' : 'text-fg-subtle'}`}><span aria-hidden>{count} / {MAX_SHEETS} sheets</span><span className="sr-only">{count} of {MAX_SHEETS} sheets used</span></span>}
 					</div>
-					{!!count && <Button variant="brand" size="sm" disabled={full} onClick={() => setDialog('new')} className="max-sm:min-h-11"><Plus strokeWidth={1.75} /> New sheet</Button>}
+					{!!count && <Button variant="brand" size="sm" onClick={() => setDialog('new')} className="max-sm:min-h-11"><Plus strokeWidth={1.75} /> New sheet</Button>}
 				</div>
-				{full && <p className="text-body-sm text-fg-muted">Your workspace holds up to {MAX_SHEETS} sheets. Delete one to make room for another.</p>}
 			</header>
 			{sheets === undefined ? (
 				<div className="grid gap-5 sm:grid-cols-2">
@@ -152,7 +148,7 @@ export function SheetsPage() {
 										className="grid size-11 place-items-center rounded-md text-fg-subtle sm:size-7 transition-colors hover:bg-tint/[0.05] hover:text-fg"
 										items={[
 											{ label: 'Rename', icon: <Pencil />, onSelect: () => setRenaming(sheet) },
-											{ label: 'Duplicate', icon: <Copy />, disabled: full, onSelect: () => void duplicateSheet(sheet.id).catch((error) => toast(message(error, 'Could not duplicate this sheet.'), 'error')) },
+											{ label: 'Duplicate', icon: <Copy />, onSelect: () => void duplicateSheet(sheet.id).catch((error) => toast(message(error, 'Could not duplicate this sheet.'), 'error')) },
 											{ separator: true, label: '' },
 											{ label: 'Delete', icon: <Trash2 />, danger: true, onSelect: () => setDeleting(sheet) },
 										]}
@@ -189,12 +185,11 @@ export function SheetsPage() {
 	);
 }
 
-/** A rejected Context.dev or OpenAI key, or used-up credit, found before a sheet exists for the search. A check that can't run never blocks. */
+/** A rejected Monid key found before a sheet exists for the search. A check that can't run never blocks. */
 async function requiredKeyIssue(): Promise<{ error: string; issue: ConnectionIssue } | null> {
 	try {
-		const { context, openai } = await verifyKeys({ only: ['context', 'openai'] });
-		if (!context.ok && context.issue) return { error: context.message ?? 'Context.dev rejected the API key.', issue: { reason: context.issue === 'key' ? 'credential_invalid' : 'credits_exhausted', provider: 'context' } };
-		if (!openai.ok && (openai.issue === 'key' || openai.issue === 'billing')) return { error: openai.message ?? 'OpenAI rejected the API key.', issue: { reason: openai.issue === 'key' ? 'credential_invalid' : 'credits_exhausted', provider: 'openai' } };
+		const { monid } = await verifyKeys({ only: ['monid'] });
+		if (monid && !monid.ok && monid.issue) return { error: monid.message ?? 'Monid rejected the API key.', issue: { reason: monid.issue === 'key' ? 'credential_invalid' : 'credits_exhausted', provider: 'monid' } };
 	} catch { /* The search reports the same problem with its fix. */ }
 	return null;
 }

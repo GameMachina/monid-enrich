@@ -10,7 +10,7 @@ export async function POST(request: Request) {
 	const prepared = await routeInput(request, PopulateRequestSchema);
 	if (prepared instanceof Response) return prepared;
 	const { input, access } = prepared;
-	if (!access.key('openai') || !access.key('context')) return jsonError('Add your OpenAI and Context.dev API keys in Configuration to find rows.', 401, failure('credential_missing', access.key('context') ? 'openai' : 'context'));
+	if (!access.key('monid')) return jsonError('Connect Monid in Configuration to find rows.', 401, failure('credential_missing', 'monid'));
 	return new Response(populateStream(access, input), {
 		status: 200,
 		headers: { 'content-type': 'application/x-ndjson; charset=utf-8', 'cache-control': 'no-store', 'x-accel-buffering': 'no' },

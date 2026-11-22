@@ -5,13 +5,12 @@ import { MoreHorizontal } from 'lucide-react';
 import clsx from 'clsx';
 import type { Provider } from '@/lib/organization-settings';
 import { Button } from '@/components/ui/button';
-import { ConfirmDialog, Dialog } from '@/components/ui/dialog';
-import { Field, Input } from '@/components/ui/field';
+import { ConfirmDialog } from '@/components/ui/dialog';
 import { MenuButton, type MenuItem } from '@/components/ui/menu';
 import { useToast } from '@/components/ui/toast';
 import { useSettings } from './settings-context';
 import { ConnectionDialog, ProviderLogo } from './keys-dialog';
-import { CONNECTION_ORDER, formatExpiry, PROVIDER_INFO, reconnectContext, REQUIRED_PROVIDERS, type Connection } from './providers';
+import { CONNECTION_ORDER, formatExpiry, PROVIDER_INFO, REQUIRED_PROVIDERS, type Connection } from './providers';
 import { providerCheck, useVerification, type ProviderCheck } from './use-verification';
 
 const TONE = { success: 'text-success', danger: 'text-danger', warning: 'text-warning', muted: 'text-fg-subtle' } as const;
@@ -33,24 +32,19 @@ function detail(provider: Provider, connection: Connection) {
 
 /** Every provider in one list: logo, status, and one action menu. Configured connections are checked (without inference) on load. */
 export function Connections() {
-	const { settings, connections, organization, server, selfHosted, contextSignIn, disconnectProvider, canImportSettings, importSettings } = useSettings();
+	const { settings, connections, organization, server, disconnectProvider } = useSettings();
 	const { toast } = useToast();
-	const [editing, setEditing] = useState<{ provider: Provider; section: 'key' | 'logolink' } | null>(null);
+	const [editing, setEditing] = useState<{ provider: Provider } | null>(null);
 	const [disconnecting, setDisconnecting] = useState<Provider | null>(null);
 	const [busy, setBusy] = useState(false);
-	const [importing, setImporting] = useState(false);
-	const [passwordOpen, setPasswordOpen] = useState(false);
 	const checkable = useMemo(() => CONNECTION_ORDER.filter((provider) => PROVIDER_INFO[provider].verifiable && connections[provider].state !== 'missing' && connections[provider].state !== 'expired'), [connections]);
 	const verification = useVerification(settings, checkable, { version: JSON.stringify([organization?.revision, server]) });
 
 	function actions(provider: Provider, connection: Connection): MenuItem[] {
 		const configured = connection.state === 'connected' || connection.state === 'saved' || connection.state === 'expired';
-		const hostedContext = provider === 'context' && contextSignIn;
 		return [
-			...(hostedContext ? [{ label: 'Reconnect with Context.dev', onSelect: reconnectContext }] : []),
-			{ label: hostedContext ? 'Use an API key instead' : configured ? 'Replace key' : 'Add key', onSelect: () => setEditing({ provider, section: 'key' }) },
-			...(provider === 'context' ? [{ label: 'Logo Link key', onSelect: () => setEditing({ provider, section: 'logolink' }) }] : []),
-			...(configured && (connection.state !== 'expired' || !hostedContext) ? [{ separator: true, label: '' }, { label: 'Disconnect', danger: true, onSelect: () => setDisconnecting(provider) }] : []),
+			{ label: configured ? 'Replace key' : 'Add key', onSelect: () => setEditing({ provider }) },
+			...(configured ? [{ separator: true, label: '' }, { label: 'Disconnect', danger: true, onSelect: () => setDisconnecting(provider) }] : []),
 		];
 	}
 
@@ -58,14 +52,12 @@ export function Connections() {
 		<section aria-labelledby="connections-title" className="glass-card flex flex-col px-5 py-2">
 			<div className="flex flex-col gap-0.5 border-b border-line-subtle py-3">
 				<h2 id="connections-title" className="text-body text-fg">Connections</h2>
-				<p className="text-caption text-fg-subtle">{selfHosted ? 'Keys are saved in this browser and sent only with your requests.' : 'Encrypted and shared with everyone in your workspace and its agents.'}</p>
+				<p className="text-caption text-fg-subtle">Keys are encrypted on this server and scoped to this workspace.</p>
 			</div>
-			{canImportSettings && <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line-subtle py-3"><p className="text-body-sm text-fg-muted">This browser has keys from before workspaces were shared.</p><Button size="sm" onClick={() => setImporting(true)}>Import them</Button></div>}
 			<ul className="divide-y divide-line-subtle">
 				{CONNECTION_ORDER.map((provider) => {
 					const connection = connections[provider];
 					const label = status(provider, connection, providerCheck(verification.result, provider));
-					const canReconnect = provider === 'context' && contextSignIn && (connection.state === 'missing' || connection.state === 'expired');
 					return (
 						<li key={provider} className="flex items-center gap-3 py-3">
 							<ProviderLogo provider={provider} />
@@ -74,25 +66,33 @@ export function Connections() {
 								<span className="truncate text-caption text-fg-subtle">{detail(provider, connection)}</span>
 							</div>
 							<span className={clsx('max-w-[45%] text-right text-caption break-words', TONE[label.tone])}>
-								{label.text}{canReconnect && <> · <button type="button" onClick={reconnectContext} className="text-brand hover:underline">Reconnect</button></>}
+								{label.text}
 							</span>
-							{connection.state === 'missing' && !canReconnect
-								? <Button size="xs" onClick={() => setEditing({ provider, section: 'key' })}>Connect</Button>
+							{connection.state === 'missing'
+				? <Button size="xs" onClick={() => setEditing({ provider })}>Connect</Button>
 								: <MenuButton label={`${PROVIDER_INFO[provider].name} actions`} align="right" items={actions(provider, connection)} className="grid size-7 shrink-0 place-items-center rounded-md text-fg-subtle transition-colors hover:bg-tint/[0.05] hover:text-fg max-md:size-11"><MoreHorizontal aria-hidden="true" className="size-4" /></MenuButton>}
 						</li>
 					);
 				})}
-				{selfHosted && server?.passwordRequired && <li className="flex items-center gap-3 py-3">
-					<div className="flex min-w-0 flex-1 flex-col gap-0.5"><span className="text-body-sm text-fg">Deployment password</span><span className="text-caption text-fg-subtle">Use the keys this deployment provides.</span></div>
-					<span className="text-caption text-fg-subtle">{settings.accessPassword ? 'Saved' : 'Not set'}</span>
-					<Button size="xs" onClick={() => setPasswordOpen(true)}>{settings.accessPassword ? 'Change' : 'Add'}</Button>
-				</li>}
 			</ul>
-			{editing && <ConnectionDialog provider={editing.provider} section={editing.section} onClose={() => setEditing(null)} />}
-			{passwordOpen && <PasswordDialog onClose={() => setPasswordOpen(false)} />}
+			<div className="mt-1 border-t border-line-subtle py-3">
+				<h3 className="text-body-sm text-fg">Action integrations</h3>
+				<p className="mt-0.5 text-caption text-fg-subtle">These will connect outreach services to action columns. They are not available to connect yet.</p>
+				<ul className="mt-2 divide-y divide-line-subtle">
+					{[
+						{ name: 'HeyReach', detail: 'LinkedIn outreach' },
+						{ name: 'Instantly', detail: 'Email outreach' },
+						{ name: 'IDEAL email sequencer', detail: 'Email sequences' },
+					].map((integration) => <li key={integration.name} className="flex items-center gap-3 py-2.5">
+						<div className="min-w-0 flex-1"><p className="text-body-sm text-fg">{integration.name}</p><p className="text-caption text-fg-subtle">{integration.detail}</p></div>
+						<span className="text-caption text-fg-subtle">Coming soon</span>
+					</li>)}
+				</ul>
+			</div>
+			{editing && <ConnectionDialog provider={editing.provider} onClose={() => setEditing(null)} />}
 			{disconnecting && <ConfirmDialog
 				title={`Disconnect ${PROVIDER_INFO[disconnecting].name}?`}
-				description={selfHosted ? 'The saved key is removed from this browser.' : 'This removes the connection for everyone in your workspace and its agents. It does not revoke the key at the provider.'}
+				description="The encrypted workspace copy is removed. This does not revoke the key at Monid or OpenAI."
 				confirmLabel="Disconnect"
 				danger
 				loading={busy}
@@ -104,37 +104,6 @@ export function Connections() {
 					finally { setBusy(false); }
 				}}
 			/>}
-			{importing && <ConfirmDialog
-				title="Share this browser’s keys with your workspace?"
-				description="Keys and preferences saved in this browser are added to your workspace. Existing connections and settings are not overwritten. The browser copy is removed after a successful import."
-				confirmLabel="Import and share"
-				loading={busy}
-				onClose={() => { if (!busy) setImporting(false); }}
-				onConfirm={async () => {
-					setBusy(true);
-					try { await importSettings(); setImporting(false); toast('Keys imported.', 'success'); }
-					catch (error) { toast(error instanceof Error ? error.message : 'Could not import settings.', 'error'); }
-					finally { setBusy(false); }
-				}}
-			/>}
 		</section>
-	);
-}
-
-function PasswordDialog({ onClose }: { onClose: () => void }) {
-	const { settings, update } = useSettings();
-	const [password, setPassword] = useState(settings.accessPassword);
-	const [saving, setSaving] = useState(false);
-	const [error, setError] = useState('');
-	async function save() {
-		setSaving(true); setError('');
-		try { await update({ accessPassword: password.trim() }); onClose(); }
-		catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not save the password.'); }
-		finally { setSaving(false); }
-	}
-	return (
-		<Dialog title="Deployment password" description="Use the keys this deployment provides instead of your own." onClose={onClose} footer={<Button variant="brand" size="sm" loading={saving} onClick={() => void save()}>Save</Button>}>
-			<Field label="Deployment password" error={error}>{(id) => <Input id={id} type="password" autoFocus autoComplete="off" value={password} onChange={(event) => setPassword(event.target.value)} />}</Field>
-		</Dialog>
 	);
 }

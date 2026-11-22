@@ -12,6 +12,7 @@ import { EmailDraftFields } from './email-draft-fields';
 import { cellFromInput, cellInput } from '@/lib/formula-input';
 import { useToast } from '@/components/ui/toast';
 import { formatValue, toUrl } from '@/lib/template';
+import { findColumn, substituteReferences } from '@/lib/references';
 import { type Cell, type CellMeta, type Column, type EmailDraft, type EmailProvider, type Row, type Sheet } from '@/lib/types';
 import { Button, IconButton } from '@/components/ui/button';
 import { Select, Textarea } from '@/components/ui/field';
@@ -27,7 +28,7 @@ import { organizationKind } from '@/lib/organization-logo';
 
 type SaveCell = (rowId: string, columnId: string, cell: Cell) => Promise<void>;
 
-const PROVIDER_NAMES: Record<EmailProvider, string> = { hunter: 'Hunter', prospeo: 'Prospeo', quickenrich: 'QuickEnrich', apollo: 'Apollo', contactout: 'ContactOut' };
+const PROVIDER_NAMES: Record<EmailProvider, string> = { monid: 'Monid', hunter: 'Monid', prospeo: 'Monid', quickenrich: 'Monid', apollo: 'Monid', contactout: 'Monid' };
 const subscribeNothing = () => () => {};
 const isBusy = (cell: Cell | undefined) => cell?.s === 'running' || cell?.s === 'queued';
 const panelWidth = (document: boolean, wide: boolean) => document ? 'w-[540px]' : wide ? 'w-[440px]' : 'w-[340px]';
@@ -53,7 +54,9 @@ export function CellPanel({ sheet, row, column, onClose, onRerun, onEditColumn, 
 		<aside aria-label="Cell details" className={`flex h-full ${panelWidth(document, structured || isEmailColumn(column))} max-w-full shrink-0 flex-col border-l border-line bg-surface max-md:absolute max-md:inset-y-0 max-md:right-0 max-md:z-30 max-md:w-full max-md:shadow-[var(--shadow-floating)]`}>
 			<CellPanelHeader sheet={sheet} row={row} column={column} cell={cell} emailDraft={emailDraft} onClose={onClose} />
 			<div className="scrollbar-thin flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto overscroll-contain px-4 py-4">
-				<CellPanelMain sheet={sheet} row={row} column={column} cell={cell} value={value} structured={structured} editing={editing} setEditing={setEditing} emailDraft={emailDraft} setEmailDraft={setEmailDraft} onSave={onSave} errorAction={errorAction} />
+				{column.action
+					? <ActionSetupSection action={column.action} row={row} columns={sheet.columns} />
+					: <CellPanelMain sheet={sheet} row={row} column={column} cell={cell} value={value} structured={structured} editing={editing} setEditing={setEditing} emailDraft={emailDraft} setEmailDraft={setEmailDraft} onSave={onSave} errorAction={errorAction} />}
 				{!editing && organizationKind(column) === 'company' && <CompanyPreview row={row} column={column} columns={sheet.columns} />}
 				{cell?.f && <section className="flex flex-col gap-2"><h4 className="text-caption text-fg-subtle">Formula</h4><code className="break-all text-body-sm text-fg">{cell.f}</code></section>}
 				<ProbabilitySection meta={cell?.m} column={column} />
@@ -61,6 +64,7 @@ export function CellPanel({ sheet, row, column, onClose, onRerun, onEditColumn, 
 				<SourcesSection meta={cell?.m} />
 				<UsageSection cell={cell} />
 			</div>
+			{column.action && <div className="border-t border-line-subtle px-4 py-3"><Button size="sm" onClick={onEditColumn}>Edit Action Column</Button></div>}
 			{column.op && (
 				<div className="flex items-center gap-2 border-t border-line-subtle px-4 py-3">
 					<Button size="sm" variant="brand" onClick={onRerun} disabled={isBusy(cell)}>
@@ -73,6 +77,21 @@ export function CellPanel({ sheet, row, column, onClose, onRerun, onEditColumn, 
 			)}
 		</aside>
 	);
+}
+
+function ActionSetupSection({ action, row, columns }: { action: NonNullable<Column['action']>; row: Row; columns: Column[] }) {
+	const channel = action.channel === 'email-sequencer' ? 'Email sequence (IDEAL)' : action.channel === 'agentweb-site' ? `AgentWeb · ${action.domain}` : action.channel[0].toUpperCase() + action.channel.slice(1);
+	const name = action.action.replaceAll('_', ' ');
+	const preview = substituteReferences(action.instructions, (reference) => {
+		const column = findColumn(columns, reference);
+		return column ? formatValue(row.cells[column.id]?.v) || '(empty)' : `{{${reference}}}`;
+	});
+	return <section className="flex flex-col gap-2 rounded-lg bg-neutral-5 px-3 py-3">
+		<h4 className="text-caption text-fg-subtle">Action setup</h4>
+		<p className="text-body-sm font-medium capitalize text-fg">{channel} · {name}</p>
+		<p className="whitespace-pre-wrap break-words text-body-sm text-fg-muted">{preview}</p>
+		<p className="text-caption text-fg-subtle">Saved configuration only. This column does not run actions yet.</p>
+	</section>;
 }
 
 function CellPanelHeader({ sheet, row, column, cell, emailDraft, onClose }: { sheet: Sheet; row: Row; column: Column; cell: Cell | undefined; emailDraft: EmailDraft | null; onClose: () => void }) {
@@ -253,10 +272,11 @@ const plural = (count: number) => count === 1 ? '' : 's';
 /** Credits, provider usage, duration, and when the value was written. */
 function UsageSection({ cell }: { cell: Cell | undefined }) {
 	const meta = cell?.m;
-	if (meta?.credits === undefined && !meta?.enrichment && !meta?.provider && meta?.durationMs === undefined) return null;
+	if (meta?.credits === undefined && !meta?.enrichment && !meta?.provider && !meta?.monidRuns?.length && meta?.durationMs === undefined) return null;
 	return (
 		<section className="flex flex-col gap-1 text-caption text-fg-subtle tabular">
-			{meta.credits !== undefined && <span>{meta.credits} Context.dev credit{plural(meta.credits)}</span>}
+			{meta.credits !== undefined && <span>{meta.credits} Monid credit{plural(meta.credits)}</span>}
+			{meta.monidRuns?.map((run) => <span key={run.runId ?? `${run.provider}:${run.endpoint}`} title={run.runId ? `Monid run ${run.runId}` : undefined}>{monidRunLabel(run.endpoint)} · {run.status}{run.costUsd !== undefined ? ` · $${run.costUsd.toFixed(4)}` : ''}{run.billedUnits !== undefined ? ` · ${run.billedUnits} units` : ''}</span>)}
 			{meta.enrichment && <span>Included credit used: ${meta.enrichment.costUsd.toFixed(4)}</span>}
 			{meta.provider && !meta.enrichment && <span>{PROVIDER_NAMES[meta.provider]}{providerUsage(meta)}</span>}
 			{meta.durationMs !== undefined && <span>{(meta.durationMs / 1000).toFixed(1)} s</span>}
@@ -266,6 +286,12 @@ function UsageSection({ cell }: { cell: Cell | undefined }) {
 }
 
 const providerUsage = ({ providerCredits, providerCreditUnit }: CellMeta) => providerCredits !== undefined ? ` · ${providerCredits} ${providerCreditUnit ?? 'credit'}${plural(providerCredits)}` : ' · usage billed by provider';
+
+function monidRunLabel(endpoint: string) {
+	if (endpoint === '/mobile_phone.leadmagic') return 'LeadMagic via workspace Monid';
+	if (endpoint === '/enrichment/mobile-phone') return 'Clay via workspace Monid';
+	return `Monid · ${endpoint}`;
+}
 
 // The viewer's locale and time zone only exist in the browser, so a server pass renders no text.
 function LocalTime({ time }: { time: number }) {

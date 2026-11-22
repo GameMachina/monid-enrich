@@ -63,7 +63,7 @@ export function McpAccess() {
 		{error && <p role="alert" className="text-body-sm text-danger">{error}</p>}
 		{key?.recoverable === false && <p className="text-caption text-fg-subtle">This older key needs a verified backfill by your server administrator before it can be retrieved. Rotation creates a recoverable replacement.</p>}
 		{secret && <code className="break-all rounded-lg border border-line-subtle p-3 text-body-sm select-all">{secret}</code>}
-		<AgentConnectionNote selfHosted={selfHosted} context={connections.context} />
+		<AgentConnectionNote selfHosted={selfHosted} context={connections.monid} />
 		<details className="text-body-sm text-fg-muted">
 			<summary className="cursor-pointer">View config</summary>
 			<div className="mt-3 flex flex-col gap-2">
@@ -87,7 +87,7 @@ function AgentKeyActions({ agentKey, busy, visible, onCopy, onToggle, onRotate }
 }
 
 function AgentConnectionNote({ selfHosted, context }: { selfHosted: boolean; context: Connection }) {
-	if (selfHosted) return <p className="text-caption text-fg-subtle"><span className="font-medium text-fg-muted">Required:</span> agents must send <code className="font-mono">x-openai-key</code> and <code className="font-mono">x-context-key</code> headers. Keys you saved here stay in this browser, so agents can’t use them.</p>;
-	if (context.source === 'signin' && context.expiresAt) return <p className="text-caption text-fg-subtle">Agents use your workspace’s Context.dev sign-in, which {formatExpiry(context.expiresAt)}. For always-on agents, add a Context.dev API key in Connections.</p>;
+	if (selfHosted) return <p className="text-caption text-fg-subtle"><span className="font-medium text-fg-muted">Required:</span> agents send <code className="font-mono">x-monid-key</code>, and add <code className="font-mono">x-openai-key</code> only for reasoning features. Keys saved in this browser are not shared with agents.</p>;
+	if (context.source === 'signin' && context.expiresAt) return <p className="text-caption text-fg-subtle">Agents use your workspace’s Monid connection, which {formatExpiry(context.expiresAt)}. Add a Monid API key in Connections for ongoing access.</p>;
 	return <p className="text-caption text-fg-subtle">Agents use your workspace’s connections and defaults.</p>;
 }

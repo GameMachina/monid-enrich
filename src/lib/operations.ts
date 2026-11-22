@@ -1,5 +1,6 @@
 import type { Provider } from './organization-settings';
 import { ColumnOpSchema, type ColumnOp, type FailureProvider, type OpKind, type PageSource } from './types';
+import { PHONE_STRATEGY_INFO, type PhoneProviderStrategy } from './phone-strategy';
 
 /* The operation catalog: one record per operation kind, describing it to every caller (editor, runner, freshness,
    cost estimates, MCP, compose and the server executor). Add a kind here and the rest of the app picks it up. */
@@ -28,7 +29,7 @@ export interface Operation<K extends OpKind = OpKind> {
 	local(op: Op<K>): boolean;
 	/** Keys the server executor needs before it can start. */
 	requires(op: Op<K>): ProviderNeed[];
-	/** Rough Context.dev credits per cell; work billed by another provider counts 0. */
+	/** Rough provider usage units per cell; actual Monid cost is stored with the cell result. */
 	credits(op: Op<K>): number;
 	/** Slowest plausible single run, so MCP never starts a row it cannot finish. */
 	worstCaseMs(op: Op<K>): number;
@@ -38,10 +39,10 @@ export interface Operation<K extends OpKind = OpKind> {
 	issue?(op: Op<K>): DefinitionIssue | null;
 }
 
-const CONTEXT: ProviderNeed = ['context'];
+const MONID: ProviderNeed = ['monid'];
 const OPENAI: ProviderNeed = ['openai'];
-const DECIDER: ProviderNeed = ['typesafe', 'openai'];
-const pageNeeds = (page?: PageSource): ProviderNeed[] => page ? [CONTEXT] : [];
+const DECIDER: ProviderNeed = ['openai'];
+const pageNeeds = (page?: PageSource): ProviderNeed[] => page ? [MONID] : [];
 const pageCredits = (page?: PageSource) => !page ? 0 : page.type === 'find' ? 2 : 1;
 const remote = () => false;
 const row = (): RowContext => 'row';
@@ -49,14 +50,23 @@ const references = (): RowContext => 'references';
 const free = () => 0;
 const typical = () => 90_000;
 const decision = () => 120_000;
+const mobileWorstCase = (strategy?: PhoneProviderStrategy) => PHONE_STRATEGY_INFO[strategy ?? 'clay'].providers.reduce((total, provider) => total + (provider === 'clay' ? 180_000 : 60_000), 0);
+const mobileDefinitionIssue = (op: { name?: string; company?: string; domain?: string; email?: string; profileUrl?: string; phoneStrategy?: PhoneProviderStrategy }) => {
+	const providers = PHONE_STRATEGY_INFO[op.phoneStrategy ?? 'clay'].providers;
+	const leadMagicReady = Boolean(op.profileUrl?.trim() || op.email?.trim());
+	const clayReady = Boolean(op.name?.trim() && (op.company?.trim() || op.domain?.trim()) && op.profileUrl?.trim());
+	if (providers.includes('leadmagic') && leadMagicReady || providers.includes('clay') && clayReady) return null;
+	if (providers.includes('leadmagic') && providers.length === 1) return { field: 'profileUrl', message: 'Add a LinkedIn profile URL or email for LeadMagic.' };
+	if (providers.includes('clay') && providers.length === 1) return { field: 'profileUrl', message: 'Clay needs a full name, current company, and LinkedIn profile URL.' };
+	return { field: 'profileUrl', message: 'Add a LinkedIn profile or email for LeadMagic, or a full name, current company, and LinkedIn profile for Clay.' };
+};
 
 export const OPERATIONS: { readonly [K in OpKind]: Operation<K> } = {
 	'email-enrichment': {
 		label: 'Find email', short: 'Email', columnName: 'Work email',
-		description: 'Tries your providers top to bottom, including Hunter and Prospeo, and keeps the first work email found.',
+		description: 'Find a work email from a person name and company using the connected Monid workspace.',
 		references: ['name', 'company', 'domain', 'profileUrl'], rowContext: references, local: remote,
-		// Each provider uses its own key or the included credit, and the waterfall reports what each attempt lacked.
-		requires: () => [], credits: free, worstCaseMs: () => 240_000, bills: 'email',
+		requires: () => [MONID], credits: free, worstCaseMs: () => 120_000, bills: 'monid',
 	},
 	'email-draft': {
 		label: 'Email draft', short: 'Email draft', columnName: 'Email draft',
@@ -67,10 +77,9 @@ export const OPERATIONS: { readonly [K in OpKind]: Operation<K> } = {
 	},
 	ai: {
 		label: 'Ask AI', short: 'AI', columnName: 'AI answer',
-		description: 'AI answers a question about each row, searching the web with Context.dev when it needs to.',
+		description: 'OpenAI answers a question about each row, using Monid web research when requested.',
 		references: ['prompt', 'page'], instruction: 'prompt', rowContext: row, local: remote,
-		// Web research uses Context.dev only when it is connected; reading a page needs it.
-		requires: (op) => [OPENAI, ...pageNeeds(op.page)], credits: (op) => (op.research === 'web' ? 4 : 0) + pageCredits(op.page), worstCaseMs: decision, bills: 'openai',
+		requires: (op) => [OPENAI, ...(op.research === 'web' ? [MONID] : pageNeeds(op.page))], credits: (op) => (op.research === 'web' ? 4 : 0) + pageCredits(op.page), worstCaseMs: decision, bills: 'openai',
 	},
 	check: {
 		label: 'True / false check', short: 'Check', columnName: 'Check',
@@ -95,44 +104,46 @@ export const OPERATIONS: { readonly [K in OpKind]: Operation<K> } = {
 		label: 'Read a page', short: 'Scrape', columnName: 'Page',
 		description: 'Fetch a page and keep its text, relevant passages, links or extracted fields.',
 		references: ['page', 'query'], rowContext: references, local: remote,
-		requires: () => [CONTEXT], credits: (op) => Math.max(1, pageCredits(op.page)), worstCaseMs: typical, bills: 'context',
+		requires: (op) => [...pageNeeds(op.page), ...(op.mode === 'extract' ? [OPENAI] : [])], credits: (op) => Math.max(1, pageCredits(op.page)), worstCaseMs: typical, bills: 'monid',
 		issue: (op) => op.mode === 'extract' && !op.fields?.length && !op.query?.trim() ? { field: 'fields', message: 'Add a field or instructions to extract.' } : null,
 	},
 	search: {
 		label: 'Web search', short: 'Search', columnName: 'Search result',
 		description: 'Search the web and keep the top URL, title or snippet.',
 		references: ['query'], rowContext: references, local: remote,
-		requires: () => [CONTEXT], credits: () => 1, worstCaseMs: typical, bills: 'context',
+		requires: () => [MONID], credits: () => 1, worstCaseMs: typical, bills: 'monid',
 	},
 	company: {
 		label: 'Company data', short: 'Company', columnName: 'Company info',
 		description: 'Firmographics, funding, links and socials for a company domain.',
 		references: ['domain'], rowContext: references, local: remote,
-		requires: () => [CONTEXT], credits: () => 1, worstCaseMs: typical, bills: 'context',
+		requires: () => [MONID], credits: () => 1, worstCaseMs: typical, bills: 'monid',
 	},
 	person: {
 		label: 'Person data', short: 'Person', columnName: 'Person info',
-		description: 'Title, employer, education and profiles for a person.',
+		description: 'Titles, employer, education, profiles and mobile-phone lookups for a person.',
 		references: ['name', 'company', 'email', 'profileUrl'], rowContext: references, local: remote,
-		requires: () => [CONTEXT], credits: () => 1, worstCaseMs: typical, bills: 'context',
+		requires: () => [MONID], credits: () => 1, worstCaseMs: (op) => op.field === 'mobile' ? mobileWorstCase(op.phoneStrategy) : 90_000, bills: 'monid',
+		issue: (op) => op.field === 'mobile' ? mobileDefinitionIssue(op) : null,
 	},
 	hunter: {
-		label: 'Hunter email', short: 'Hunter', columnName: 'Email status',
-		description: 'Find a work email from a name and domain, or verify an email with Hunter.',
+		label: 'Email lookup', short: 'Email', columnName: 'Email status',
+		description: 'Find or verify a work email through Monid.',
 		references: ['name', 'domain', 'email'], rowContext: references, local: remote,
-		requires: () => [['hunter']], credits: free, worstCaseMs: typical, bills: 'email',
+		requires: () => [MONID], credits: free, worstCaseMs: typical, bills: 'monid',
 	},
 	prospeo: {
-		label: 'Prospeo person', short: 'Prospeo', columnName: 'Mobile',
-		description: 'Find verified work emails, mobile numbers and person details with Prospeo.',
+		label: 'Contact profile', short: 'Profile', columnName: 'Contact info',
+		description: 'Enrich supported person details, including mobile-phone lookups, through Monid.',
 		references: ['name', 'domain', 'email', 'profileUrl'], rowContext: references, local: remote,
-		requires: () => [['prospeo']], credits: free, worstCaseMs: typical, bills: 'email',
+		requires: () => [MONID], credits: free, worstCaseMs: (op) => op.field === 'mobile' ? mobileWorstCase(op.phoneStrategy) : typical(), bills: 'monid',
+		issue: (op) => op.field === 'mobile' ? mobileDefinitionIssue(op) : null,
 	},
 	answer: {
 		label: 'Deep research', short: 'Research', columnName: 'Research',
-		description: 'Context.dev researches the live web and returns a sourced answer. Slower and uses more credits.',
+		description: 'OpenAI researches the live web through Monid and returns a sourced answer.',
 		references: ['task'], instruction: 'task', rowContext: () => 'row-unless-referenced', local: remote,
-		requires: () => [CONTEXT], credits: (op) => op.mode === 'ultra' ? 100 : 10, worstCaseMs: () => 130_000, bills: 'context',
+		requires: () => [MONID, OPENAI], credits: (op) => op.mode === 'ultra' ? 100 : 10, worstCaseMs: () => 130_000, bills: 'openai',
 	},
 	template: {
 		label: 'Text template', short: 'Template', columnName: 'Text',
@@ -195,7 +206,9 @@ export function columnNameFromQuestion(question: string): string {
 }
 
 export const evaluatesLocally = (op: ColumnOp) => operation(op.kind).local(op);
-export const requiredProviders = (op: ColumnOp) => operation(op.kind).requires(op);
+export const requiredProviders = (op: ColumnOp) => operation(op.kind).requires(op).filter((need, index, needs) =>
+	needs.findIndex((candidate) => candidate.length === need.length && candidate.every((provider, position) => provider === need[position])) === index,
+);
 export const creditsPerCell = (op: ColumnOp) => operation(op.kind).credits(op);
 export const worstCaseMs = (op: ColumnOp) => operation(op.kind).worstCaseMs(op);
 export const billingProvider = (op: ColumnOp) => operation(op.kind).bills;

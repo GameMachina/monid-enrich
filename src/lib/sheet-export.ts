@@ -16,10 +16,10 @@ export function exportSummary({ rows, total, selected, hiddenColumns }: { rows: 
 /** Each enriched column followed by its confidence and sources, as plain columns any writer can handle. */
 function withMeta(columns: Column[], rows: Row[]) {
 	const visible = columns.filter((column) => !column.hidden);
-	const enriched = visible.filter((column) => column.type === 'enriched');
+	const enriched = visible.filter((column) => column.type === 'enriched' && column.op);
 	const confidenceId = (column: Column) => `${column.id}:confidence`, sourcesId = (column: Column) => `${column.id}:sources`;
 	return {
-		columns: visible.flatMap((column) => column.type === 'enriched' ? [column, { ...column, id: confidenceId(column), name: `${column.name} (confidence)` }, { ...column, id: sourcesId(column), name: `${column.name} (sources)` }] : [column]),
+		columns: visible.flatMap((column) => column.type === 'enriched' && column.op ? [column, { ...column, id: confidenceId(column), name: `${column.name} (confidence)` }, { ...column, id: sourcesId(column), name: `${column.name} (sources)` }] : [column]),
 		rows: rows.map((row) => ({ ...row, cells: { ...row.cells, ...Object.fromEntries(enriched.flatMap((column) => {
 			const cell = row.cells[column.id];
 			const meta = cell?.s === 'error' ? undefined : cell?.m;

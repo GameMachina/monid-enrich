@@ -76,13 +76,13 @@ function escapeCsv(value: string): string {
 
 export function toCsv(columns: Column[], rows: Row[], options: { includeMeta?: boolean } = {}): string {
 	const visible = columns.filter((column) => !column.hidden);
-	const headers = visible.flatMap((column) => (options.includeMeta && column.type === 'enriched' ? [column.name, `${column.name} (confidence)`, `${column.name} (sources)`] : [column.name]));
+	const headers = visible.flatMap((column) => (options.includeMeta && column.type === 'enriched' && column.op ? [column.name, `${column.name} (confidence)`, `${column.name} (sources)`] : [column.name]));
 	const lines = [headers.map(escapeCsv).join(',')];
 	for (const row of rows) {
 		const cells = visible.flatMap((column) => {
 			const cell = row.cells[column.id];
 			const value = formatValue(exportValue(column, cell));
-			if (options.includeMeta && column.type === 'enriched') {
+			if (options.includeMeta && column.type === 'enriched' && column.op) {
 				const confidence = cell?.m?.probability ?? cell?.m?.confidence;
 				return [value, confidence !== undefined ? confidence.toFixed(2) : '', (cell?.m?.sources ?? []).join(' ')];
 			}

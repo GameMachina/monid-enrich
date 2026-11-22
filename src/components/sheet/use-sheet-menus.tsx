@@ -7,7 +7,7 @@ import { OPERATIONS } from '@/lib/operations';
 import { uniqueName } from '@/lib/references';
 import type { SheetCommands } from '@/lib/sheet-commands';
 import type { Column, Row, Sheet, Sort } from '@/lib/types';
-import { ArrowDown, ArrowUp, Columns3, Eraser, EyeOff, FileText, Filter, FunctionSquare, Mail, MoveLeft, MoveRight, Pencil, Play, Plus, RefreshCw, Sparkles, Trash2, Upload } from 'lucide-react';
+import { ArrowDown, ArrowUp, Columns3, Eraser, EyeOff, FileText, Filter, FunctionSquare, Mail, MousePointerClick, MoveLeft, MoveRight, Pencil, Play, Plus, RefreshCw, Sparkles, Trash2, Upload } from 'lucide-react';
 import type { ActiveCell } from './grid';
 import { deleteColumnNotice, plural } from './sheet-page-utils';
 import type { SheetActions } from './use-sheet-actions';
@@ -23,6 +23,7 @@ export function useSheetMenus({ sheetId, sheet, allRows, commands, content, sele
 
 	const addColumnItems = (insertAt?: number): MenuItem[] => [
 		{ label: 'AI column', icon: <Sparkles />, onSelect: () => overlays.setEditor({ insertAt }) },
+		{ label: 'Action Column', icon: <MousePointerClick />, onSelect: () => overlays.setActionColumn({ insertAt }) },
 		{ label: 'Formula', icon: <FunctionSquare />, onSelect: () => overlays.setFormulaBuilder({ column: newColumn({ name: uniqueName('Formula', columnNames), type: 'source' }), insertAt }) },
 		{ label: 'Find email', icon: <Mail />, onSelect: () => overlays.setEditor({ insertAt, initialOp: defaultEmailWaterfall(sheet.columns), initialName: uniqueName(OPERATIONS['email-enrichment'].columnName, columnNames) }) },
 		{ label: 'Blank column', icon: <Columns3 />, onSelect: () => actions.addBlankColumn(insertAt) },
@@ -39,7 +40,10 @@ export function useSheetMenus({ sheetId, sheet, allRows, commands, content, sele
 		const index = sheet.columns.findIndex((entry) => entry.id === column.id);
 		const sorted = (dir: Sort['dir']) => view.sort?.columnId === column.id && view.sort.dir === dir;
 		return [
-			...(column.type === 'enriched' ? [
+			...(column.action ? [
+				{ label: 'Edit Action Column', icon: <MousePointerClick />, onSelect: () => overlays.setActionColumn({ column }) },
+				{ separator: true, label: '' },
+			] : column.op ? [
 				{ label: 'Edit AI column', icon: <Pencil />, onSelect: () => overlays.setEditor({ column }) },
 				{ label: 'Run unfinished cells', icon: <Play />, onSelect: () => runCells(rows, [column], 'unfinished') },
 				{ label: rows.length === allRows.length ? 'Re-run all cells' : `Re-run ${plural(rows.length, 'visible cell')}`, icon: <RefreshCw />, onSelect: () => runCells(rows, [column], 'all') },

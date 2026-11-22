@@ -11,7 +11,7 @@ test('renderTemplate substitutes columns case-insensitively and blanks unknowns'
 
 test('textReferences and opDependencies find column names', () => {
 	assert.deepEqual(textReferences('{{A}} and {{ B }} and {{A}}'), ['A', 'B']);
-	assert.deepEqual(opDependencies({ kind: 'check', question: 'Is {{Company}} public?', page: { type: 'find', column: 'Domain', page: 'pricing' }, decider: 'jev', threshold: 0.5 }), ['Company', 'Domain']);
+	assert.deepEqual(opDependencies({ kind: 'check', question: 'Is {{Company}} public?', page: { type: 'find', column: 'Domain', page: 'pricing' }, decider: 'openai', threshold: 0.5 }), ['Company', 'Domain']);
 	assert.deepEqual(opDependencies({ kind: 'template', template: '{{X}}-{{Y}}' }), ['X', 'Y']);
 });
 

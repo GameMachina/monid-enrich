@@ -15,7 +15,7 @@ export type RouteContext = { account: Account; database: Database };
 type ContextSource = <T>(run: (context: RouteContext) => Promise<T>) => Promise<T>;
 export type RequestTrace = { operation: string; requestId: string; started: number; phase?: string };
 
-export const UNAVAILABLE = 'Enrichable could not complete this request. Try again in a moment.';
+export const UNAVAILABLE = 'Monid Enrich could not complete this request. Try again in a moment.';
 
 /** What a caller is told about `error`. Our errors carry a status and a message written for the caller (400 means the
     caller's input failed to parse; see parseInput). Anything else is logged under the request id and answered 503 without

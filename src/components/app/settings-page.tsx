@@ -1,13 +1,15 @@
 'use client';
 
 import Dexie from 'dexie';
+import { ExternalLink } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { accountStorageKey } from '@/lib/account-storage';
 import { importMyLocalSheets } from '@/lib/db';
 import type { Settings } from '@/lib/keys';
+import { buttonClassName } from '@/components/ui/button-class';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/dialog';
-import { Field, Input } from '@/components/ui/field';
+import { Field, Input, Select, Switch } from '@/components/ui/field';
 import { useToast } from '@/components/ui/toast';
 import { PageColumn, PageHeader } from './page-header';
 import { ModelPicker } from './model-picker';
@@ -16,19 +18,112 @@ import { McpAccess } from './mcp-access';
 import { CompanyBranding } from './company-branding';
 import { brandingDomain, loadBrand } from './brand-lookup';
 import { Connections } from './connections';
+import { AgentWebConnection } from './agentweb-connection';
 import { isReady } from './providers';
 import { providerCheck, useVerification, type ProviderCheck } from './use-verification';
+import { allowedPhoneStrategies, DEFAULT_ALLOWED_PHONE_PROVIDERS, PHONE_PROVIDERS, PHONE_STRATEGY_INFO, type PhoneProvider } from '@/lib/phone-strategy';
 
 export function SettingsPage() {
 	const { selfHosted, workspaceName } = useSettings();
 	return (
 		<PageColumn>
-			<PageHeader title="Configuration" description={selfHosted ? 'Your workspace is tied to this browser. Keep its cookies to keep your sheets.' : `Shared with ${workspaceName || 'your Context.dev team'}.`} />
+			<PageHeader title="Configuration" description={selfHosted ? 'This workspace and its sheets are stored in this browser.' : `Shared with ${workspaceName || 'your workspace team'}.`} />
 			<Connections />
+			<AgentWebConnection />
+			<MonidWallet />
+			<MobilePhoneProviderSettings />
 			<Defaults />
 			<McpAccess />
 			{!selfHosted && <LegacySheetsImport />}
 		</PageColumn>
+	);
+}
+
+function MobilePhoneProviderSettings() {
+	const { settings, update, organization, memberPreferences, memberPreferencesError, updateMemberPreferences } = useSettings();
+	const { toast } = useToast();
+	const allowed = settings.mobilePhoneProviders?.length ? settings.mobilePhoneProviders : DEFAULT_ALLOWED_PHONE_PROVIDERS;
+	const strategies = allowedPhoneStrategies(allowed);
+	const currentDefault = strategies.includes(memberPreferences.defaultPhoneStrategy) ? memberPreferences.defaultPhoneStrategy : strategies[0] ?? 'leadmagic';
+	const [allowedDraft, setAllowedDraft] = useState<PhoneProvider[] | null>(null);
+	const [defaultDraft, setDefaultDraft] = useState<typeof currentDefault | null>(null);
+	const [savingWorkspace, setSavingWorkspace] = useState(false);
+	const [savingMember, setSavingMember] = useState(false);
+	const [error, setError] = useState('');
+	const draftAllowed = allowedDraft ?? allowed;
+	const draftStrategies = allowedPhoneStrategies(draftAllowed);
+	const draftDefault = defaultDraft && draftStrategies.includes(defaultDraft) ? defaultDraft : draftStrategies.includes(currentDefault) ? currentDefault : draftStrategies[0] ?? 'leadmagic';
+	const workspaceChanged = JSON.stringify(draftAllowed) !== JSON.stringify(allowed);
+
+	function toggleProvider(provider: PhoneProvider, checked: boolean) {
+		const next = checked ? [...draftAllowed, provider] : draftAllowed.filter((entry) => entry !== provider);
+		if (!next.length) { setError('Keep at least one mobile provider enabled.'); return; }
+		setAllowedDraft(PHONE_PROVIDERS.filter((entry) => next.includes(entry)));
+		setError('');
+	}
+
+	async function saveWorkspace() {
+		setSavingWorkspace(true); setError('');
+		try {
+			await update({ mobilePhoneProviders: draftAllowed }, organization?.revision);
+			setAllowedDraft(null); setDefaultDraft(null);
+			toast('Workspace mobile providers saved.', 'success');
+		} catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not save workspace providers.'); }
+		finally { setSavingWorkspace(false); }
+	}
+
+	async function saveMemberDefault() {
+		setSavingMember(true); setError('');
+		try {
+			await updateMemberPreferences({ defaultPhoneStrategy: draftDefault });
+			setDefaultDraft(null);
+			toast('Your mobile lookup default saved.', 'success');
+		} catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not save your default.'); }
+		finally { setSavingMember(false); }
+	}
+
+	return <section aria-labelledby="mobile-providers-title" className="glass-card flex flex-col gap-5 px-5 py-5">
+		<div className="flex flex-col gap-1">
+			<h2 id="mobile-providers-title" className="text-body text-fg">Mobile phone providers</h2>
+			<p className="text-body-sm text-fg-muted">Choose which Monid routes your workspace allows, then set your personal default. Provider calls are billed to the workspace Monid wallet.</p>
+		</div>
+		<div className="flex flex-col gap-3">
+			<div><h3 className="text-body-sm font-medium text-fg">Workspace provider access</h3><p className="text-caption text-fg-subtle">Members can only select strategies that use enabled providers.</p></div>
+			<div className="grid gap-2 sm:grid-cols-2">
+				{PHONE_PROVIDERS.map((provider) => <label key={provider} className="flex items-center justify-between gap-3 rounded-lg border border-line-subtle px-3 py-2.5">
+					<span><span className="block text-body-sm text-fg">{provider === 'leadmagic' ? 'LeadMagic' : 'Clay'} via Monid</span><span className="block text-caption text-fg-subtle">{provider === 'leadmagic' ? 'Fast lookup; no-match calls are billable.' : 'Requires LinkedIn, name, and company; no-match results are not billed.'}</span></span>
+					<Switch checked={draftAllowed.includes(provider)} onChange={(checked) => toggleProvider(provider, checked)} label={`Allow ${provider === 'leadmagic' ? 'LeadMagic' : 'Clay'} via Monid`} />
+				</label>)}
+			</div>
+			<Button size="sm" className="self-start" disabled={!workspaceChanged || !draftAllowed.length} loading={savingWorkspace} onClick={() => void saveWorkspace()}>Save workspace providers</Button>
+		</div>
+		<div className="flex flex-col gap-3 border-t border-line-subtle pt-5">
+			<div><h3 className="text-body-sm font-medium text-fg">My default strategy</h3><p className="text-caption text-fg-subtle">Used when you create a new mobile-number column. You can override it per column.</p></div>
+			<Field label="Provider strategy" help="Waterfalls continue only after a completed no-match. Provider errors and uncertain timeouts stop the chain.">
+				{(id) => <Select id={id} value={draftDefault} onValueChange={(value) => setDefaultDraft(value as typeof currentDefault)} className="max-w-md">
+					{draftStrategies.map((strategy) => <option key={strategy} value={strategy}>{PHONE_STRATEGY_INFO[strategy].label}</option>)}
+				</Select>}
+			</Field>
+			<p className="max-w-2xl text-caption text-fg-subtle">LeadMagic is billed on a no-match; Clay no-match results are not billed. Waterfalls can make two paid requests, and each Monid run’s actual cost is recorded with the cell.</p>
+			{memberPreferencesError && <p role="alert" className="text-body-sm text-danger">{memberPreferencesError}</p>}
+			{memberPreferences.defaultPhoneStrategy !== currentDefault && <p role="status" className="text-caption text-warning">Your previous default uses a provider the workspace disabled. Save an enabled strategy.</p>}
+			<Button size="sm" className="self-start" disabled={!draftDefault || draftDefault === memberPreferences.defaultPhoneStrategy && !memberPreferencesError} loading={savingMember} onClick={() => void saveMemberDefault()}>Save my default</Button>
+		</div>
+		{error && <p role="alert" className="text-body-sm text-danger">{error}</p>}
+	</section>;
+}
+
+function MonidWallet() {
+	return (
+		<section aria-labelledby="monid-wallet-title" className="glass-card flex flex-col gap-3 px-5 py-5 sm:flex-row sm:items-center sm:justify-between">
+			<div className="flex min-w-0 flex-col gap-1">
+				<h2 id="monid-wallet-title" className="text-body text-fg">Monid wallet</h2>
+				<p className="text-body-sm text-fg-muted">Add funds to your Monid balance. Top-ups are completed securely in Monid via Stripe.</p>
+			</div>
+			<a href="https://app.monid.ai" target="_blank" rel="noopener noreferrer" className={buttonClassName('outline', 'sm')}>
+				Top up wallet <ExternalLink aria-hidden="true" />
+			</a>
+		</section>
 	);
 }
 
@@ -100,7 +195,7 @@ function ModelDefaults({ values, draft, onChange }: { values: Settings; draft: P
 			{(id) => <ModelPicker id={id} value={values.model} onChange={(model) => onChange({ model })} />}
 		</Field>
 		{modelChanged && <ModelCheckLine checking={modelCheck.checking} check={providerCheck(modelCheck.result, 'openai')} />}
-		<Field label="Yes/no and category answers" help="Automatic (recommended) uses calibrated decisions when TypeSafe is connected, and your AI model otherwise. Or pick a specific model.">
+		<Field label="Yes/no and category answers" help="These structured reasoning features use your optional OpenAI key.">
 			{(id) => <ModelPicker id={id} value={values.classifierModel} onChange={(classifierModel) => onChange({ classifierModel, preferJev: classifierModel === 'decisions' })} classifier />}
 		</Field>
 		<Field label="OpenAI-compatible base URL (optional)" help="Leave empty for OpenAI. Set it for Azure OpenAI, a proxy, or a local server; those use the Chat Completions API.">

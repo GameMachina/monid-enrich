@@ -9,7 +9,7 @@ export async function POST(request: Request) {
 	const trace = newTrace('logos.resolve');
 	try {
 		const access = await browserAccess(request);
-		if (!access.key('context')) return jsonError('Connect Context.dev to look up organization names.', 401);
+		if (!access.key('monid')) return jsonError('Connect Monid to look up organization names.', 401);
 		const body = await readJson(request) as { name?: unknown } | null;
 		if (typeof body?.name !== 'string' || !body.name.trim() || body.name.length > 300) return jsonError('Provide an organization name of up to 300 characters.', 400);
 		const name = body.name.trim();

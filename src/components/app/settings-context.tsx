@@ -1,15 +1,17 @@
 'use client';
 
 import { serverKeys, type ServerKeys } from '@/lib/api';
-import { DEFAULT_SETTINGS, loadSettings, saveSettings, saveOrganizationSettings, type Settings, subscribeSettings, initializeOrganizationSettings, refreshOrganizationSettings, organizationSettingsSnapshot, localSettingsToImport, importLocalOrganizationSettings, disconnectOrganizationProvider, organizationSettingsEnabled } from '@/lib/keys';
+import { DEFAULT_SETTINGS, loadSettings, saveSettings, saveOrganizationSettings, type Settings, subscribeSettings, initializeOrganizationSettings, refreshOrganizationSettings, organizationSettingsSnapshot, disconnectOrganizationProvider, organizationSettingsEnabled } from '@/lib/keys';
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { providerField, type OrganizationSettings, type Provider } from '@/lib/organization-settings';
 import { OPENAI_KEY_REQUIRED_EVENT } from '@/lib/ai-trial';
 import { deriveConnections, isReady, type Connection } from './providers';
+import { accountHeaders } from '@/lib/account-storage';
+import { DEFAULT_MEMBER_PREFERENCES, type MemberPreferences } from '@/lib/member-settings';
 
 interface SettingsContextValue {
 	selfHosted: boolean;
-	/** Hosted Context.dev sign-in: a missing or expired Context.dev connection is fixed by reconnecting, not by pasting a key. */
+	/** Legacy onboarding prop retained for hosts that have not removed the old consent route. */
 	contextSignIn: boolean;
 	workspaceName: string;
 	trialLimitMessage: string | null;
@@ -18,15 +20,16 @@ interface SettingsContextValue {
 	logolinkPublicId?: string;
 	update: (patch: Partial<Settings>, expectedRevision?: number) => Promise<void>;
 	organization: OrganizationSettings | null;
+	memberPreferences: MemberPreferences;
+	memberPreferencesError: string | null;
+	updateMemberPreferences: (patch: Partial<MemberPreferences>) => Promise<void>;
 	settingsError: string | null;
 	retrySettings: () => void;
-	canImportSettings: boolean;
-	importSettings: () => Promise<void>;
 	disconnectProvider: (provider: Provider) => Promise<void>;
 	server: ServerKeys | null;
 	connections: Record<Provider, Connection>;
 	ready: boolean;
-	/** Context.dev and OpenAI, which Find rows needs. Runs ask `providerReady` for just the providers their operations need. */
+	/** Monid is needed for data enrichment. OpenAI reasoning remains optional and reports its own connection state. */
 	hasKeys: boolean;
 	providerReady: (provider: Provider) => boolean;
 	hasJev: boolean;
@@ -38,10 +41,21 @@ interface SettingsContextValue {
 const SettingsContext = createContext<SettingsContextValue | null>(null);
 
 const serverSnapshot = () => DEFAULT_SETTINGS;
+type MemberSettingsSnapshot = { revision: number; preferences: MemberPreferences };
+
+async function requestMemberSettings(method: 'GET' | 'PATCH', body?: unknown): Promise<MemberSettingsSnapshot> {
+	const response = await fetch('/api/member-settings', { method, headers: { ...accountHeaders(), 'content-type': 'application/json' }, cache: 'no-store', ...(body ? { body: JSON.stringify(body) } : {}) });
+	if (!response.ok) throw new Error((await response.json().catch(() => null))?.error || 'Could not load member preferences.');
+	return await response.json() as MemberSettingsSnapshot;
+}
 
 export function SettingsProvider({ children, logolinkPublicId, selfHosted = false, contextSignIn = false, workspaceName = '' }: { children: ReactNode; logolinkPublicId?: string; selfHosted?: boolean; contextSignIn?: boolean; workspaceName?: string }) {
 	const settings = useSyncExternalStore(subscribeSettings, loadSettings, serverSnapshot);
 	const [settingsError, setSettingsError] = useState<string | null>(null);
+	const [memberSettings, setMemberSettings] = useState<MemberSettingsSnapshot>({ revision: 0, preferences: DEFAULT_MEMBER_PREFERENCES });
+	const memberSettingsRef = useRef(memberSettings);
+	const [memberPreferencesError, setMemberPreferencesError] = useState<string | null>(null);
+	const memberSave = useRef<Promise<void>>(Promise.resolve());
 	const organization = organizationSettingsSnapshot();
 	const [server, setServer] = useState<ServerKeys | null>(null);
 	const [ready, setReady] = useState(false);
@@ -66,10 +80,16 @@ export function SettingsProvider({ children, logolinkPublicId, selfHosted = fals
 		let loaded = false;
 		sync.current = async () => {
 			try {
-				if (!selfHosted) await (loaded ? refreshOrganizationSettings() : initializeOrganizationSettings());
-				const value = await serverKeys();
+				await (loaded ? refreshOrganizationSettings() : initializeOrganizationSettings());
+				const [value, member] = await Promise.all([serverKeys(), requestMemberSettings('GET').catch((error: unknown) => {
+					if (!cancelled) setMemberPreferencesError(error instanceof Error ? error.message : 'Could not load member preferences.');
+					return null;
+				})]);
 				loaded = true;
-				if (!cancelled) { setServer(value); setSettingsError(null); setReady(true); }
+				if (!cancelled) {
+					setServer(value); setSettingsError(null); setReady(true);
+					if (member) { memberSettingsRef.current = member; setMemberSettings(member); setMemberPreferencesError(null); }
+				}
 			} catch (error) { if (!cancelled) setSettingsError(error instanceof Error ? error.message : 'Could not load workspace settings.'); }
 		};
 		void sync.current();
@@ -83,7 +103,22 @@ export function SettingsProvider({ children, logolinkPublicId, selfHosted = fals
 		if (expectedRevision !== undefined) await saveOrganizationSettings(patch, expectedRevision); else await saveSettings(patch);
 		setServer(await serverKeys());
 	}, []);
-	const importSettings = useCallback(async () => { await importLocalOrganizationSettings(); setServer(await serverKeys()); }, []);
+	const updateMemberPreferences = useCallback((patch: Partial<MemberPreferences>) => {
+		const save = memberSave.current.catch(() => {}).then(async () => {
+			const current = memberSettingsRef.current;
+			try {
+				const next = await requestMemberSettings('PATCH', { revision: current.revision, preferences: patch });
+				memberSettingsRef.current = next; setMemberSettings(next); setMemberPreferencesError(null);
+			} catch (error) {
+				if (error instanceof Error && /changed in another session/i.test(error.message)) {
+					try { const fresh = await requestMemberSettings('GET'); memberSettingsRef.current = fresh; setMemberSettings(fresh); } catch {}
+				}
+				throw error;
+			}
+		});
+		memberSave.current = save;
+		return save;
+	}, []);
 	const disconnectProvider = useCallback(async (provider: Provider) => {
 		if (organizationSettingsEnabled()) await disconnectOrganizationProvider(provider);
 		else await saveSettings({ [providerField[provider]]: '' });
@@ -92,12 +127,12 @@ export function SettingsProvider({ children, logolinkPublicId, selfHosted = fals
 	const connections = useMemo(() => deriveConnections({ settings, organization, server, selfHosted, trialLimited: Boolean(trialLimitMessage) }), [settings, organization, server, selfHosted, trialLimitMessage]);
 	// A key of the member's own replaces the trial, so its limit no longer applies.
 	const activeTrialLimit = connections.openai.state === 'connected' || connections.openai.state === 'saved' ? null : trialLimitMessage;
-	const hasKeys = isReady(connections.context) && isReady(connections.openai);
+	const hasKeys = isReady(connections.monid);
 	const providerReady = useCallback((provider: Provider) => isReady(connections[provider]), [connections]);
-	const hasJev = connections.typesafe.state !== 'missing' && connections.typesafe.state !== 'expired';
+	const hasJev = false;
 	const openKeys = useCallback(() => setKeysOpen(true), []);
 	const closeKeys = useCallback(() => setKeysOpen(false), []);
-	const value = useMemo<SettingsContextValue>(() => ({ selfHosted, contextSignIn, workspaceName, settings, update, organization, settingsError, retrySettings, canImportSettings: Boolean(localSettingsToImport()), importSettings, disconnectProvider, server, connections, ready, hasKeys, providerReady, hasJev, logolinkPublicId, keysOpen, trialLimitMessage: activeTrialLimit, reportTrialLimit, openKeys, closeKeys }), [selfHosted, contextSignIn, workspaceName, settings, update, organization, settingsError, retrySettings, importSettings, disconnectProvider, server, connections, ready, hasKeys, providerReady, hasJev, logolinkPublicId, keysOpen, activeTrialLimit, reportTrialLimit, openKeys, closeKeys]);
+	const value = useMemo<SettingsContextValue>(() => ({ selfHosted, contextSignIn, workspaceName, settings, update, organization, memberPreferences: memberSettings.preferences, memberPreferencesError, updateMemberPreferences, settingsError, retrySettings, disconnectProvider, server, connections, ready, hasKeys, providerReady, hasJev, logolinkPublicId, keysOpen, trialLimitMessage: activeTrialLimit, reportTrialLimit, openKeys, closeKeys }), [selfHosted, contextSignIn, workspaceName, settings, update, organization, memberSettings.preferences, memberPreferencesError, updateMemberPreferences, settingsError, retrySettings, disconnectProvider, server, connections, ready, hasKeys, providerReady, hasJev, logolinkPublicId, keysOpen, activeTrialLimit, reportTrialLimit, openKeys, closeKeys]);
 	return <SettingsContext.Provider value={value}>{children}</SettingsContext.Provider>;
 }
 

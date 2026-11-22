@@ -31,13 +31,13 @@ test('all decision types fall back to OpenAI without a TypeSafe key, even when J
 	const models: string[] = [];
 	const access = testAccess({ keys: { openai: 'test-openai' }, model: 'gpt-5.4-mini' }, { openai: fakeOpenAI(outputs, models) });
 	const state = 'The company builds software.';
-	const noul = await decideNoul(access, 'jev', state, 'Does it build software?');
+	const noul = await decideNoul(access, 'openai', state, 'Does it build software?');
 	assert.equal(noul.engine, 'openai');
 	assert.equal(noul.probability, 0.9);
-	const choice = await decideChoice(access, 'jev', state, 'What industry?', [{ label: 'Software' }, { label: 'Retail' }]);
+	const choice = await decideChoice(access, 'openai', state, 'What industry?', [{ label: 'Software' }, { label: 'Retail' }]);
 	assert.equal(choice.engine, 'openai');
 	assert.equal(choice.choice, 'Software');
-	const score = await decideScore(access, 'jev', state, 'How strong is the fit?', ['Low', 'High']);
+	const score = await decideScore(access, 'openai', state, 'How strong is the fit?', ['Low', 'High']);
 	assert.equal(score.engine, 'openai');
 	assert.equal(score.level, 'High');
 	assert.equal(score.score, 1);
@@ -57,9 +57,9 @@ test('a separate classifier model overrides Jev for all decision types without c
 	const models: string[] = [];
 	const access = providerAccess(grant, { openai: fakeOpenAI(outputs, models) });
 	const operations = [
-		{ kind: 'check', question: 'Software?', threshold: .5, decider: 'jev' },
-		{ kind: 'classify', question: 'Industry?', options: [{ label: 'Software' }, { label: 'Retail' }], decider: 'jev' },
-		{ kind: 'score', question: 'Fit?', levels: ['Low', 'High'], decider: 'jev' },
+		{ kind: 'check', question: 'Software?', threshold: .5, decider: 'openai' },
+		{ kind: 'classify', question: 'Industry?', options: [{ label: 'Software' }, { label: 'Retail' }], decider: 'openai' },
+		{ kind: 'score', question: 'Fit?', levels: ['Low', 'High'], decider: 'openai' },
 	] as const;
 	for (const input of operations) {
 		const result = await runOp(access, ColumnOpSchema.parse(input), { Company: 'Acme builds software' });
@@ -73,11 +73,11 @@ test('the decider preference comes from the resolved access, not from options th
 	t.mock.method(globalThis, 'fetch', async () => { throw new Error('unexpected network request'); });
 	const models: string[] = [];
 	const base = { keys: { openai: 'test-openai', typesafe: 'test-typesafe' }, model: 'gpt-5.4-mini' };
-	assert.equal(testAccess(base).decider('jev'), 'jev');
+	assert.equal(testAccess(base).decider('openai'), 'openai');
 	assert.equal(testAccess(base).decider('openai'), 'openai', 'a column can ask for OpenAI');
 	const preferOpenAI = testAccess({ ...base, preferJev: false }, { openai: fakeOpenAI([{ reasoning: 'Evidence.', probability: .2 }], models) });
-	assert.equal(preferOpenAI.decider('jev'), 'openai');
-	assert.equal((await decideNoul(preferOpenAI, 'jev', 'State.', 'Question?')).engine, 'openai');
-	assert.equal(testAccess({ ...base, classifierModel: 'classifier' }).decider('jev'), 'openai', 'a classifier model forces OpenAI');
-	await assert.rejects(decideNoul(testAccess(), 'jev', 'State.', 'Question?'), /TypeSafe or OpenAI key/);
+	assert.equal(preferOpenAI.decider('openai'), 'openai');
+	assert.equal((await decideNoul(preferOpenAI, 'openai', 'State.', 'Question?')).engine, 'openai');
+	assert.equal(testAccess({ ...base, classifierModel: 'classifier' }).decider('openai'), 'openai', 'a classifier model forces OpenAI');
+	await assert.rejects(decideNoul(testAccess(), 'openai', 'State.', 'Question?'), /TypeSafe or OpenAI key/);
 });

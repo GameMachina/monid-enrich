@@ -1,4 +1,6 @@
 import type { DateFormat } from './date-format';
+import type { ActionColumnDefinition } from './action-column';
+import { PhoneProviderStrategySchema } from './phone-strategy';
 import { z } from 'zod';
 
 /* ───────────────────────────── Column operations ─────────────────────────────
@@ -23,10 +25,10 @@ export const PageSourceSchema = z.discriminatedUnion('type', [
 ]);
 export type PageSource = z.infer<typeof PageSourceSchema>;
 
-export const DECIDERS = ['jev', 'openai'] as const;
+export const DECIDERS = ['openai'] as const;
 export type Decider = (typeof DECIDERS)[number];
 
-const deciderField = z.enum(DECIDERS).default('jev');
+const deciderField = z.enum(DECIDERS).default('openai');
 const pageField = PageSourceSchema.optional();
 
 export const PROSPEO_FIELDS = ['email', 'mobile', 'full_name', 'title', 'company', 'company_domain', 'linkedin', 'location'] as const;
@@ -36,8 +38,9 @@ export const EmailDraftSchema = z.object({
 });
 export type EmailDraft = z.infer<typeof EmailDraftSchema>;
 
-export const EMAIL_PROVIDERS = ['quickenrich', 'hunter', 'apollo', 'prospeo', 'contactout'] as const;
-export type EmailProvider = typeof EMAIL_PROVIDERS[number];
+export const EMAIL_PROVIDERS = ['monid'] as const;
+export type EmailProvider = typeof EMAIL_PROVIDERS[number] | 'quickenrich' | 'hunter' | 'apollo' | 'prospeo' | 'contactout';
+const STORED_EMAIL_PROVIDERS = ['monid', 'quickenrich', 'hunter', 'apollo', 'prospeo', 'contactout'] as const;
 export const ColumnOpSchema = z.discriminatedUnion('kind', [
  z.object({
   kind: z.literal('email-enrichment'),
@@ -45,7 +48,8 @@ export const ColumnOpSchema = z.discriminatedUnion('kind', [
   company: z.string().max(300).default(''),
   domain: z.string().trim().min(1).max(500),
   profileUrl: z.string().max(500).default(''),
-  providers: z.array(z.enum(EMAIL_PROVIDERS)).min(1).max(5).default([...EMAIL_PROVIDERS]).refine(items => new Set(items).size === items.length, 'Each provider can appear only once.'),
+  // Older saved sheets may list vendor names. The executor ignores those labels and sends the single supported operation through Monid.
+  providers: z.array(z.enum(STORED_EMAIL_PROVIDERS)).min(1).max(5).default([...EMAIL_PROVIDERS]).refine(items => new Set(items).size === items.length, 'Each provider can appear only once.'),
  }),
  z.object({
   kind: z.literal('email-draft'),
@@ -122,7 +126,9 @@ export const ColumnOpSchema = z.discriminatedUnion('kind', [
 		company: z.string().max(300).optional(),
 		email: z.string().max(300).optional(),
 		profileUrl: z.string().max(500).optional(),
-		field: z.enum(['title', 'company', 'company_domain', 'location', 'bio', 'linkedin', 'email', 'skills', 'schools', 'degrees', 'experience', 'years_at_company', 'full_name']),
+		field: z.enum(['title', 'company', 'company_domain', 'location', 'bio', 'linkedin', 'email', 'mobile', 'skills', 'schools', 'degrees', 'experience', 'years_at_company', 'full_name']),
+		/** Snapshot of the member's preferred strategy when this mobile column is saved. */
+		phoneStrategy: PhoneProviderStrategySchema.optional(),
 	}),
 	z.object({
 		kind: z.literal('hunter'),
@@ -138,6 +144,8 @@ export const ColumnOpSchema = z.discriminatedUnion('kind', [
 		email: z.string().max(300).optional(),
 		profileUrl: z.string().max(500).optional(),
 		field: z.enum(PROSPEO_FIELDS),
+		/** Snapshot of the member's preferred strategy when this mobile column is saved. */
+		phoneStrategy: PhoneProviderStrategySchema.optional(),
 		onlyVerifiedEmail: z.boolean().default(true),
 	}).refine((op) => Boolean(op.email?.trim() || op.profileUrl?.trim() || op.name?.trim() && op.domain?.trim()), { message: 'Provide an email, LinkedIn URL, or name and company domain.' }),
 	/** Deep research with Context.dev web answers. */
@@ -162,6 +170,8 @@ export interface Column {
 	name: string;
 	type: ColumnType;
 	op?: ColumnOp;
+	/** A saved AgentWeb or outreach action setup. It is not executed when the column is created. */
+	action?: ActionColumnDefinition;
 	width: number;
 	hidden?: boolean;
 	/** Column-wide value display and input format. */
@@ -202,6 +212,9 @@ export interface CellMeta {
  enrichment?: { verified?: boolean; verificationStatus?: string; costUsd: number; attempts: Array<{ provider: EmailProvider; source: 'own-key' | 'included'; status: string; costUsd: number }> };
 	providerCredits?: number;
 	providerCreditUnit?: string;
+	/** Monid's receipt IDs and run statuses for data-provider calls made for this cell. */
+	monidRuns?: Array<{ runId?: string; provider: string; endpoint: string; status: string; costUsd?: number; billedUnits?: number; price?: { type?: string; amount?: number; currency?: string }; resultCount?: number; completedAt?: string }>;
+	monidCostUsd?: number;
 	durationMs?: number;
 	pageUrl?: string;
 	raw?: unknown;
@@ -266,10 +279,10 @@ export type EntityKind = (typeof ENTITY_KINDS)[number];
 export const PopulateRequestSchema = z.object({
 	query: z.string().min(3).max(2000),
 	entity: z.enum(ENTITY_KINDS),
-	target: z.number().int().min(1).max(100, 'Only 100 at a time. Ask for 100 or fewer.').default(20),
+	target: z.number().int().min(1).max(1000, 'A single Find rows request can return up to 1,000 rows.').default(20),
 	countries: z.array(z.string().length(2)).max(20).optional(),
 	/** Remaining sheet capacity. Explicit people lists use this rather than the discovery target. */
-	availableRows: z.number().int().min(1).max(1000).optional(),
+	availableRows: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
 	/** Keys (domains, profile URLs, URLs) already in the sheet, so results are appended without duplicates. */
 	existingKeys: z.array(z.string()).max(20000).optional(),
 });
@@ -281,7 +294,7 @@ export type FoundRow = Record<string, CellValue>;
 export type PopulateEvent =
 	| { type: 'status'; message: string }
 	/** `key` is only read by tabs loaded before the found-rows Module; drop it after one release. */
-	| { type: 'rows'; rows: FoundRow[]; key?: string }
+	| { type: 'rows'; rows: FoundRow[]; key?: string; meta?: CellMeta }
 	| { type: 'done'; total: number; message?: string }
 	| { type: 'error'; message: string; failure?: EnrichFailure };
 
@@ -329,7 +342,7 @@ export const EnrichRequestSchema = z.object({
 /** Why an enrichment failed. Set where the failure is understood; code branches on this, never on `error` text. */
 export const FAILURE_REASONS = ['rate_limited', 'credits_exhausted', 'credential_missing', 'credential_invalid', 'timeout', 'provider_error', 'input_invalid'] as const;
 export type FailureReason = (typeof FAILURE_REASONS)[number];
-export type FailureProvider = 'openai' | 'context' | 'typesafe' | 'email';
+export type FailureProvider = 'openai' | 'monid' | 'context' | 'typesafe' | 'email';
 export interface EnrichFailure {
 	reason: FailureReason;
 	/** The same request may succeed if repeated later without user action. */
@@ -368,6 +381,7 @@ export interface KeyVerification {
 	prospeo?: { ok: boolean; configured: boolean; message?: string };
 	openai: { ok: boolean; message?: string; issue?: 'key' | 'billing' | 'model' | 'rate-limit' | 'connection'; inference?: boolean };
 	context: { ok: boolean; message?: string; credits?: number; issue?: 'key' | 'credits' };
+	monid?: { ok: boolean; message?: string; balanceUsd?: number; issue?: 'key' | 'balance' };
 	typesafe: { ok: boolean; message?: string; configured: boolean };
 }
 

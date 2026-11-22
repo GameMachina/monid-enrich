@@ -30,6 +30,7 @@ test('found rows find their key column by role, then by legacy name, and never i
 test('people photos become Name cell metadata rather than a column', () => {
 	const { records, cellMeta, dedupeOn } = foundRecords('people', [{ Name: 'Ada', LinkedIn: 'https://linkedin.com/in/ada', 'Profile photo': 'https://cdn.example/ada.png', 'Company domain': 'acme.example' }], []);
 	assert.deepEqual(records, [{ Name: 'Ada', LinkedIn: 'https://linkedin.com/in/ada', 'Company website': 'acme.example' }]);
-	assert.deepEqual(cellMeta, [{ Name: { person: { name: 'Ada', avatarUrl: 'https://cdn.example/ada.png' } } }]);
+	const provenance = { sources: ['https://linkedin.com/in/ada'] };
+	assert.deepEqual(cellMeta, [{ Name: { ...provenance, person: { name: 'Ada', avatarUrl: 'https://cdn.example/ada.png' } }, LinkedIn: provenance, 'Company website': provenance }]);
 	assert.equal(dedupeOn, 'LinkedIn');
 });

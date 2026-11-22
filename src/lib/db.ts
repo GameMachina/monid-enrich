@@ -10,7 +10,7 @@ import Dexie, { type EntityTable } from 'dexie';
 import { nanoid } from 'nanoid';
 import { accountStorageKey } from './account-storage';
 import { CloudError, type SheetRemote, type SheetSnapshot } from './sheet-remote';
-import { MAX_ROWS, MAX_SHEETS, SHEET_DATA_VERSION } from './workspace';
+import { SHEET_DATA_VERSION } from './workspace';
 import { calculateInWorker } from './formula-worker-client';
 import { upgradeGrid } from './sheet-upgrade';
 import { nameTaken, shiftColumnReferences } from './references';
@@ -162,7 +162,7 @@ export function applyLiveIndex(entries: readonly { id: string; revision: number;
 async function refreshWorkspaceNow() {
 	const listed = await connected().list();
 	const cached = await db.sheets.bulkGet(listed.map((sheet) => sheet.id));
-	// One sheet at a time: each read pages through up to 1,000 rows.
+	// One sheet at a time: each read uses bounded API pages.
 	for (const [position, sheet] of listed.entries()) if (cached[position]?.revision !== sheet.revision) await refreshSheet(sheet.id);
 	await dropUnlisted(new Set(listed.map((sheet) => sheet.id)));
 }
@@ -173,16 +173,13 @@ export function loadSheet(sheetId: string): Promise<boolean> {
 
 export const id = () => nanoid(12);
 
-export function newColumn(input: { name: string; type: Column['type']; op?: ColumnOp; width?: number; format?: ColumnFormat; categoryOptions?: string[]; categoryColors?: Record<string, string>; currency?: string; unit?: string; useGrouping?: boolean; decimalPlaces?: number; dateFormat?: Column['dateFormat'] }): Column {
-	return { id: id(), name: input.name, type: input.type, op: input.op, width: input.width ?? (input.type === 'enriched' ? 220 : 180), format: input.format ?? inferredFormat(input), categoryOptions: input.categoryOptions, categoryColors: input.categoryColors, currency: input.currency, unit: input.unit, useGrouping: input.useGrouping, decimalPlaces: input.decimalPlaces, dateFormat: input.dateFormat, createdAt: Date.now() };
+export function newColumn(input: { name: string; type: Column['type']; op?: ColumnOp; action?: Column['action']; width?: number; format?: ColumnFormat; categoryOptions?: string[]; categoryColors?: Record<string, string>; currency?: string; unit?: string; useGrouping?: boolean; decimalPlaces?: number; dateFormat?: Column['dateFormat'] }): Column {
+	return { id: id(), name: input.name, type: input.type, op: input.op, action: input.action, width: input.width ?? (input.type === 'enriched' ? 220 : 180), format: input.format ?? inferredFormat(input), categoryOptions: input.categoryOptions, categoryColors: input.categoryColors, currency: input.currency, unit: input.unit, useGrouping: input.useGrouping, decimalPlaces: input.decimalPlaces, dateFormat: input.dateFormat, createdAt: Date.now() };
 }
-
-export const SHEET_LIMIT_MESSAGE = `Your workspace can have up to ${MAX_SHEETS} sheets. Delete a sheet to create another.`;
 
 /** Rows (with this sheet's `id`) and the populate request are created in the same request as the sheet. */
 export async function createSheet(name?: string, columns: Column[] = [], initial: { id?: string; rows?: Row[]; populate?: PopulateRequest } = {}): Promise<Sheet> {
 	return inWorkspaceOrder(async () => {
-		if (await db.sheets.count() >= MAX_SHEETS) throw new Error(SHEET_LIMIT_MESSAGE);
 		if (name === undefined) {
 			const names = new Set((await db.sheets.toArray()).map((sheet) => sheet.name));
 			name = 'Untitled';
@@ -202,7 +199,6 @@ const recordEntry = (record: Record<string, CellValue>, name: string) => Object.
 
 /** Import as one request, so a failed import never leaves an empty sheet behind. */
 export async function createSheetFromRecords(name: string, records: Record<string, CellValue>[]): Promise<Sheet> {
-	if (records.length > MAX_ROWS) throw new Error(`Each sheet can have up to ${MAX_ROWS.toLocaleString()} rows.`);
 	const sheetId = id();
 	const columns: Column[] = [];
 	const seen = new Set<string>();
@@ -240,7 +236,6 @@ export async function deleteSheet(sheetId: string) {
 
 export async function duplicateSheet(sheetId: string): Promise<Sheet | null> {
 	return inWorkspaceOrder(async () => {
-		if (await db.sheets.count() >= MAX_SHEETS) throw new Error(SHEET_LIMIT_MESSAGE);
 		await refreshSheet(sheetId);
 		const sheet = await db.sheets.get(sheetId);
 		if (!sheet) return null;
@@ -264,15 +259,12 @@ export async function importMyLocalSheets(): Promise<number> {
 	try {
 		const sheets = await legacy.sheets.toArray();
 		const snapshots = await Promise.all(sheets.map(async (sheet) => ({ sheet, rows: await legacy.rows.where('sheetId').equals(sheet.id).toArray() })));
-		if (snapshots.some((entry) => entry.rows.length > MAX_ROWS)) throw new Error('One of your local sheets has over 1,000 rows. Export and split it before importing.');
 		return await inWorkspaceOrder(async () => {
 			await refreshWorkspaceNow();
 			const existing = new Set(await db.sheets.toCollection().primaryKeys());
 			const pending = snapshots.filter((entry) => !existing.has(entry.sheet.id));
-			if (existing.size + pending.length > MAX_SHEETS) throw new Error(`Importing these sheets would exceed this workspace’s ${MAX_SHEETS}-sheet limit.`);
 			let imported = 0;
 			for (const snapshot of pending) {
-				if (snapshot.sheet.populate) snapshot.sheet.populate.target = Math.min(MAX_ROWS, snapshot.sheet.populate.target);
 				const sheet = await connected().create(snapshot.sheet, snapshot.rows);
 				await db.transaction('rw', db.sheets, db.rows, async () => { await db.sheets.put(sheet); await db.rows.bulkPut(snapshot.rows); });
 				imported++;
@@ -458,7 +450,6 @@ async function commitGrid(sheetId: string, change?: (sheet: Sheet, rows: Row[]) 
 		if (!change && !containsFormulas(before.rows)) return;
 		const after = change ? await change(structuredClone(before.sheet), structuredClone(before.rows)) : structuredClone(before);
 		admitChange({ columns: before.sheet.columns, rows: before.rows }, { columns: after.sheet.columns, rows: after.rows }, options.source ?? 'edit');
-		if (after.rows.length > MAX_ROWS) throw new Error(`Each sheet can have up to ${MAX_ROWS.toLocaleString()} rows.`);
 		const results = containsFormulas(after.rows) ? await calculateInWorker({
 			grid: options.replay ? { columns: after.sheet.columns, rows: after.rows } : { columns: before.sheet.columns, rows: before.rows },
 			...(change && !options.replay ? { next: { columns: after.sheet.columns, rows: after.rows } } : {}),

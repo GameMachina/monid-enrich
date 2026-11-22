@@ -124,25 +124,16 @@ function ProbabilityPill({ tone, cell, numeric, confidence = false, children }: 
 /** Lists, numbers, and entity values (organizations, people, websites); plain text and links otherwise. */
 function EntityValue({ cell, column, row, columns, value, remainingRows, totalRows, onAddEntityColumn }: ValueProps) {
 	const organization = organizationKind(column);
-	const domain = organization ? organizationDomain(cell, row, columns, organization) : undefined;
 	const entity = entityKind(column);
 	const menu = { column, row, remainingRows, totalRows, onAddEntityColumn };
-	if (Array.isArray(value)) return <ListValue items={value} organization={organization} entity={entity} domain={domain} />;
+	if (Array.isArray(value)) return <ListValue items={value} organization={organization} entity={entity} />;
 	if (typeof value === 'number') return <NumberValue value={value} column={column} />;
 	const text = cellText(column, value);
 	if (entity === 'website' || entity === 'webpage') return <WebsiteValue {...menu} kind={entity} text={text} />;
 	if (entity === 'person') return <PersonValue {...menu} cell={cell} columns={columns} text={text} />;
-	if (organization) return <AdaptiveEntityGroup><OrganizationChip name={text} kind={organization} domain={domain}>{entity && <EntityMenu {...menu} kind={entity} />}</OrganizationChip></AdaptiveEntityGroup>;
+	if (organization) return <AdaptiveEntityGroup><OrganizationChip name={text} kind={organization}>{entity && <EntityMenu {...menu} kind={entity} />}</OrganizationChip></AdaptiveEntityGroup>;
 	if (entity) return <AdaptiveEntityGroup><Pill tone="muted" title={text}><EntityLabel name={text} /><EntityMenu {...menu} kind={entity} /></Pill></AdaptiveEntityGroup>;
 	return <TextValue column={column} text={text} />;
-}
-
-/** The organization's domain: from its saved match, else the row's website (or school website) column. */
-function organizationDomain(cell: Cell, row: Row | undefined, columns: Column[] | undefined, organization: 'company' | 'school') {
-	if (cell.m?.organization?.name === cell.v) return cell.m.organization.domain;
-	const domainColumn = columns && roleColumn(columns, organization === 'company' ? 'website' : 'school-website');
-	const domain = domainColumn ? row?.cells[domainColumn.id]?.v : undefined;
-	return typeof domain === 'string' ? domain : undefined;
 }
 
 // Also format previously saved discovery rows, without requiring another search.
@@ -154,12 +145,12 @@ function cellText(column: Column, value: Exclude<CellValue, null | string[]>) {
 	return isFundingLabel ? fundingLabel(String(value)) ?? '' : String(value);
 }
 
-function ListValue({ items, organization, entity, domain }: { items: string[]; organization: 'company' | 'school' | null; entity: EntityKind | null; domain?: string }) {
+function ListValue({ items, organization, entity }: { items: string[]; organization: 'company' | 'school' | null; entity: EntityKind | null }) {
 	const Group = organization || entity ? AdaptiveEntityGroup : 'span';
 	return (
 		<Group className="flex min-w-0 items-center gap-1 overflow-hidden">
 			{keyedItems(items.slice(0, 4)).map(({ key, item }) => (
-				organization ? <OrganizationChip key={key} name={item} kind={organization} domain={items.length === 1 ? domain : undefined} /> : (
+				organization ? <OrganizationChip key={key} name={item} kind={organization} /> : (
 					<span key={key} title={item} className={clsx("min-w-0 truncate rounded-md bg-neutral-5 px-1.5 py-0.5 text-caption text-fg-muted", !entity && "max-w-[160px]")}>{entity ? <EntityLabel name={item} /> : item}</span>
 				)
 			))}

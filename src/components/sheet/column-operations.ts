@@ -11,13 +11,13 @@ export interface OperationGroup { id: 'ai' | 'decide' | 'web' | 'data' | 'email'
 /** A catalog operation as the picker shows it; `label` shortens the catalog label where the group already says what it is. */
 const choice = (kind: OpKind, label = OPERATIONS[kind].label): OperationChoice => ({ kind, label, name: OPERATIONS[kind].columnName, description: OPERATIONS[kind].description });
 
-/** Six top-level choices; every operation kind stays reachable (Hunter and Prospeo live under Find email). */
+/** Six top-level choices; legacy operation kinds remain reachable under the generic Monid-backed email group. */
 export const OPERATION_GROUPS: OperationGroup[] = [
 	{ id: 'ai', label: 'AI answer', choices: [choice('ai'), choice('answer'), choice('email-draft')] },
 	{ id: 'decide', label: 'Classify', choices: [choice('check', 'True / false'), choice('classify', 'Category'), choice('score')] },
 	{ id: 'web', label: 'Web page', choices: [choice('scrape'), choice('search')] },
 	{ id: 'data', label: 'Company & person', choices: [choice('company', 'Company'), choice('person', 'Person')] },
-	{ id: 'email', label: 'Find email', choices: [choice('email-enrichment', 'Work email'), choice('hunter', 'Verify email'), choice('prospeo', 'Mobile & profile')] },
+		{ id: 'email', label: 'Find email', choices: [choice('email-enrichment', 'Work email'), choice('hunter', 'Verify email'), choice('prospeo', 'Person details')] },
 	{ id: 'formula', label: 'Formula', choices: [
 		{ kind: 'formula', label: 'Formula', name: 'Formula', description: 'Calculate or transform existing data locally, with a preview of up to 10 rows.' },
 		choice('template'),
@@ -44,7 +44,8 @@ export function guessEntity(sheet: Sheet): EntityKind | undefined {
 
 /** A starting point for each operation, pre-filled from the sheet's columns and the sentence already typed. */
 export function defaultOp(kind: EditorKind, columns: Column[], jevAvailable: boolean, seed = ''): EditorOp {
-	const decider = jevAvailable ? 'jev' : 'openai';
+	void jevAvailable;
+	const decider = 'openai';
 	const domainColumn = guessDomainColumn(columns);
 	const domain = columnRef(domainColumn);
 	switch (kind) {
@@ -70,12 +71,22 @@ export function defaultOp(kind: EditorKind, columns: Column[], jevAvailable: boo
 			return { kind, query: '', pick: 'url', numResults: 3 };
 		case 'company':
 			return { kind, domain, field: 'description' };
-		case 'person':
-			return { kind, field: 'title' };
+		case 'person': {
+			const person = columnRef(roleColumn(columns, 'person')?.name);
+			const company = columnRef(roleColumn(columns, 'company')?.name ?? domainColumn);
+			const email = columnRef(roleColumn(columns, 'email')?.name);
+			const profileUrl = columnRef(roleColumn(columns, 'profile')?.name);
+			return { kind, name: person, company, email, profileUrl, field: 'title' };
+		}
 		case 'hunter':
 			return { kind, action: 'verify', email: columnRef(guessEmailColumn(columns)) };
-		case 'prospeo':
-			return { kind, field: 'mobile', onlyVerifiedEmail: true, domain };
+		case 'prospeo': {
+			const person = columnRef(roleColumn(columns, 'person')?.name);
+			const company = columnRef(roleColumn(columns, 'company')?.name ?? domainColumn);
+			const email = columnRef(roleColumn(columns, 'email')?.name);
+			const profileUrl = columnRef(roleColumn(columns, 'profile')?.name);
+			return { kind, field: 'title', onlyVerifiedEmail: true, name: person, domain: company || domain, email, profileUrl };
+		}
 		case 'answer':
 			return { kind, task: seed, output: 'text', mode: 'fast' };
 		case 'template':

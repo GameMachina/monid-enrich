@@ -5,7 +5,7 @@ import { cycleMembers } from './enrichment-dependencies';
 import { dependencyCells, inputFingerprint, inputRecord, inputVersion, isLegacyFingerprint, outdatedResult, rowIndex, ruleOf } from './enrichment-freshness';
 import { entityFieldOp, entityKind } from './entity-fields';
 import { evaluatesLocally, requiredProviders, worstCaseMs, type ProviderNeed } from './operations';
-import { danglingReferences, findColumn, opDependencies, parsePromptReference, readsOtherRows, renameOpReferences } from './references';
+import { danglingReferences, findColumn, opDependencies, parsePromptReference, readsOtherRows, renameOpReferences, rewriteActionReferences, sameName } from './references';
 import type { Cell, CellMeta, CellValue, Column, ColumnOp, Row, Sheet } from './types';
 
 /* One cell's enrichment, planned from a grid snapshot alone: what it reads, whether it can run now, what it sends, and
@@ -235,7 +235,9 @@ export function renameColumn(grid: { sheet: Sheet; rows: Row[] }, columnId: stri
 	if (!previous || previous.name === name) return grid;
 	const columns = grid.sheet.columns.map((column) => {
 		const next = column.id === columnId ? { ...column, name } : column;
-		return next.op ? { ...next, op: renameOpReferences(next.op, previous.name, name) } : next;
+		const op = next.op ? renameOpReferences(next.op, previous.name, name) : undefined;
+		const action = next.action ? rewriteActionReferences(next.action, (reference) => sameName(reference, previous.name) ? name : null) : undefined;
+		return op === next.op && action === next.action ? next : { ...next, op, action };
 	});
 	const sheet = { ...grid.sheet, columns };
 	return { sheet, rows: restampCurrentResults(grid, { sheet, rows: grid.rows }) };

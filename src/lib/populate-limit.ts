@@ -1,7 +1,8 @@
 import type { EntityKind } from './types';
 
 export const DEFAULT_POPULATE_LIMIT = 20;
-export const MAX_POPULATE_LIMIT = 100;
+/** Bounded per request to keep a single user action's provider spend predictable. */
+export const MAX_POPULATE_LIMIT = 1000;
 
 export function promptResultCount(query: string): number | undefined {
 	const match = query.match(/\b(?:find|show|get|give|return|list|search\s+for)(?:\s+me)?(?:\s+(?:the|top|first|exactly|up\s+to))*\s+(\d[\d,]*)(?![\d,.])\b/i);
@@ -9,8 +10,8 @@ export function promptResultCount(query: string): number | undefined {
 }
 
 export function populateLimitError(limit: number): string | null {
-	if (limit > MAX_POPULATE_LIMIT) return 'Only 100 at a time. Ask for 100 or fewer.';
-	if (!Number.isInteger(limit) || limit < 1) return 'Choose a limit between 1 and 100.';
+	if (limit > MAX_POPULATE_LIMIT) return 'A single Find rows request can return up to 1,000 rows.';
+	if (!Number.isInteger(limit) || limit < 1) return 'Choose a limit between 1 and 1,000.';
 	return null;
 }
 

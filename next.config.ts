@@ -31,7 +31,8 @@ const nextConfig: NextConfig = {
 	cacheComponents: true,
 	partialPrefetching: true,
 	poweredByHeader: false,
-	serverExternalPackages: ['@neondatabase/serverless', 'ws', 'undici'],
+	serverExternalPackages: ['@electric-sql/pglite', '@neondatabase/serverless', 'ws', 'undici'],
+	outputFileTracingIncludes: { '/*': ['./migrations/*.sql'] },
 	turbopack: {
 		rules: {
 			'*.css': { loaders: ['@tailwindcss/turbopack'], as: '*.css' },

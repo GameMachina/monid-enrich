@@ -90,7 +90,7 @@ test('plans read the catalog, send a record without the cell’s own value, and 
 	const sheet = sheetOf([name, notes, research, draft]);
 	const rows = [rowOf('r1', 0, { name: done('Ada'), research: done('Old answer') }), rowOf('r2', 1, { name: done('Grace') })];
 	const plan = planCell({ sheet, rows }, { rowId: 'r1', columnId: 'research' })!;
-	assert.deepEqual([plan.local, plan.providers, plan.worstCaseMs, plan.complete, plan.inPlace], [false, [['context']], 130_000, true, false]);
+	assert.deepEqual([plan.local, plan.providers, plan.worstCaseMs, plan.complete, plan.inPlace], [false, [['monid'], ['openai']], 130_000, true, false]);
 	assert.equal(plan.record.Research, null, 'a rerun never reads its previous answer');
 	assert.equal(plan.record.Name, 'Ada');
 	assert.doesNotMatch(plan.version, /Old answer/, 'nor is it an input');

@@ -11,15 +11,15 @@ const SAMPLES: Record<OpKind, ColumnOp> = {
 	'email-enrichment': { kind: 'email-enrichment', name: '{{Name}}', company: '', domain: '{{Domain}}', profileUrl: '', providers: ['hunter'] },
 	'email-draft': { kind: 'email-draft', mode: 'ai', prompt: 'Intro', to: '{{Email}}', cc: '', bcc: '', subject: '', body: '' },
 	ai: { kind: 'ai', prompt: 'CEO?', output: 'text', research: 'web', page: { type: 'homepage', column: 'Domain' } },
-	check: { kind: 'check', question: 'B2B?', decider: 'jev', threshold: 0.5, page: { type: 'find', column: 'Domain', page: 'pricing' } },
-	classify: { kind: 'classify', question: 'Segment?', options: [{ label: 'SMB' }, { label: 'Enterprise' }], decider: 'jev' },
+	check: { kind: 'check', question: 'B2B?', decider: 'openai', threshold: 0.5, page: { type: 'find', column: 'Domain', page: 'pricing' } },
+	classify: { kind: 'classify', question: 'Segment?', options: [{ label: 'SMB' }, { label: 'Enterprise' }], decider: 'openai' },
 	score: { kind: 'score', question: 'Fit?', levels: ['Low', 'High'], decider: 'openai' },
 	scrape: { kind: 'scrape', page: { type: 'template', template: 'https://{{Domain}}/about' }, mode: 'highlights', query: 'Mission', maxChars: 2000 },
 	search: { kind: 'search', query: '{{Company}} CEO', pick: 'url', numResults: 3 },
 	company: { kind: 'company', domain: '{{Domain}}', field: 'industry' },
 	person: { kind: 'person', name: '{{Name}}', field: 'title' },
 	hunter: { kind: 'hunter', action: 'verify', email: '{{Email}}' },
-	prospeo: { kind: 'prospeo', email: '{{Email}}', field: 'mobile', onlyVerifiedEmail: true },
+	prospeo: { kind: 'prospeo', email: '{{Email}}', field: 'email', onlyVerifiedEmail: true },
 	answer: { kind: 'answer', task: 'Latest funding', output: 'text', mode: 'fast' },
 	template: { kind: 'template', template: 'Hi {{Name}}' },
 };
@@ -80,13 +80,13 @@ test('modes change what an operation needs, reads and costs', () => {
 	const cases: Array<{ name: string; op: ColumnOp; requires: string[][]; local: boolean; readsRow: boolean; credits: number }> = [
 		{ name: 'AI email draft', op: draft, requires: [['openai']], local: false, readsRow: true, credits: 0 },
 		{ name: 'template email draft', op: { ...draft, mode: 'template' }, requires: [], local: true, readsRow: false, credits: 0 },
-		{ name: 'Ask AI reading a page found on the site', op: { kind: 'ai', prompt: 'CEO?', output: 'text', research: 'web', page: { type: 'find', column: 'Domain', page: 'team' } }, requires: [['openai'], ['context']], local: false, readsRow: true, credits: 6 },
+		{ name: 'Ask AI reading a page found on the site', op: { kind: 'ai', prompt: 'CEO?', output: 'text', research: 'web', page: { type: 'find', column: 'Domain', page: 'team' } }, requires: [['openai'], ['monid']], local: false, readsRow: true, credits: 6 },
 		{ name: 'Ask AI from the row alone', op: { kind: 'ai', prompt: 'CEO?', output: 'text', research: 'none' }, requires: [['openai']], local: false, readsRow: true, credits: 0 },
-		{ name: 'check decided by a model', op: { kind: 'check', question: 'B2B?', decider: 'jev', threshold: 0.5 }, requires: [['typesafe', 'openai']], local: false, readsRow: true, credits: 0 },
-		{ name: 'exact-text check on a page', op: { kind: 'check', question: 'Free plan?', literal: 'free', decider: 'jev', threshold: 0.5, page: { type: 'column', column: 'URL' } }, requires: [['context']], local: false, readsRow: true, credits: 1 },
-		{ name: 'research that references its subject', op: { kind: 'answer', task: 'Funding of {{Company}}', output: 'text', mode: 'ultra' }, requires: [['context']], local: false, readsRow: false, credits: 100 },
-		{ name: 'research about the whole row', op: SAMPLES.answer, requires: [['context']], local: false, readsRow: true, credits: 10 },
-		{ name: 'page read', op: SAMPLES.scrape, requires: [['context']], local: false, readsRow: false, credits: 1 },
+		{ name: 'check decided by a model', op: { kind: 'check', question: 'B2B?', decider: 'openai', threshold: 0.5 }, requires: [['openai']], local: false, readsRow: true, credits: 0 },
+		{ name: 'exact-text check on a page', op: { kind: 'check', question: 'Free plan?', literal: 'free', decider: 'openai', threshold: 0.5, page: { type: 'column', column: 'URL' } }, requires: [['monid']], local: false, readsRow: true, credits: 1 },
+		{ name: 'research that references its subject', op: { kind: 'answer', task: 'Funding of {{Company}}', output: 'text', mode: 'ultra' }, requires: [['monid'], ['openai']], local: false, readsRow: false, credits: 100 },
+		{ name: 'research about the whole row', op: SAMPLES.answer, requires: [['monid'], ['openai']], local: false, readsRow: true, credits: 10 },
+		{ name: 'page read', op: SAMPLES.scrape, requires: [['monid']], local: false, readsRow: false, credits: 1 },
 		{ name: 'text template', op: SAMPLES.template, requires: [], local: true, readsRow: false, credits: 0 },
 	];
 	for (const { name, op, requires, local, readsRow, credits } of cases) {
@@ -96,6 +96,16 @@ test('modes change what an operation needs, reads and costs', () => {
 		assert.equal(readsRowContext(op), readsRow, name);
 		assert.equal(record.credits(op as never), credits, name);
 	}
+});
+
+test('mobile columns validate inputs against their selected Monid route and waterfall deadline', () => {
+	const leadMagic = ColumnOpInputSchema.safeParse({ kind: 'person', field: 'mobile', phoneStrategy: 'leadmagic', email: '{{Email}}' });
+	assert.equal(leadMagic.success, true);
+	const clay = ColumnOpInputSchema.safeParse({ kind: 'person', field: 'mobile', phoneStrategy: 'clay', email: '{{Email}}' });
+	assert.equal(clay.success, false);
+	const waterfall: ColumnOp = { kind: 'person', field: 'mobile', phoneStrategy: 'leadmagic-then-clay', email: '{{Email}}' };
+	assert.equal(ColumnOpInputSchema.safeParse(waterfall).success, true);
+	assert.equal(operation('person').worstCaseMs(waterfall as never), 240_000);
 });
 
 test('an extract needs fields or instructions before it is saved, while stored definitions stay loadable', () => {
@@ -114,6 +124,15 @@ test('an extract needs fields or instructions before it is saved, while stored d
 		assert.equal(input.success, !issue);
 		if (!input.success) assert.deepEqual(input.error.issues[0].path, ['fields']);
 	}
+});
+
+test('Clay mobile phone columns require its lookup clues and retain the long async timeout', () => {
+	const missing = ColumnOpInputSchema.safeParse({ kind: 'person', field: 'mobile' });
+	assert.equal(missing.success, false);
+	assert.equal(!missing.success && missing.error.issues[0]?.path[0], 'profileUrl');
+	const configured = ColumnOpInputSchema.safeParse({ kind: 'person', field: 'mobile', name: '{{Name}}', company: '{{Company}}', profileUrl: '{{LinkedIn}}' });
+	assert.equal(configured.success, true);
+	assert.equal(operation('person').worstCaseMs({ kind: 'person', field: 'mobile' } as never), 180_000);
 });
 
 test('AI columns are named from their question in short title case', () => {

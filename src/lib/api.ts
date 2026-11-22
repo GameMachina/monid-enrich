@@ -86,11 +86,16 @@ export interface ServerKeys {
 	typesafeTrial?: boolean;
 	contextConnected?: boolean;
 	openai: boolean;
-	context: boolean;
-	typesafe: boolean;
+	monid?: boolean;
+	monidSaved?: boolean;
+	openaiSaved?: boolean;
+	context?: boolean;
+	typesafe?: boolean;
 	hunter?: boolean;
 	prospeo?: boolean;
-	passwordRequired: boolean;
+	quickenrich?: boolean;
+	apollo?: boolean;
+	contactout?: boolean;
 }
 
 export async function serverKeys(): Promise<ServerKeys> {

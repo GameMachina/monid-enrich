@@ -18,6 +18,5 @@ export function logoDomain(value: string | undefined): string | null {
 	}
 }
 
-export function logoLinkUrl(clientId: string, domain: string): string {
-	return `https://logos.context.dev/?${new URLSearchParams({ publicClientId: clientId, domain, type: 'icon' })}`;
-}
+/** The standalone app uses local initials/icons; it never calls an external logo service. */
+export function logoLinkUrl(clientId: string, domain: string): null { void clientId; void domain; return null; }

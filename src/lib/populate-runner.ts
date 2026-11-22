@@ -153,7 +153,7 @@ class PopulateRunner {
 				if (remaining) {
 					const current = await db.sheets.get(sheet.id);
 					if (!current) { this.stop(sheet.id); return; }
-					const { records, cellMeta, dedupeOn } = foundRecords(input.entity, event.rows.slice(0, remaining), current.columns);
+					const { records, cellMeta, dedupeOn } = foundRecords(input.entity, event.rows.slice(0, remaining), current.columns, event.meta);
 					await appendRows(sheet.id, records, { source: 'find-rows', cellMeta, createColumns: true, dedupeOn, history: false, onAdded: (added) => this.queue(sheet.id, added) });
 				}
 			}

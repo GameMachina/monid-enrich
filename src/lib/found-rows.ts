@@ -51,13 +51,19 @@ export function foundRowColumns<C extends SheetColumn>(entity: EntityKind, colum
 
 /** Found rows as records keyed by the sheet's column names, with people's photos as Name cell metadata, and the column
     that identifies a row. A field with no column keeps its layout name, so appending creates it. */
-export function foundRecords(entity: EntityKind, rows: readonly FoundRow[], columns: readonly SheetColumn[]) {
+export function foundRecords(entity: EntityKind, rows: readonly FoundRow[], columns: readonly SheetColumn[], meta?: CellMeta) {
 	const { column } = foundRowColumns(entity, columns);
 	const name = (field: string) => column(field)?.name ?? layoutName(field);
 	const people = entity === 'people';
 	return {
 		records: rows.map((row) => Object.fromEntries(Object.entries(row).flatMap(([field, value]) => people && field === PHOTO ? [] : [[name(field), value]]))),
-		cellMeta: rows.map((row): Record<string, CellMeta> => people && typeof row.Name === 'string' ? { [name('Name')]: { person: { name: row.Name, avatarUrl: profileUrl(row[PHOTO]) } } } : {}),
+		cellMeta: rows.map((row): Record<string, CellMeta> => {
+			const urls = Object.entries(row).filter(([field]) => field !== PHOTO).map(([, value]) => value).filter((value): value is string => typeof value === 'string' && /^https?:\/\//i.test(value));
+			const sourceMeta = { ...meta, ...(urls.length ? { sources: [...new Set([...(meta?.sources ?? []), ...urls])] } : {}) };
+			const result: Record<string, CellMeta> = Object.fromEntries(Object.keys(row).filter((field) => !(people && field === PHOTO)).map((field) => [name(field), sourceMeta]));
+			if (people && typeof row.Name === 'string') result[name('Name')] = { ...sourceMeta, person: { name: row.Name, avatarUrl: profileUrl(row[PHOTO]) } };
+			return result;
+		}),
 		dedupeOn: name(KEYS[entity].field),
 	};
 }

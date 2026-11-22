@@ -10,7 +10,7 @@ import { useSettings } from './settings-context';
 import { isReady, type Connection } from './providers';
 import { usageResource, useUsage } from './use-usage';
 
-const TOP_UP_URL = 'https://context.dev/dashboard/subscription';
+const TOP_UP_URL = 'https://app.monid.ai';
 interface Balance { credits: number; used?: number }
 interface Trial { grantedUsd: number; remainingUsd: number; deploymentAvailable: boolean }
 
@@ -34,10 +34,10 @@ function balanceMeter(balance: Balance | undefined) {
 }
 
 function creditsLabel({ ready, connection, balance, error }: { ready: boolean; connection: Connection; balance?: Balance; error: boolean }) {
-	if (!ready) return 'Checking credits…';
+	if (!ready) return 'Checking wallet balance…';
 	if (!isReady(connection)) return connection.state === 'expired' ? 'Connection expired' : 'Not connected';
-	if (balance) return `${balance.credits.toLocaleString()} credits left`;
-	return error ? 'Credits unavailable' : 'Loading credits…';
+	if (balance) return `$${balance.credits.toFixed(2)} balance`;
+	return error ? 'Balance unavailable' : 'Loading balance…';
 }
 
 function Meter({ label, percent, low }: { label: string; percent?: number; low?: boolean }) {
@@ -48,25 +48,25 @@ function Meter({ label, percent, low }: { label: string; percent?: number; low?:
 	);
 }
 
-/** Static Context.dev balance with one explicit Manage link; hosted trials sit behind a disclosure. */
+/** Monid wallet balance with one explicit Manage link. */
 export function CreditsRemaining() {
-	const { settings, server, ready, selfHosted, connections } = useSettings();
+	const { server, ready, selfHosted, connections } = useSettings();
 	const hasTrials = !selfHosted && Boolean(server?.openaiTrial || server?.typesafeTrial || server?.enrichmentTrial);
-	const connected = isReady(connections.context);
-	const { data: balance, error } = useUsage(contextUsage, { enabled: ready && connected, identity: JSON.stringify([settings.contextKey, settings.accessPassword, connections.context.state]) });
+	const connected = isReady(connections.monid);
+	const { data: balance, error } = useUsage(contextUsage, { enabled: ready && connected, identity: JSON.stringify([connections.monid.state, server?.monidSaved]) });
 	const { percent, low } = balanceMeter(balance);
 	return (
 		<div className="flex flex-col">
 			<div className="px-3 py-2">
 				<div className="flex items-center justify-between gap-2 text-caption">
-					<span className="text-fg-subtle">Context.dev</span>
+					<span className="text-fg-subtle">Monid</span>
 					<Link href="/app/settings" className="text-fg-muted transition-colors hover:text-fg">Manage</Link>
 				</div>
-				<p className={clsx('mt-1 text-caption font-medium tabular', low || (ready && !connected) ? 'text-warning' : 'text-fg-muted')} title={error ? 'Could not refresh credits. Check your Context.dev connection.' : undefined}>
-					{creditsLabel({ ready, connection: connections.context, balance, error })}{balance && error ? ' · stale' : ''}
+				<p className={clsx('mt-1 text-caption font-medium tabular', low || (ready && !connected) ? 'text-warning' : 'text-fg-muted')} title={error ? 'Could not refresh the Monid balance. Check your Monid connection.' : undefined}>
+					{creditsLabel({ ready, connection: connections.monid, balance, error })}{balance && error ? ' · stale' : ''}
 					{low && <> · <a href={TOP_UP_URL} target="_blank" rel="noopener noreferrer" className="text-brand hover:underline">Top up</a></>}
 				</p>
-				<Meter label="Context.dev credits remaining" percent={percent} low={low} />
+				<Meter label="Monid balance remaining" percent={percent} low={low} />
 			</div>
 			{hasTrials && <IncludedTrials />}
 		</div>

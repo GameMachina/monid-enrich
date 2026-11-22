@@ -149,7 +149,7 @@ test('a timeout may have been billed, so nothing repeats it; a request refused b
 
 test('TypeSafe resends a decision only when it never connected; a truncated answer or a reset after sending is final', async (t) => {
  const typesafe = testAccess({ keys: { typesafe: 'test-key' } });
- const check = { kind: 'check', question: 'Software?', threshold: .5, decider: 'jev' } as const;
+ const check = { kind: 'check', question: 'Software?', threshold: .5, decider: 'openai' } as const;
  const truncated = () => new Response(new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode('{"answers":')); controller.error(new Error('terminated')); } }), { headers: { 'content-type': 'application/json' } });
  let calls = 0, reply: () => Response = truncated;
  t.mock.method(globalThis, 'fetch', async () => { calls++; return reply(); });
@@ -180,7 +180,7 @@ test('TypeSafe decisions never repeat a timed-out request', async (t) => {
  let calls = 0;
  t.mock.method(globalThis, 'fetch', async (_input: unknown, init?: RequestInit) => { calls++; return new Promise<Response>((_resolve, reject) => init!.signal!.addEventListener('abort', () => reject(init!.signal!.reason), { once: true })); });
  let settled = false;
- const decision = assert.rejects(decideNoul(testAccess({ keys: { typesafe: 'test-key' } }), 'jev', 'ROW: Acme', 'Software?'), APITimeoutError).finally(() => { settled = true; });
+ const decision = assert.rejects(decideNoul(testAccess({ keys: { typesafe: 'test-key' } }), 'openai', 'ROW: Acme', 'Software?'), APITimeoutError).finally(() => { settled = true; });
  for (let i = 0; i < 20 && !settled; i++) { await new Promise((resolve) => setImmediate(resolve)); t.mock.timers.tick(60_000); }
  await decision;
  assert.equal(calls, 1);
@@ -226,7 +226,7 @@ test('a page that is not there answers a check false; a refused page lookup halt
 		return Response.json({ markdown: { success: true, data: '# Page not found' }, metadata: {}, key_metadata: { credits_consumed: 1 } });
 	});
 	const page = { type: 'find', column: 'Domain', page: 'pricing' } as const;
-	const check = { kind: 'check', question: 'Is SSO on the pricing page?', page, literal: 'SSO', threshold: .5, decider: 'jev' } as const;
+	const check = { kind: 'check', question: 'Is SSO on the pricing page?', page, literal: 'SSO', threshold: .5, decider: 'openai' } as const;
 	const scrape = { kind: 'scrape', page, mode: 'markdown', maxChars: 2000 } as const;
 	const exhausted = await runOp(access, check, { Domain: 'out-of-credits.example' });
 	assert.equal(exhausted.value, null, 'not a false answer saved as done');

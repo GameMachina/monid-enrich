@@ -1,8 +1,8 @@
 'use client';
 
 import { appendRows, createSheetFromRecords, db, importTargets } from '@/lib/db';
-import { MAX_ROWS } from '@/lib/workspace';
 import { csvToRecords, parseCsv } from '@/lib/csv';
+import { fromXlsx } from '@/lib/xlsx';
 import { trackEvent } from '@/lib/analytics';
 import type { CellValue } from '@/lib/types';
 import { Button } from '@/components/ui/button';
@@ -33,49 +33,70 @@ async function flaggedCells(sheetId: string) {
 	return count;
 }
 
-/** The text to import, from a picked file or the paste box. Only the latest pick or paste wins: a large file finishing late never overwrites a newer choice. */
-function useCsvSource({ onRead, onChange, onError }: { onRead: (fileName: string) => void; onChange: () => void; onError: (message: string) => void }) {
+function jsonRecords(text: string): { headers: string[]; records: Record<string, CellValue>[] } {
+	let value: unknown;
+	try { value = JSON.parse(text); } catch { throw new Error('This JSON file could not be parsed.'); }
+	const candidate = Array.isArray(value) ? value : value && typeof value === 'object'
+		? (value as { records?: unknown; data?: unknown }).records ?? (value as { data?: unknown }).data
+		: null;
+	if (!Array.isArray(candidate)) throw new Error('JSON import expects an array of row objects.');
+	if (candidate.every(Array.isArray)) {
+		const matrix = candidate as unknown[][];
+		return csvToRecords(matrix.map((row) => row.map((item) => item === null || item === undefined ? '' : typeof item === 'object' ? JSON.stringify(item) : String(item))));
+	}
+	if (!candidate.every((row) => row && typeof row === 'object' && !Array.isArray(row))) throw new Error('Each JSON row must be an object.');
+	const headers: string[] = [];
+	for (const row of candidate as Array<Record<string, unknown>>) for (const key of Object.keys(row)) {
+		if (!headers.some((header) => header.toLocaleLowerCase() === key.toLocaleLowerCase())) headers.push(key || `Column ${headers.length + 1}`);
+	}
+	const records = (candidate as Array<Record<string, unknown>>).map((row) => Object.fromEntries(headers.map((header) => {
+		const item = Object.entries(row).find(([key]) => key.toLocaleLowerCase() === header.toLocaleLowerCase())?.[1];
+		const cell: CellValue = item === undefined || item === null || typeof item === 'string' || typeof item === 'boolean' || (typeof item === 'number' && Number.isFinite(item))
+			? item ?? null
+			: Array.isArray(item) && item.every((entry) => typeof entry === 'string') ? item as string[] : JSON.stringify(item);
+		return [header, cell];
+	})));
+	return { headers, records };
+}
+
+/** Reads tabular CSV/TSV, XLSX and JSON files without a product row-count cap. */
+function useImportSource({ onRead, onChange, onError }: { onRead: (fileName: string) => void; onChange: () => void; onError: (message: string) => void }) {
 	const [text, setText] = useState('');
+	const [parsed, setParsed] = useState<{ headers: string[]; records: Record<string, CellValue>[] } | null>(null);
 	const [file, setFile] = useState<string | null>(null);
 	const [reading, setReading] = useState(false);
 	const latest = useRef(0);
 	function choose(next: File) {
 		const read = ++latest.current;
-		setReading(true);
-		onChange();
-		void next.text().then((content) => {
-			if (read !== latest.current) return;
-			setFile(next.name);
-			setText(content);
-			onRead(next.name);
-		}, () => { if (read === latest.current) onError(`Could not read ${next.name}.`); }).finally(() => { if (read === latest.current) setReading(false); });
+		setReading(true); setFile(null); setParsed(null); setText(''); onChange();
+		void (async () => {
+			if (next.size > 25 * 1024 * 1024) throw new Error('Choose a file smaller than 25 MB.');
+			const extension = next.name.split('.').at(-1)?.toLowerCase();
+			let data: { headers: string[]; records: Record<string, CellValue>[] };
+			if (extension === 'xlsx') data = fromXlsx(new Uint8Array(await next.arrayBuffer()));
+			else {
+				const contents = await next.text();
+				data = extension === 'json' ? jsonRecords(contents) : csvToRecords(parseCsv(contents));
+				if (read === latest.current) setText(contents);
+			}
+			if (read === latest.current) { setFile(next.name); setParsed(data); onRead(next.name); }
+		})().catch((error: unknown) => { if (read === latest.current) onError(error instanceof Error ? error.message : `Could not read ${next.name}.`); }).finally(() => { if (read === latest.current) setReading(false); });
 	}
 	function paste(value: string) {
-		latest.current++;
-		setReading(false);
-		setFile(null);
-		setText(value);
-		onChange();
+		latest.current++; setReading(false); setFile(null); setText(value);
+		setParsed(value.trim() ? csvToRecords(parseCsv(value)) : null); onChange();
 	}
-	return { text, file, reading, choose, paste };
+	function clear() { latest.current++; setText(''); setParsed(null); setFile(null); setReading(false); onChange(); }
+	return { text, parsed, file, reading, choose, paste, clear };
 }
 
-function rowLimitNote(total: number, available: number, appending: boolean) {
-	if (available === 0) return `This sheet already has ${MAX_ROWS.toLocaleString()} rows. Delete rows to import more.`;
-	const room = appending ? `This sheet has room for ${plural(available, 'more row')}` : `A sheet holds up to ${MAX_ROWS.toLocaleString()} rows`;
-	return `${room}, so only the first ${available.toLocaleString()} of ${total.toLocaleString()} will be imported.`;
-}
-
-/** What the text would import: its records, how many fit under the row limit, and (when appending) how many headers are new. */
-function useImportPlan(sheetId: string | undefined, text: string) {
+/** Column matches are shared with appendRows so preview and commit agree. */
+function useImportPlan(sheetId: string | undefined, parsed: { headers: string[]; records: Record<string, CellValue>[] } | null) {
 	const columns = useLiveQuery(async () => sheetId ? (await db.sheets.get(sheetId))?.columns ?? [] : [], [sheetId]);
-	const existingRows = useLiveQuery(() => sheetId ? db.rows.where('sheetId').equals(sheetId).count() : 0, [sheetId]);
-	const parsed = useMemo(() => text.trim() ? csvToRecords(parseCsv(text)) : null, [text]);
 	const targets = useMemo(() => importTargets(columns ?? [], parsed?.headers ?? []), [columns, parsed]);
 	const total = parsed?.records.length ?? 0;
-	const available = Math.max(0, MAX_ROWS - (existingRows ?? 0));
 	const newHeaders = sheetId && parsed ? parsed.headers.filter((header) => !targets.has(header)).length : 0;
-	return { parsed, targets, total, available, importable: Math.min(total, available), newHeaders };
+	return { targets, total, importable: total, newHeaders };
 }
 
 function importSummary(parsed: { headers: string[] } | null, total: number, newHeaders: number) {
@@ -90,12 +111,12 @@ export function ImportCsvDialog({ sheetId, afterRowId, onClose, onImported }: { 
 	const [name, setName] = useState('Imported sheet');
 	const nameEdited = useRef(false);
 	const [state, setState] = useState<{ status: 'idle' | 'importing' } | { status: 'failed'; error: string }>({ status: 'idle' });
-	const { text, file, reading, choose, paste } = useCsvSource({
+	const { text, parsed, file, reading, choose, paste, clear } = useImportSource({
 		onRead: (fileName) => { if (!sheetId && !nameEdited.current) setName(fileName.replace(/\.[^.]+$/, '') || 'Imported sheet'); },
 		onChange: () => setState({ status: 'idle' }),
 		onError: (error) => setState({ status: 'failed', error }),
 	});
-	const { parsed, targets, total, available, importable, newHeaders } = useImportPlan(sheetId, text);
+	const { targets, total, importable, newHeaders } = useImportPlan(sheetId, parsed);
 	const importing = state.status === 'importing';
 	const failed = state.status === 'failed';
 
@@ -118,12 +139,10 @@ export function ImportCsvDialog({ sheetId, afterRowId, onClose, onImported }: { 
 		} finally { inFlight.current = false; }
 	}
 
-	const limitNote = total > available && rowLimitNote(total, available, Boolean(sheetId));
-	const partial = total > importable && importable > 0;
 
 	return (
 		<Dialog
-			title={sheetId ? 'Add rows from a CSV' : 'Import a CSV'}
+			title={sheetId ? 'Add rows from a file' : 'Import a spreadsheet'}
 			description={sheetId ? 'Columns are matched by header name. New headers become new columns.' : 'The first row becomes the column headers.'}
 			onClose={() => { if (!importing) onClose(); }}
 			size="lg"
@@ -132,16 +151,15 @@ export function ImportCsvDialog({ sheetId, afterRowId, onClose, onImported }: { 
 				<>
 					<Button size="sm" onClick={onClose} disabled={importing}>Cancel</Button>
 					<Button size="sm" variant="brand" loading={importing} disabled={importable === 0 || reading} aria-describedby={failed ? errorId : undefined} onClick={() => void run()}>
-						{partial ? `Import first ${importable.toLocaleString()} rows` : 'Import'}
+						Import
 					</Button>
 				</>
 			}
 		>
 			<div className="flex flex-col gap-4">
 				{!sheetId && <Field label="Sheet name">{(id) => <Input id={id} value={name} onChange={(event) => { setName(event.target.value); nameEdited.current = true; }} />}</Field>}
-				<FileDrop file={file} reading={reading} disabled={importing} onChoose={choose} onClear={() => paste('')} />
-				{!file && <Field label="Or paste CSV">{(id) => <Textarea id={id} rows={6} value={text} onChange={(event) => paste(event.target.value)} placeholder={'Company,Website\nSunrun,sunrun.com'} className="font-mono text-caption" spellCheck={false} readOnly={importing} />}</Field>}
-				{limitNote && <p role="status" className="rounded-lg bg-warning-soft px-3 py-2.5 text-body-sm text-warning-strong">{limitNote}</p>}
+				<FileDrop file={file} reading={reading} disabled={importing} onChoose={choose} onClear={clear} />
+				{!file && <Field label="Or paste CSV or TSV">{(id) => <Textarea id={id} rows={6} value={text} onChange={(event) => paste(event.target.value)} placeholder={'Company,Website\nSunrun,sunrun.com'} className="font-mono text-caption" spellCheck={false} readOnly={importing} />}</Field>}
 				{parsed && parsed.headers.length > 0 && <CsvPreview headers={parsed.headers} records={parsed.records} targets={sheetId ? targets : undefined} />}
 				{state.status === 'failed' && <DialogError id={errorId}>{state.error}</DialogError>}
 			</div>
@@ -182,7 +200,7 @@ function CsvPreview({ headers, records, targets }: { headers: string[]; records:
 	);
 }
 
-/** Drop or choose a CSV/TSV. Once a file is chosen it replaces the paste box; clearing it brings the box back. */
+/** Drop or choose CSV, TSV, XLSX or JSON. Once a file is chosen it replaces the paste box. */
 function FileDrop({ file, reading, disabled, onChoose, onClear }: { file: string | null; reading: boolean; disabled: boolean; onChoose: (file: File) => void; onClear: () => void }) {
 	const input = useRef<HTMLInputElement>(null);
 	return (
@@ -200,7 +218,7 @@ function FileDrop({ file, reading, disabled, onChoose, onClear }: { file: string
 					<FileText aria-hidden className="size-4 shrink-0 text-fg-subtle" strokeWidth={1.5} />
 					<span className="min-w-0 truncate text-fg">{file}</span>
 				</span>
-			) : <span className="min-w-0 flex-1">{reading ? 'Reading file…' : 'Drop a CSV or TSV file here, or'}</span>}
+			) : <span className="min-w-0 flex-1">{reading ? 'Reading file…' : 'Drop a CSV, XLSX or JSON file here, or'}</span>}
 			<span className="flex items-center gap-1">
 				<Button size="sm" onClick={() => input.current?.click()} disabled={disabled}>
 					<Upload strokeWidth={1.5} /> {file ? 'Choose another' : 'Choose file'}
@@ -210,7 +228,7 @@ function FileDrop({ file, reading, disabled, onChoose, onClear }: { file: string
 			<input
 				ref={input}
 				type="file"
-				accept=".csv,text/csv,.tsv,text/tab-separated-values,.txt"
+				accept=".csv,text/csv,.tsv,text/tab-separated-values,.txt,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.json,application/json"
 				className="hidden"
 				onChange={(event) => {
 					const picked = event.target.files?.[0];

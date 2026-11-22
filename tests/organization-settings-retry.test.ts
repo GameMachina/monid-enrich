@@ -24,11 +24,11 @@ test('a failed first organization load is retryable, never exposes browser secre
 		assert.equal(requests, 2, 'The rejected promise is not cached');
 		available = true;
 		await refreshOrganizationSettings();
-		assert.equal(requests, 3);
+		assert.equal(requests, 4, 'the successful workspace read is followed by a revision-checked credential migration');
 		assert.equal(organizationSettingsSnapshot()?.revision, 4);
 		assert.equal(loadSettings().model, 'org-model');
 		assert.equal(await initializeOrganizationSettings(), true);
-		assert.equal(requests, 3, 'A loaded organization is not requested again');
+		assert.equal(requests, 4, 'A loaded organization is not requested again');
 		assert.ok(notifications >= 3);
 	} finally {
 		unsubscribe();

@@ -63,7 +63,7 @@ test('OpenAI: a model call is paid once it answers or fails after reaching OpenA
 test('TypeSafe: a decision is paid once processed, not when refused (429) or never sent', async (t) => {
 	const reply = replying(t);
 	const grant = { keys: { typesafe: 'spend-typesafe' } };
-	const decide = (access: ProviderAccess) => decideNoul(access, 'jev', 'ROW: Acme', 'Software?');
+	const decide = (access: ProviderAccess) => decideNoul(access, 'openai', 'ROW: Acme', 'Software?');
 	reply(() => Response.json({ model: 'jev-test', answers: { answer: { noul: .9 } } }));
 	assert.deepEqual(await spent(grant, decide), { paid: true, credits: 0 });
 	reply(() => Response.json({ error: 'failed' }, { status: 500 }));

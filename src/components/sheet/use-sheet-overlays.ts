@@ -7,6 +7,7 @@ import type { ActiveCell } from './grid';
 
 export type EditorState = { column?: Column; insertAt?: number; initialOp?: Column['op']; initialName?: string };
 export type FormulaBuilderState = { cell?: ActiveCell; draft?: string; column?: Column; insertAt?: number };
+export type ActionColumnState = { insertAt?: number; column?: Column };
 export type ConfirmState = { title: string; description: string; label: string; danger?: boolean; action: () => Promise<unknown> };
 
 /** The sheet's open menus and dialogs. */
@@ -17,6 +18,7 @@ export function useSheetOverlays() {
 	const [cellMenu, setCellMenu] = useState<{ cell: ActiveCell; anchor: { x: number; y: number } } | null>(null);
 	const [formulaBuilder, setFormulaBuilder] = useState<FormulaBuilderState | null>(null);
 	const [editor, setEditor] = useState<EditorState | null>(null);
+	const [actionColumn, setActionColumn] = useState<ActionColumnState | null>(null);
 	const [formatColumn, setFormatColumn] = useState<Column | null>(null);
 	const [importOpen, setImportOpen] = useState(false);
 	const [importAfterRowId, setImportAfterRowId] = useState<string>();
@@ -25,7 +27,7 @@ export function useSheetOverlays() {
 	const [confirm, setConfirm] = useState<ConfirmState | null>(null);
 	return {
 		columnMenu, setColumnMenu, addColumnMenu, setAddColumnMenu, rowMenu, setRowMenu, cellMenu, setCellMenu,
-		formulaBuilder, setFormulaBuilder, editor, setEditor, formatColumn, setFormatColumn,
+		formulaBuilder, setFormulaBuilder, editor, setEditor, actionColumn, setActionColumn, formatColumn, setFormatColumn,
 		importOpen, setImportOpen, importAfterRowId, setImportAfterRowId,
 		renamingColumnId, setRenamingColumnId, renamingSheet, setRenamingSheet, confirm, setConfirm,
 		...usePopulateLaunch(),

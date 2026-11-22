@@ -1,5 +1,5 @@
 {
-  "name": "enrichable",
+  "name": "monid-enrich",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -26,6 +26,7 @@
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
+    "@electric-sql/pglite": "^0.5.15",
     "@ironcalc/wasm": "^0.9.1",
     "@modelcontextprotocol/sdk": "^1.32.2",
     "@neon/realtime": "^0.2.1",
@@ -57,7 +58,6 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@electric-sql/pglite": "^0.5.15",
     "@playwright/test": "^1.65.0",
     "@tailwindcss/turbopack": "^4",
     "@types/node": "^22.20.5",
@@ -73,17 +73,17 @@
     "tsx": "^4.23.15",
     "typescript": "^5"
   },
-  "description": "Open-source AI spreadsheet for data enrichment. Build lead lists from a prompt, research every row with live web data, and find work emails. Powered by Context.dev.",
+  "description": "Standalone spreadsheet for company and people research, enrichment, and review, powered by Monid.",
   "license": "MIT",
   "engines": {
     "node": ">=22.23.4 <23"
   },
-  "homepage": "https://www.enrichable.io",
+  "homepage": "https://github.com/GameMachina/monid-enrich",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/context-dot-dev/enrichable.git"
+    "url": "git+https://github.com/GameMachina/monid-enrich.git"
   },
   "bugs": {
-    "url": "https://github.com/context-dot-dev/enrichable/issues"
+    "url": "https://github.com/GameMachina/monid-enrich/issues"
   }
 }

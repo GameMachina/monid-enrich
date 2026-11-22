@@ -4,7 +4,7 @@ import type { Account } from '../auth-identity';
 import type { Cell, Row, Sheet } from '../types';
 import { PRESENCE_TTL_MS, type presenceInputSchema } from '../collaboration';
 import type { z } from 'zod';
-import { createSheetSchema, patchSheetSchema, MAX_ROWS, MAX_SHEETS, parseInput, WorkspaceError } from '../workspace';
+import { createSheetSchema, patchSheetSchema, parseInput, WorkspaceError } from '../workspace';
 import { invalidCell, redefinedColumns } from '../cell-admission';
 import { workspaceId, type Database, type Sql } from './database';
 
@@ -69,8 +69,6 @@ ON CONFLICT (workspace_id,client_id) DO UPDATE SET sheet_id=excluded.sheet_id,na
 		const { sheet, rows } = parseInput(createSheetSchema, input, 'Invalid sheet data.');
 		this.validateRows(sheet, rows);
 		return this.database.transaction(async (client, workspace) => {
-			const count = await client.query('SELECT count(*)::int AS count FROM enrichable.sheets WHERE workspace_id=$1', [workspace]);
-			if (Number(count.rows[0].count) >= MAX_SHEETS) throw new WorkspaceError(`This workspace can have up to ${MAX_SHEETS} sheets. Delete a sheet to create another.`, 422);
 			const created = await client.query('INSERT INTO enrichable.sheets (workspace_id, id, data, created_by, updated_by) VALUES ($1,$2,$3::jsonb,$4,$4) ON CONFLICT DO NOTHING RETURNING id', [workspace, sheet.id, JSON.stringify(sheet), actor.user.id]);
 			if (!created.rows.length) throw new WorkspaceError('This sheet already exists.', 409);
 			await this.putRows(client, workspace, sheet.id, rows);
@@ -88,8 +86,6 @@ ON CONFLICT (workspace_id,client_id) DO UPDATE SET sheet_id=excluded.sheet_id,na
 			await this.validateValues(client, workspace, record.rows[0].data as Sheet, patch);
 			await client.query('DELETE FROM enrichable.sheet_rows WHERE workspace_id=$1 AND sheet_id=$2 AND id=ANY($3::text[])', [workspace, id, patch.deleted]);
 			await this.putRows(client, workspace, id, patch.rows);
-			const count = await client.query('SELECT count(*)::int AS count FROM enrichable.sheet_rows WHERE workspace_id=$1 AND sheet_id=$2', [workspace, id]);
-			if (Number(count.rows[0].count) > MAX_ROWS) throw new WorkspaceError(`Each sheet can have up to ${MAX_ROWS.toLocaleString()} rows.`, 422);
 			const sheet = { ...patch.sheet, updatedAt: Date.now() };
 			const result = await client.query('UPDATE enrichable.sheets SET data=$3::jsonb, revision=revision+1, updated_by=$4 WHERE workspace_id=$1 AND id=$2 RETURNING revision', [workspace, id, JSON.stringify(sheet), actor.user.id]);
 			return { revision: Number(result.rows[0].revision), updatedAt: sheet.updatedAt };

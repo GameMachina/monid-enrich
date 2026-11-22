@@ -71,7 +71,7 @@ test('a search with no matches reopens Find rows with the prompt kept, and closi
 	await page.getByLabel('Describe the rows you want', { exact: true }).fill('Heads of growth at imaginary companies');
 	await page.getByRole('button', { name: 'Find people', exact: true }).click();
 	const dialog = page.getByRole('dialog', { name: 'Find rows', exact: true });
-	await expect(dialog.getByRole('status')).toHaveText('No people matched. Try a broader description.');
+	await expect(dialog.getByRole('status')).toHaveText('Search finished: no people matched. Try a broader description.');
 	await expect(dialog.getByLabel('Describe the rows you want', { exact: true })).toHaveValue('Heads of growth at imaginary companies');
 	await expect(dialog.getByRole('radio', { name: 'People', exact: false })).toBeChecked();
 	await dialog.getByRole('button', { name: 'Close', exact: true }).click();

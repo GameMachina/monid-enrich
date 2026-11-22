@@ -3,7 +3,7 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { ArrowRight } from 'lucide-react';
 import { GithubIcon, Logo } from '@/components/ui/logo';
-import { CONTEXT_URL, DOCS_URL, GITHUB_URL, SITE_DESCRIPTION, SITE_LEDE, SITE_TITLE } from '@/lib/constants';
+import { DOCS_URL, GITHUB_URL, MONID_URL, PRODUCT_NAME, SITE_DESCRIPTION, SITE_LEDE, SITE_TITLE } from '@/lib/constants';
 import { siteUrl } from '@/lib/server/deployment';
 
 export const metadata: Metadata = {
@@ -11,38 +11,33 @@ export const metadata: Metadata = {
 	description: SITE_DESCRIPTION,
 	alternates: { canonical: '/' },
 	// Page-level openGraph/twitter replace the layout's objects, so repeat the shared fields.
-	openGraph: { type: 'website', siteName: 'Enrichable', locale: 'en_US', title: SITE_TITLE, description: SITE_DESCRIPTION, url: '/' },
+	openGraph: { type: 'website', siteName: PRODUCT_NAME, locale: 'en_US', title: SITE_TITLE, description: SITE_DESCRIPTION, url: '/' },
 	twitter: { card: 'summary_large_image', title: SITE_TITLE, description: SITE_DESCRIPTION },
 };
 
-const CONTEXT_ORG = 'https://www.context.dev/#organization';
-
 const FEATURES = [
-	{ title: 'Build lead lists from a prompt', body: 'Ask for “every Series A fintech in Europe” or “VPs of Sales at US logistics companies”. Matching companies or people stream into the sheet, deduplicated by domain.' },
-	{ title: 'Research every row', body: 'Add a column with a question like “Who is the CEO?” or “Does the pricing page offer a free tier?”. Enrichable answers it for each row and links every answer to its sources.' },
+	{ title: 'Build lead lists from a prompt', body: 'Ask for “every Series A fintech in Europe” or “VPs of Sales at US logistics companies”. Monid-powered results stream into the sheet, deduplicated by domain.' },
+	{ title: 'Research every row', body: 'Add a column with a question like “Who is the CEO?” or “Does the pricing page offer a free tier?”. Research results include source links so you can check the answer.' },
 	{ title: 'Qualify and score accounts', body: 'True or false checks, categories and scores on levels you define. Each call comes with a probability or confidence, so you can filter on how sure it is.' },
-	{ title: 'Find work emails', body: 'One column tries your email providers in order (Hunter, Prospeo, Apollo, QuickEnrich, ContactOut) and keeps the first work email it finds.' },
+	{ title: 'Find work emails', body: 'Use Monid to find or verify work email addresses from a person name and company domain.' },
 	{ title: 'Draft outreach and documents', body: 'Write a personalized email or a branded PDF for every row, using the research already in the sheet.' },
 	{ title: 'Use real spreadsheet formulas', body: 'SUM, IF, VLOOKUP and hundreds more run in your browser through IronCalc, with no API calls and no keys.' },
 	{ title: 'Export anywhere', body: 'Download CSV, Excel or JSON, with or without confidence scores and sources.' },
-	{ title: 'Work from your AI agent', body: 'A built-in MCP server lets Claude Code, Cursor and other MCP clients read sheets, add columns and run enrichment.' },
+	{ title: 'Work from your AI agent', body: 'A built-in MCP server lets compatible agents read sheets, add columns and run enrichment in the same workspace.' },
 ];
 
 const STEPS = [
 	{ title: 'Find rows', body: 'Describe the companies or people you want, import a CSV, or start from a blank sheet.' },
-	{ title: 'Add AI columns', body: 'Write a question and reference other columns, like {{Website}}. Enrichable picks the method: web research, reading a page, a company lookup or an email search.' },
+	{ title: 'Add research columns', body: 'Write a question and reference other columns, like {{Website}}. Monid supplies web research and company or people data. Add your OpenAI key for reasoning features.' },
 	{ title: 'Review and export', body: 'Open any cell to see its sources and confidence. Rerun or edit it, filter the rows that pass, and export.' },
 ];
 
 const FAQ = [
-	{ q: 'What is Enrichable?', a: 'Enrichable is a free, open-source AI spreadsheet for data enrichment. You describe a list of companies or people, it finds them, and then AI columns research every row with live web data and keep the sources.' },
-	{ q: 'Is Enrichable free?', a: 'Yes. Enrichable is MIT licensed. Self-hosted copies run on your own Context.dev and OpenAI API keys, so you pay those providers directly for what you use. The hosted version at enrichable.io uses your Context.dev account.' },
-	{ q: 'What is data enrichment?', a: 'Data enrichment adds missing facts to a list of companies or people: websites, headcount, funding, leadership, tech stack, work emails or anything else on the public web. Enrichable does it by researching each row on the live web instead of reading from a static database.' },
-	{ q: 'Is Enrichable an open-source alternative to Clay?', a: 'For the core workflow, yes. Enrichable builds lead lists, enriches them with AI research and runs an email provider waterfall. It is open source, you can self-host it, and self-hosted copies bill providers directly through your own API keys.' },
-	{ q: 'Where does the data come from?', a: 'Web search, page reads and company and people data come from the Context.dev API. OpenAI models do the reasoning. TypeSafe can make calibrated true or false and category calls, and the email providers you connect find work emails.' },
-	{ q: 'Can I self-host Enrichable?', a: 'Yes. Deploy it to Vercel with a Neon Postgres database in about five minutes, or run it locally with Node.js 22. You need a Context.dev API key and an OpenAI API key. The README on GitHub has the steps.' },
-	{ q: 'Can AI agents use Enrichable?', a: 'Yes. Enrichable includes an MCP server, so Claude Code, Cursor and other MCP clients can list sheets, read rows, add columns and run enrichment in the same workspace you use in the browser.' },
-	{ q: 'How big can a sheet be?', a: 'Up to 1,000 rows per sheet and 10 sheets per workspace by default. Self-hosted copies can change both limits.' },
+	{ q: `What is ${PRODUCT_NAME}?`, a: `${PRODUCT_NAME} is a spreadsheet for company and people research. Find rows, enrich each row, review the evidence, and export the result.` },
+	{ q: 'Where does the data come from?', a: 'All external research and enrichment requests go through Monid. OpenAI is optional and only used when you connect your own key for reasoning features.' },
+	{ q: 'Can I use the app without an OpenAI key?', a: 'Yes. Spreadsheet editing, formulas, imports, exports, and supported Monid searches and enrichments remain available. AI reasoning and classification features explain when they need an OpenAI key.' },
+	{ q: 'Can I self-host it?', a: 'Yes. Run it locally with Node.js and connect a Monid API key. Add your own OpenAI key only if you want reasoning features. See the repository README for setup.' },
+	{ q: 'Can AI agents use it?', a: 'The app includes an MCP server so compatible clients can work with sheets and enrichment operations.' },
 ];
 
 function structuredData() {
@@ -50,15 +45,15 @@ function structuredData() {
 	return {
 		'@context': 'https://schema.org',
 		'@graph': [
-			{ '@type': 'Organization', '@id': CONTEXT_ORG, name: 'Context.dev', url: 'https://www.context.dev' },
-			{ '@type': 'WebSite', '@id': `${url}#website`, url, name: 'Enrichable', description: SITE_DESCRIPTION, inLanguage: 'en', publisher: { '@id': CONTEXT_ORG } },
+			{ '@type': 'Organization', '@id': `${url}#organization`, name: PRODUCT_NAME, url },
+			{ '@type': 'WebSite', '@id': `${url}#website`, url, name: PRODUCT_NAME, description: SITE_DESCRIPTION, inLanguage: 'en', publisher: { '@id': `${url}#organization` } },
 			{
-				'@type': 'SoftwareApplication', '@id': `${url}#app`, name: 'Enrichable', url, description: SITE_DESCRIPTION, image: new URL('/opengraph-image.png', url).toString(),
+				'@type': 'SoftwareApplication', '@id': `${url}#app`, name: PRODUCT_NAME, url, description: SITE_DESCRIPTION, image: new URL('/opengraph-image.png', url).toString(),
 				applicationCategory: 'BusinessApplication', applicationSubCategory: 'Data enrichment', operatingSystem: 'Web', browserRequirements: 'Requires JavaScript',
 				isAccessibleForFree: true, license: 'https://opensource.org/licenses/MIT', offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
-				featureList: FEATURES.map((feature) => feature.title), sameAs: [GITHUB_URL], publisher: { '@id': CONTEXT_ORG }, creator: { '@id': CONTEXT_ORG },
+				featureList: FEATURES.map((feature) => feature.title), sameAs: [GITHUB_URL], publisher: { '@id': `${url}#organization` }, creator: { '@id': `${url}#organization` },
 			},
-			{ '@type': 'SoftwareSourceCode', name: 'Enrichable', codeRepository: GITHUB_URL, programmingLanguage: 'TypeScript', runtimePlatform: 'Node.js', license: 'https://opensource.org/licenses/MIT', targetProduct: { '@id': `${url}#app` } },
+			{ '@type': 'SoftwareSourceCode', name: PRODUCT_NAME, codeRepository: GITHUB_URL, programmingLanguage: 'TypeScript', runtimePlatform: 'Node.js', license: 'https://opensource.org/licenses/MIT', targetProduct: { '@id': `${url}#app` } },
 			{ '@type': 'FAQPage', '@id': `${url}#faq`, mainEntity: FAQ.map(({ q, a }) => ({ '@type': 'Question', name: q, acceptedAnswer: { '@type': 'Answer', text: a } })) },
 		],
 	};
@@ -80,9 +75,9 @@ export default function Landing() {
 			<div className="relative isolate flex min-h-dvh flex-col overflow-hidden">
 				<SheetBackdrop />
 				<header className="flex items-center justify-between gap-4 px-5 pt-5 pb-3 md:px-12 md:pt-7 short:pt-3 short:pb-1">
-					<Link href="/" className="flex items-center gap-2.5 rounded-md" aria-label="Enrichable home">
+					<Link href="/" className="flex items-center gap-2.5 rounded-md" aria-label={`${PRODUCT_NAME} home`}>
 						<Logo size={24} />
-						<span className="text-[17px] font-semibold tracking-[-0.01em]">Enrichable</span>
+						<span className="text-[17px] font-semibold tracking-[-0.01em]">{PRODUCT_NAME}</span>
 					</Link>
 					<nav aria-label="Site" className="flex items-center gap-1 text-body text-fg-muted">
 						<a href="#how-it-works" className="hidden rounded-md px-2.5 py-1.5 transition-colors hover:text-fg sm:block">How it works</a>
@@ -111,16 +106,16 @@ export default function Landing() {
 				<div className="flex flex-col items-center justify-center gap-1.5 px-5 pb-7 text-body-sm text-fg-subtle sm:flex-row sm:gap-3.5 md:pb-8 short:pb-3">
 					<span>Free and open source (MIT)</span>
 					<span aria-hidden className="hidden h-3.5 w-px bg-line-strong sm:block" />
-					<PoweredByContext />
+					<PoweredByMonid />
 				</div>
 			</div>
 
-			<Section id="what-is-enrichable" title="What is Enrichable?">
+			<Section id="what-is-enrichable" title={`What is ${PRODUCT_NAME}?`}>
 				<div className="space-y-4 text-[1.0625rem] leading-relaxed text-fg-muted">
 					<p>
-						<strong className="font-medium text-fg">Enrichable is a free, open-source AI spreadsheet for data enrichment.</strong> You describe the list you need, such as “every solar company in the US with 50+ employees”, and it fills a sheet with matching companies or people.
+						<strong className="font-medium text-fg">{PRODUCT_NAME} is an open-source spreadsheet for data enrichment.</strong> Describe a list, such as “solar companies in the US with 50+ employees”, and Monid-powered company or people results appear in the sheet.
 					</p>
-					<p>Then you add columns by asking questions in plain English. Enrichable answers each one for every row by searching the web, reading pages and pulling company and contact data. Every answer keeps its sources, so you can check the work before you use it.</p>
+					<p>Add columns for research, classification, scoring, or contact data. Results retain their sources, status, and confidence where available. Add your own OpenAI key for reasoning-dependent columns.</p>
 				</div>
 			</Section>
 
@@ -149,13 +144,13 @@ export default function Landing() {
 				</ol>
 			</Section>
 
-			<Section id="open-source" title="Open source, built on Context.dev">
+			<Section id="open-source" title="Open source, powered by Monid">
 				<div className="space-y-4 text-[1.0625rem] leading-relaxed text-fg-muted">
 					<p>
-						Enrichable is MIT licensed and built by the team at <a href={CONTEXT_URL} target="_blank" rel="noopener" className={inlineLink}>Context.dev</a>. Every search, scrape, company lookup and person lookup runs on the Context.dev API, so the code also works as a reference for building your own research tools.
+						{PRODUCT_NAME} is an independent open-source product. Every external research or enrichment request is routed through <a href={MONID_URL} target="_blank" rel="noopener" className={inlineLink}>Monid</a>. OpenAI is optional and only uses a key supplied by the workspace owner.
 					</p>
 					<p>
-						Use the hosted version here, or <a href={GITHUB_URL} target="_blank" rel="noopener noreferrer" className={inlineLink}>self-host it on Vercel</a> with your own API keys. Your sheets live in your own Postgres database.
+						Run it locally or self-host from the <a href={GITHUB_URL} target="_blank" rel="noopener noreferrer" className={inlineLink}>public repository</a>. Your spreadsheet data stays in the configured workspace storage.
 					</p>
 				</div>
 			</Section>
@@ -179,7 +174,7 @@ export default function Landing() {
 					</div>
 					<div className="flex w-full flex-col gap-2.5 sm:w-auto sm:flex-row sm:gap-3">
 						<Link href="/app" data-track="landing_cta" data-cta="footer_start" className={primaryButton}>
-							Open Enrichable <ArrowRight aria-hidden className="size-4" strokeWidth={2} />
+							Open {PRODUCT_NAME} <ArrowRight aria-hidden className="size-4" strokeWidth={2} />
 						</Link>
 						<a href={DOCS_URL} target="_blank" rel="noopener noreferrer" data-track="landing_cta" data-cta="docs" className={secondaryButton}>Read the docs</a>
 					</div>
@@ -190,14 +185,14 @@ export default function Landing() {
 				<div className="mx-auto flex w-full max-w-[1080px] flex-col gap-4 px-5 py-8 text-body-sm text-fg-subtle sm:flex-row sm:items-center sm:justify-between md:px-12">
 					<div className="flex items-center gap-2 text-fg">
 						<Logo size={18} />
-						<span className="font-semibold tracking-[-0.01em]">Enrichable</span>
+						<span className="font-semibold tracking-[-0.01em]">{PRODUCT_NAME}</span>
 						<span className="text-fg-subtle">· MIT license</span>
 					</div>
 					<div className="flex flex-wrap items-center gap-x-5 gap-y-2">
 						<a href={GITHUB_URL} target="_blank" rel="noopener noreferrer" className="hover:text-fg">GitHub</a>
 						<a href={DOCS_URL} target="_blank" rel="noopener noreferrer" className="hover:text-fg">Docs</a>
 						<a href={`${GITHUB_URL}/blob/main/docs/mcp.md`} target="_blank" rel="noopener noreferrer" className="hover:text-fg">MCP</a>
-						<PoweredByContext />
+						<PoweredByMonid />
 					</div>
 				</div>
 			</footer>
@@ -216,10 +211,10 @@ function Section({ id, title, children }: { id: string; title: string; children:
 	);
 }
 
-function PoweredByContext() {
+function PoweredByMonid() {
 	return (
-		<a href={CONTEXT_URL} target="_blank" rel="noopener" className="inline-flex items-center gap-[7px] rounded-md hover:text-fg">
-			Powered by <Image src="/providers/context.svg" alt="" width={20} height={14} unoptimized /> <span className="font-semibold tracking-[-0.01em] text-fg">Context.dev</span>
+		<a href={MONID_URL} target="_blank" rel="noopener" className="inline-flex items-center gap-[7px] rounded-md hover:text-fg">
+			Powered by <Image src="/providers/monid.svg" alt="" width={18} height={18} unoptimized /> <span className="font-semibold tracking-[-0.01em] text-fg">Monid</span>
 		</a>
 	);
 }

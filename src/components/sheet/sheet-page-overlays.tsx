@@ -12,6 +12,7 @@ import type { Column, Row, Sheet } from '@/lib/types';
 import type { RefObject } from 'react';
 import { ColumnEditorDialog } from './column-editor';
 import { ColumnFormatDialog } from './column-format-dialog';
+import { ActionColumnDialog } from './action-column-dialog';
 import { FormulaBuilder } from './formula-builder';
 import type { ActiveCell } from './grid';
 import { ImportCsvDialog } from './import-csv-dialog';
@@ -36,10 +37,11 @@ type DialogsProps = { sheetId: string; sheet: Sheet; allRows: Row[]; commands: S
 
 /** The sheet's dialogs, stacked in the order they can open over one another. */
 export function SheetDialogs({ sheetId, sheet, allRows, commands, content, activeIndex, overlays, actions, onActivate, findButtonRef }: DialogsProps) {
-	const { formulaBuilder, editor, formatColumn, confirm } = overlays;
+	const { formulaBuilder, editor, actionColumn, formatColumn, confirm } = overlays;
 	return <>
 		{formulaBuilder && <SheetFormulaBuilder sheet={sheet} allRows={allRows} state={formulaBuilder} commands={commands} saveCell={content.saveCell} onActivate={onActivate} onClose={() => overlays.setFormulaBuilder(null)} />}
 		{editor && <SheetColumnEditor sheet={sheet} allRows={allRows} rows={content.rows} activeIndex={activeIndex} editor={editor} commands={commands} actions={actions} onClose={() => overlays.setEditor(null)} />}
+		{actionColumn && <ActionColumnDialog sheet={sheet} rows={allRows} state={actionColumn} commands={commands} onClose={() => overlays.setActionColumn(null)} />}
 		{formatColumn && <ColumnFormatDialog column={formatColumn} commands={commands} onClose={() => overlays.setFormatColumn(null)} />}
 		{overlays.populateOpen && <PopulateDialog sheet={sheet} rowCount={allRows.length} initialEntity={overlays.populateEntity} collapseTarget={findButtonRef} onGenerate={(request) => populateRunner.start(sheet, request)} onClose={() => { overlays.setPopulateOpen(false); overlays.setPopulateEntity(undefined); }} />}
 		{overlays.importOpen && <ImportCsvDialog sheetId={sheetId} afterRowId={overlays.importAfterRowId} onClose={() => overlays.setImportOpen(false)} onImported={() => {}} />}

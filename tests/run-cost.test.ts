@@ -10,15 +10,15 @@ const ask: ColumnOp = { kind: 'ai', prompt: 'CEO?', output: 'text', research: 'w
 const draft: ColumnOp = { kind: 'email-draft', mode: 'ai', prompt: 'Hi', to: '', cc: '', bcc: '', subject: '', body: '' };
 const estimateRun = (rows: number, ops: ColumnOp[]) => estimateCells(ops.map((op) => ({ cells: rows, op })));
 
-test('big or expensive runs ask first and say what they cost', () => {
-	assert.equal(creditsPerCell(ultra), 100);
-	assert.equal(creditsPerCell({ ...ask, page: { type: 'find', column: 'Domain', page: 'pricing' } }), 6);
-	assert.deepEqual(estimateRun(1, [ultra]), { cells: 1, creditsPerCell: 100, credits: 100, confirm: false, message: '~1 cell × ~100 credits ≈ 100 credits' });
-	assert.equal(estimateRun(2, [ultra]).confirm, true, 'two Ultra cells exceed the credit threshold');
-	assert.equal(estimateRun(312, [ultra]).message, '~312 cells × ~100 credits ≈ 31,200 credits');
+test('large runs ask for confirmation without inventing a provider cost estimate', () => {
+	assert.equal(creditsPerCell(ultra), 0);
+	assert.equal(creditsPerCell({ ...ask, page: { type: 'find', column: 'Domain', page: 'pricing' } }), 0);
+	assert.deepEqual(estimateRun(1, [ultra]), { cells: 1, creditsPerCell: 0, credits: 0, confirm: false, message: '~1 cell' });
+	assert.equal(estimateRun(2, [ultra]).confirm, false, 'cost varies by endpoint and returned results');
+	assert.equal(estimateRun(312, [ultra]).message, '~312 cells');
 	assert.equal(estimateRun(CONFIRM_CELLS, [draft]).confirm, false);
 	assert.deepEqual(estimateRun(CONFIRM_CELLS + 1, [draft]), { cells: 51, creditsPerCell: 0, credits: 0, confirm: true, message: '~51 cells' });
-	assert.equal(estimateRun(10, [ask, draft]).message, '~20 cells × ~2 credits ≈ 40 credits', 'several columns average their cost per cell');
+	assert.equal(estimateRun(10, [ask, draft]).message, '~20 cells');
 	assert.equal(estimateRun(0, [ultra]).confirm, false);
 });
 
@@ -27,7 +27,7 @@ test('a run asks again only when it outgrows the estimate already shown', () => 
 	assert.equal(asksFirst(estimateRun(60, [ask])), true);
 	assert.equal(asksFirst(estimateRun(60, [ask]), estimateRun(60, [ask])), false, 'the same run, already accepted');
 	assert.equal(asksFirst(estimateRun(60, [ask]), shown), true, 'more cells than shown');
-	assert.equal(asksFirst(estimateRun(2, [ultra]), estimateRun(51, [draft])), true, 'fewer cells but more credits than shown');
+	assert.equal(asksFirst(estimateRun(2, [ultra]), estimateRun(51, [draft])), false, 'a smaller run needs no extra confirmation');
 	assert.equal(asksFirst(estimateRun(29, [ask]), shown), false, 'a big run, but smaller than shown');
 });
 

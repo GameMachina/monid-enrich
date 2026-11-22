@@ -26,6 +26,5 @@ export function documentClientDomain(sheet: Pick<Sheet, 'columns'>, row: Row): s
 }
 
 export function documentBrand(data: { domain?: string; title?: string; colors?: Array<{ hex?: string }>; logos?: Array<{ url?: string; mode?: string; type?: string }> }, domain: string): DocumentBrand {
-	const logos = (data.logos ?? []).filter((logo) => logo.mode !== 'dark' && logo.url?.startsWith('https://'));
-	return { name: data.title || domain, domain, accentColor: data.colors?.map((color) => color.hex).find((color) => color && /^#(?:[a-f\d]{3}|[a-f\d]{6})$/i.test(color)), logoUrl: (logos.find((logo) => logo.type === 'logo') ?? logos[0])?.url };
+	return { name: data.title || domain, domain, accentColor: data.colors?.map((color) => color.hex).find((color) => color && /^#(?:[a-f\d]{3}|[a-f\d]{6})$/i.test(color)) };
 }

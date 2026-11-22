@@ -6,7 +6,7 @@ import { parseInput, SHEET_DATA_VERSION, WorkspaceError, sheetSchema } from '../
 import { assertNoEnrichmentCycles } from '../enrichment-dependencies';
 import { BUSY_MESSAGE, failureCell, planCell, renameColumn, resultCell, settleCell, startCell, upgradeLegacyResults, type CommitOutcome, type EnrichmentPlan, type Grid } from '../enrichment-plan';
 import { upgradeGrid } from '../sheet-upgrade';
-import { danglingReferences, nameKey, nameTaken, sameName } from '../references';
+import { danglingActionReferences, danglingReferences, nameKey, nameTaken, sameName } from '../references';
 import { definitionIssue, operationSummaries } from '../operations';
 import { runOp } from './enrich';
 import { admitCell } from '../cell-admission';
@@ -31,7 +31,7 @@ function validateColumnInput(value: z.infer<typeof columnInputShape>, context: z
 }
 const columnInput = columnInputShape.superRefine(validateColumnInput);
 const enrichedColumnInput = columnInputShape.extend({ type: z.literal('enriched').default('enriched'), op: ColumnOpSchema }).superRefine(validateColumnInput);
-export const operationGuidance = 'For requests about my/our company, keep that wording in AI, decision, or email instructions: execution resolves the saved workspace brand and researches it on demand, with a 30-day cache. Prefer Enrichable built-in operations over implementing scraping, provider calls, or research yourself. If additional research is needed beyond those operations, prefer the Context.dev MCP when available: use people search and people enrichment to resolve identities, web search to find supporting sources, and web scrape or web answers to verify details. Use confirmed profile URLs or company websites to improve the sheet inputs, then rerun affected Enrichable operations to persist results and provenance. Do not guess missing identities or profile URLs. If Context.dev MCP is unavailable, use Enrichable search/scrape/answer operations before falling back to another web research tool. For people lists, keep Name as the first source column and call enrich_cells on it to resolve the person and attach the profile photo in place; do not add a duplicate Profile or photo column. Use template for deterministic text (free), company/person for supported facts, email-enrichment for verified work email waterfalls, hunter/prospeo for explicit provider contact data, scrape/search for web data, check/classify/score for decisions, and email-draft for emails. Use ai only when a specialized operation cannot answer the request; reserve answer for deep research. Run these operations with enrich_cells to persist results and provenance. Organization provider connections and settings are used automatically; optional request overrides are headers, never tool arguments. Editing source values or an operation keeps saved results but makes the affected ones outdated; enrich_cells skips finished cells, reporting outdated ones as skipped with outdated=true. To refresh them, rerun affected prerequisites, then their dependents, with overwrite=true and fresh idempotency keys.';
+export const operationGuidance = `Use Monid Enrich's built-in operations for company, people, email, and web data. Every external data request must go through the app's Monid adapter; do not call vendor MCPs or vendor APIs directly. Use the workspace's Monid connection for supported data lookups. OpenAI reasoning features run only when the workspace supplies an OpenAI key; never substitute another model. If an operation is unsupported, explain the gap rather than using another provider. Do not guess identities, profile URLs, or unsupported facts. For people lists, keep Name as the source column and enrich it in place so profile photo and match metadata stay attached to the row. Use templates and formulas for deterministic local transformations, specialized operations for supported company/person/email/web data, check/classify/score for reasoning, and ai or answer for research that needs the optional OpenAI key. Use enrich_cells to persist results and provenance. Provider credentials remain workspace-scoped and server-side. Editing source values or an operation keeps saved results but marks affected cells outdated; enrich_cells skips finished cells unless overwrite=true. Refresh prerequisites before dependents and use a fresh app idempotency key when intentionally starting a new run.`;
 const edit = z.object({ rowId: id, columnId: id, value });
 const TYPED_VALUES = 'Columns with a typed format (website, webpage, currency, percent, unit, checkbox, category) store values normalized to it, such as example.com or 1200; a value that does not fit refuses the whole call, naming each cell.';
 const sheetId = { sheetId: id };
@@ -39,7 +39,7 @@ const mutation = { ...sheetId, revision };
 
 export const mcpTools = {
 	list_sheets: { description: 'List compact sheet summaries, column names/IDs, revisions, row counts, and app links. Pass includeDefinitions=true for full definitions, or get_sheet for one sheet.', schema: z.object({ includeDefinitions: z.boolean().default(false) }) },
-	get_sheet: { description: 'Read columns, revision, and up to 100 rows. Pass revision on subsequent pages for a consistent snapshot. nextOffset is null at the end.', schema: z.object({ ...sheetId, offset: z.number().int().min(0).max(1000).default(0), revision: revision.optional() }) },
+	get_sheet: { description: 'Read columns, revision, and up to 100 rows per page. Pass revision on subsequent pages for a consistent snapshot. nextOffset is null at the end.', schema: z.object({ ...sheetId, offset: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).default(0), revision: revision.optional() }) },
 	create_sheet: { description: `Create a spreadsheet with the app's built-in blank (Name, Website)/companies/people/websites layout, or supply custom columns. Prefer this tool for spreadsheet creation. Name a company's website column Website (a source column named Domain or Site also works), and reference it as {{Website}}. Add built-in operations through enrichments (matching preset column names replace those source columns). No provider calls run at creation. Read returned column IDs, import rows with upsert_rows, then enrich_cells. ${operationGuidance} Supply a stable unique sheetId for safe matching-definition retries.`, schema: z.object({ ...sheetId, name: z.string().min(1).max(300), template: z.enum(['blank', ...ENTITY_KINDS]).default('blank'), columns: z.array(columnInput).min(1).max(200).optional().describe('Optional complete custom base layout; omit to use the selected built-in template.'), enrichments: z.array(enrichedColumnInput).max(200).default([]).describe('Built-in enrichment columns. Match a base column name to replace it, or use a new name to append. Prefer specialized operations to ai or external custom code.') }) },
 	upsert_rows: { description: `Insert or partially update up to 100 rows by stable row id. cells maps column IDs to literal values, including strings beginning with =. Existing unspecified cells are preserved. ${TYPED_VALUES} Requires the current revision.`, schema: z.object({ ...mutation, rows: z.array(z.object({ id, cells: z.record(id, value) })).min(1).max(100) }) },
 	update_cells: { description: `Edit up to 100 literal cell values. ${TYPED_VALUES} Requires the current revision; conflicts require rereading the sheet.`, schema: z.object({ ...mutation, cells: z.array(edit).min(1).max(100) }) },
@@ -117,11 +117,13 @@ export class McpOperations {
 	private validateColumns(columns: Column[], changed?: string) {
 		for (const c of changed === undefined ? columns : columns.filter((entry) => entry.id === changed)) {
 			if (nameTaken(c.name, columns, c.id)) throw new WorkspaceError('Column names must be unique.');
-			if ((c.type === 'enriched') !== Boolean(c.op)) throw new WorkspaceError('Enriched columns require an operation; source columns cannot have one.');
-			if (!c.op) continue;
-			const issue = definitionIssue(c.op);
-			if (issue) throw new WorkspaceError(issue.message);
-			const [dangling] = danglingReferences(c.op, columns);
+			const configured = Number(Boolean(c.op)) + Number(Boolean(c.action));
+			if (c.type === 'enriched' ? configured !== 1 : configured !== 0) throw new WorkspaceError('Enriched columns need exactly one operation or action setup; source columns cannot have either.');
+			if (c.op) {
+				const issue = definitionIssue(c.op);
+				if (issue) throw new WorkspaceError(issue.message);
+			}
+			const [dangling] = c.op ? danglingReferences(c.op, columns) : c.action ? danglingActionReferences(c.action, columns) : [];
 			if (dangling) throw new WorkspaceError(`Unresolved column reference: ${dangling}`);
 		}
 	}
