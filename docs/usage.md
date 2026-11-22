@@ -92,3 +92,7 @@ Connect a Monid API key in Configuration → Connections. Enrichment runs use th
 - **Find social** supports LinkedIn, Instagram, Facebook, X, TikTok, and YouTube. Available Monid routes vary by network. Search results are checked against the requested profile host and person name before a URL is saved.
 
 Unsupported networks such as Threads and Bluesky are not offered until a suitable Monid route is inspected and added. OpenAI reasoning remains a separate optional user key and is not used for these provider lookups.
+
+### Treg lookups
+
+Email, phone, and LinkedIn/Instagram/TikTok lookup columns can select Treg instead. The editor shows the selected provider's billing note before a run. Treg calls use the connected Treg team's own balance, run history, and receipts; they never use Monid credentials or wallet funds. Treg company search, general web research, verification, other social networks, publishing, and advertising are not wired yet. See [Treg provider support](treg-provider.md) for exact routes and limitations.

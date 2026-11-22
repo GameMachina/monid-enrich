@@ -3,7 +3,7 @@
 import Dexie from 'dexie';
 import { ExternalLink } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { accountStorageKey } from '@/lib/account-storage';
+import { accountHeaders, accountStorageKey } from '@/lib/account-storage';
 import { importMyLocalSheets } from '@/lib/db';
 import type { Settings } from '@/lib/keys';
 import { buttonClassName } from '@/components/ui/button-class';
@@ -31,6 +31,7 @@ export function SettingsPage() {
 			<Connections />
 			<AgentWebConnection />
 			<MonidWallet />
+			<TregWallet />
 			<MobilePhoneProviderSettings />
 			<Defaults />
 			<McpAccess />
@@ -125,6 +126,72 @@ function MonidWallet() {
 			</a>
 		</section>
 	);
+}
+
+type TregBilling = { connected: boolean; balanceUsd: number | null; topupDefaultUsd: number | null; teamName: string | null };
+type TregUsage = { callId: string; operation: string; status: string; costUsd: number | null; servedVia: string | null; createdAt: number };
+type TregUsageResponse = { runs: TregUsage[]; localOnly?: boolean; error?: string };
+
+function TregWallet() {
+	const { connections } = useSettings();
+	const [billing, setBilling] = useState<TregBilling | null>(null);
+	const [usage, setUsage] = useState<TregUsage[]>([]);
+	const [usageLocalOnly, setUsageLocalOnly] = useState(false);
+	const [usageError, setUsageError] = useState('');
+	const [amount, setAmount] = useState('');
+	const [topupBusy, setTopupBusy] = useState(false);
+	const [error, setError] = useState('');
+	const connected = connections.treg.state !== 'missing' && connections.treg.state !== 'expired';
+	const loading = connected && billing === null && !error;
+
+	useEffect(() => {
+		if (!connected) return;
+		let cancelled = false;
+		const usageRequest: Promise<TregUsageResponse> = fetch('/api/treg/usage', { headers: accountHeaders(), cache: 'no-store' }).then(async (response) => {
+			if (!response.ok) throw new Error((await response.json().catch(() => null))?.error || 'Could not load Treg usage.');
+			return await response.json() as TregUsageResponse;
+		}).catch((cause: unknown) => ({ runs: [], localOnly: false, error: cause instanceof Error ? cause.message : 'Could not load Treg usage.' }));
+		void Promise.all([
+			fetch('/api/treg/billing', { headers: accountHeaders(), cache: 'no-store' }).then(async (response) => { if (!response.ok) throw new Error((await response.json().catch(() => null))?.error || 'Could not load Treg billing.'); return await response.json() as TregBilling; }),
+			usageRequest,
+		]).then(([nextBilling, nextUsage]) => { if (!cancelled) { setBilling(nextBilling); setUsage(nextUsage.runs); setUsageLocalOnly(Boolean(nextUsage.localOnly)); setUsageError(nextUsage.error ?? ''); setError(''); } }).catch((cause: unknown) => { if (!cancelled) setError(cause instanceof Error ? cause.message : 'Could not load Treg billing.'); });
+		return () => { cancelled = true; };
+	}, [connected]);
+
+	async function topup() {
+		const amountUsd = Number(amount);
+		if (!Number.isFinite(amountUsd) || amountUsd <= 0) { setError('Enter a positive amount in USD.'); return; }
+		setTopupBusy(true); setError('');
+		try {
+			const response = await fetch('/api/treg/topup', { method: 'POST', headers: { ...accountHeaders(), 'content-type': 'application/json' }, body: JSON.stringify({ amountUsd }) });
+			const data = await response.json().catch(() => null) as { checkoutUrl?: string; error?: string } | null;
+			if (!response.ok || !data?.checkoutUrl) throw new Error(data?.error || 'Could not start Treg top-up.');
+			window.location.assign(data.checkoutUrl);
+		} catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not start Treg top-up.'); setTopupBusy(false); }
+	}
+
+	return <section aria-labelledby="treg-wallet-title" className="glass-card flex flex-col gap-4 px-5 py-5">
+		<div className="flex flex-col gap-1">
+			<h2 id="treg-wallet-title" className="text-body text-fg">Treg billing</h2>
+			<p className="text-body-sm text-fg-muted">Treg calls and top-ups use your separate Treg team balance. Monid wallet funds and usage are not used here.</p>
+		</div>
+		{!connected ? <p className="text-body-sm text-fg-subtle">Connect Treg above to view its balance, top up, and see Treg-only usage.</p> : <>
+			<div className="flex flex-wrap items-end gap-3 rounded-lg border border-line-subtle px-3 py-3">
+				<div className="min-w-40 flex-1"><span className="block text-caption text-fg-subtle">{billing?.teamName ? `${billing.teamName} · Treg balance` : 'Treg team balance'}</span><span className="block text-title-sm text-fg tabular">{loading ? 'Loading…' : billing?.balanceUsd !== null && billing?.balanceUsd !== undefined ? `$${billing.balanceUsd.toFixed(2)}` : 'Not reported'}</span></div>
+				<Field label="Top-up amount (USD)" help={billing?.topupDefaultUsd ? `Treg's suggested amount is $${billing.topupDefaultUsd.toFixed(2)}.` : 'Treg validates the amount against its current limits.'}>
+					{(id) => <Input id={id} type="number" min={0.01} step="any" inputMode="decimal" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder={billing?.topupDefaultUsd ? String(billing.topupDefaultUsd) : '25'} className="w-36" />}
+				</Field>
+				<Button size="sm" disabled={!connected || !amount || loading} loading={topupBusy} onClick={() => void topup()}>Top up Treg</Button>
+			</div>
+			<p className="text-caption text-fg-subtle">Checkout is hosted by Treg. The displayed balance changes after Treg confirms payment.</p>
+			<div className="flex flex-col gap-2 border-t border-line-subtle pt-3">
+				<h3 className="text-body-sm text-fg">Recent Treg usage</h3>
+				{usage.length ? usage.slice(0, 8).map((run) => <div key={run.callId} title={run.callId} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-caption text-fg-subtle"><span className="min-w-40 flex-1 text-fg-muted">{run.operation}</span><span>{run.status}</span>{run.costUsd !== null && <span>${run.costUsd.toFixed(4)}</span>}{run.servedVia && <span>via {run.servedVia}</span>}<span>{new Date(run.createdAt).toLocaleString()}</span></div>) : <p className="text-caption text-fg-subtle">{usageLocalOnly ? 'This browser-only workspace keeps Treg run details on each cell.' : 'No Treg calls recorded for this workspace yet.'}</p>}
+				{usageError && <p role="status" className="text-caption text-warning">Treg balance is available, but usage history could not load: {usageError}</p>}
+			</div>
+		</>}
+		{error && <p role="alert" className="text-body-sm text-danger">{error}</p>}
+	</section>;
 }
 
 const clampConcurrency = (value: number) => Math.max(1, Math.min(16, Math.round(value)));

@@ -47,7 +47,7 @@ function relativeTime(timestamp: number, now: number): string {
 const message = (error: unknown, fallback: string) => error instanceof Error && error.message ? error.message : fallback;
 
 export function SheetsPage() {
-	const { selfHosted, hasKeys, openKeys } = useSettings();
+	const { selfHosted, providerReady, openKeys } = useSettings();
 	const router = useRouter();
 	const { toast } = useToast();
 	const now = useNow();
@@ -96,7 +96,7 @@ export function SheetsPage() {
 		router.push(`/app/sheets/${sheet.id}?find=1&entity=${request.entity}`);
 	}
 
-	const starts = { onFind: findRows, needsKeys: !hasKeys, onNeedKeys: openKeys, onImport: () => setDialog('import'), onBlank: () => { setDialog(null); void createBlank(); } };
+	const starts = { onFind: findRows, needsKeys: !providerReady('monid'), onNeedKeys: () => openKeys('monid'), onImport: () => setDialog('import'), onBlank: () => { setDialog(null); void createBlank(); } };
 
 	return (
 		<PageColumn>

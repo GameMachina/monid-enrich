@@ -2,11 +2,12 @@ import type { ServerKeys } from '@/lib/api';
 import { maskKey, type Settings } from '@/lib/keys';
 import { providerField, type OrganizationSettings, type Provider } from '@/lib/organization-settings';
 
-export const CONNECTION_ORDER = ['monid', 'openai'] as const satisfies readonly Provider[];
-export const REQUIRED_PROVIDERS = ['monid'] as const satisfies readonly Provider[];
+export const CONNECTION_ORDER = ['monid', 'treg', 'openai'] as const satisfies readonly Provider[];
+export const DATA_PROVIDER_IDS = ['monid', 'treg'] as const satisfies readonly Provider[];
 
 export const PROVIDER_INFO: Record<Provider, { name: string; logo: string; description: string; link: string; placeholder: string; verifiable: boolean }> = {
 	monid: { name: 'Monid', logo: '/providers/monid.svg', description: 'Web research, company and people data, and enrichment', link: 'https://app.monid.ai/access/api-keys', placeholder: 'monid_live_…', verifiable: true },
+	treg: { name: 'Treg', logo: '/providers/treg.svg', description: 'Pay-per-use email, phone, and social lookups with separate billing', link: 'https://treg.to', placeholder: 'treg_…', verifiable: true },
 	context: { name: 'Monid', logo: '/providers/monid.svg', description: 'Web research, company and people data, and enrichment', link: 'https://app.monid.ai/access/api-keys', placeholder: 'monid_live_…', verifiable: true },
 	openai: { name: 'OpenAI', logo: '/providers/openai.svg', description: 'Optional reasoning, classification, and scoring', link: 'https://platform.openai.com/api-keys', placeholder: 'sk-…', verifiable: true },
 	typesafe: { name: 'OpenAI', logo: '/providers/openai.svg', description: 'AI reasoning', link: 'https://platform.openai.com/api-keys', placeholder: 'sk-…', verifiable: false },
@@ -34,8 +35,10 @@ export function deriveConnections({ settings, organization, server, selfHosted, 
 		if (status?.reconnectRequired) return { state: 'expired', source: status.source, expiresAt: status.expiresAt };
 		if (status?.configured) return { state: 'connected', source: status.source, expiresAt: status.expiresAt, detail: status.prefix ? `${status.prefix}${'•'.repeat(8)}` : 'API key' };
 		if (provider === 'monid' && server?.monidSaved) return { state: 'connected', source: 'manual', detail: 'Saved encrypted on this server' };
+		if (provider === 'treg' && server?.tregSaved) return { state: 'connected', source: 'manual', detail: 'Saved encrypted on this server' };
 		if (provider === 'openai' && server?.openaiSaved) return { state: 'connected', source: 'manual', detail: 'Saved encrypted on this server' };
 		if (provider === 'monid' && server?.monid) return { state: 'deployment', detail: 'Provided by this deployment' };
+		if (provider === 'treg' && server?.treg) return { state: 'deployment', detail: 'Provided by this deployment' };
 		if (provider === 'openai' && server?.openai) return { state: 'deployment', detail: 'Provided by this deployment' };
 		return { state: 'missing' };
 	};

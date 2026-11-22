@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useId, useState, type ClipboardEvent, type KeyboardEvent } from 'react';
 import { GripVertical, Plus, X } from 'lucide-react';
 import { clampNumber, fromListRows, parseCommaList, parseListLines, toListRows, type ListItem, type ListRow } from '@/lib/list-input';
-import { type Column, type ColumnOp, type OpKind, OUTPUT_TYPES, type PageSource, PROSPEO_FIELDS } from '@/lib/types';
+import { type Column, type ColumnOp, type DataProvider, type OpKind, OUTPUT_TYPES, type PageSource, PROSPEO_FIELDS } from '@/lib/types';
 import { Button, IconButton } from '@/components/ui/button';
 import { Field, Input, Select, Switch } from '@/components/ui/field';
 import { HelpTooltip } from '@/components/ui/help-tooltip';
@@ -237,15 +237,18 @@ const FIND_EMAIL_INPUTS = [
 ] as const;
 
 function FindEmailFields({ op, set, columns }: FieldsProps<'email-enrichment'>) {
+	const dataProvider = op.dataProvider ?? 'monid';
 	return <>
 		<div className="grid gap-3 sm:grid-cols-2">
 			{FIND_EMAIL_INPUTS.map((input) => <PromptField key={input.key} label={input.label} columns={columns} value={op[input.key]} onChange={(value) => set({ [input.key]: value })} placeholder={input.placeholder} />)}
 		</div>
-		<EmailWaterfallPicker value={op.providers} onChange={(providers) => set({ providers })} />
+		<DataProviderPicker value={dataProvider} onChange={(dataProvider) => set({ dataProvider })} />
+		{dataProvider === 'monid' ? <EmailWaterfallPicker value={op.providers} onChange={(providers) => set({ providers })} /> : <TregOperationNote text="Treg routes this lookup through its own data network. Misses are free; successful results vary in cost (up to about $0.15). This column uses your Treg team balance only; it will not call Monid." />}
 	</>;
 }
 
 function FindPhoneFields({ op, set, columns }: FieldsProps<'phone-enrichment'>) {
+	const dataProvider = op.dataProvider ?? 'monid';
 	return <>
 		<div className="grid gap-3 sm:grid-cols-2">
 			<PromptField label="Person name" columns={columns} value={op.name} onChange={(name) => set({ name })} placeholder="{{Name}}" />
@@ -254,11 +257,13 @@ function FindPhoneFields({ op, set, columns }: FieldsProps<'phone-enrichment'>) 
 			<PromptField label="LinkedIn URL (optional)" columns={columns} value={op.profileUrl} onChange={(profileUrl) => set({ profileUrl })} placeholder="{{LinkedIn}}" />
 			<PromptField label="Work email (optional)" columns={columns} value={op.email} onChange={(email) => set({ email })} placeholder="{{Work email}}" />
 		</div>
-		<PhoneWaterfallPicker value={op.providers} onChange={(providers) => set({ providers })} />
+		<DataProviderPicker value={dataProvider} onChange={(dataProvider) => set({ dataProvider })} />
+		{dataProvider === 'monid' ? <PhoneWaterfallPicker value={op.providers} onChange={(providers) => set({ providers })} /> : <TregOperationNote text="Treg routes phone lookup through its own data network. Some unsuccessful provider attempts may still be billable; each request is capped at $0.10. This column will not call Monid." />}
 	</>;
 }
 
 function FindSocialFields({ op, set, columns }: FieldsProps<'social-enrichment'>) {
+	const dataProvider = op.dataProvider ?? 'monid';
 	return <>
 		<div className="grid gap-3 sm:grid-cols-2">
 			<Field label="Social network">{(id) => <Select id={id} value={op.platform} onValueChange={(platform) => set({ platform: platform as SocialPlatform, providers: ['people_enrich', 'web_search'] })}>{SOCIAL_PLATFORM_OPTIONS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</Select>}</Field>
@@ -268,8 +273,27 @@ function FindSocialFields({ op, set, columns }: FieldsProps<'social-enrichment'>
 			<PromptField label="Email (optional)" columns={columns} value={op.email} onChange={(email) => set({ email })} placeholder="{{Email}}" />
 			<PromptField label="Profile URL (optional)" columns={columns} value={op.profileUrl} onChange={(profileUrl) => set({ profileUrl })} placeholder="{{Profile URL}}" />
 		</div>
-		<SocialWaterfallPicker platform={op.platform} value={op.providers} onChange={(providers) => set({ providers })} />
+		<DataProviderPicker value={dataProvider} onChange={(dataProvider) => set({ dataProvider })} />
+		{dataProvider === 'monid' ? <SocialWaterfallPicker platform={op.platform} value={op.providers} onChange={(providers) => set({ providers })} /> : <TregOperationNote text={op.platform === 'linkedin' ? 'Treg searches LinkedIn profiles ($0.004 per request). Only Treg will be charged.' : op.platform === 'instagram' || op.platform === 'tiktok' ? `Treg searches ${op.platform === 'instagram' ? 'Instagram' : 'TikTok'} through its own provider network, capped at $0.10 per request. Only Treg will be charged.` : `Treg does not support ${op.platform === 'x' ? 'X' : op.platform} profile search yet. Switch this column to Monid or choose LinkedIn, Instagram, or TikTok. No provider will run while this selection is unsupported.`} />}
 	</>;
+}
+
+function DataProviderPicker({ value, onChange }: { value: DataProvider; onChange: (value: DataProvider) => void }) {
+	const { connections } = useSettings();
+	const connection = connections[value];
+	return <div className="flex flex-col gap-2">
+		<Field label="Data provider" help="This explicit choice determines which provider receives and bills this operation. There is no automatic fallback.">
+			{(id) => <Select id={id} value={value} onValueChange={(next) => onChange(next as DataProvider)}>
+				<option value="monid">Monid · workspace wallet</option>
+				<option value="treg">Treg · Treg team balance</option>
+			</Select>}
+		</Field>
+		{connection.state === 'missing' || connection.state === 'expired' ? <p role="status" className="text-caption text-warning">Connect {value === 'treg' ? 'Treg' : 'Monid'} in Configuration → Connections before running. No request will be routed to the other provider.</p> : <p className="text-caption text-fg-subtle">Selected: {value === 'treg' ? 'Treg · billed to your Treg team balance' : 'Monid · billed to your workspace Monid wallet'}.</p>}
+	</div>;
+}
+
+function TregOperationNote({ text }: { text: string }) {
+	return <p role="note" className="rounded-lg border border-line-subtle bg-surface-secondary px-3 py-2 text-caption text-fg-muted">{text}</p>;
 }
 
 function ProviderNote({ feature }: { feature: 'email lookup' | 'person details' }) {

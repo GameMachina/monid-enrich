@@ -32,5 +32,6 @@ export function useVerification(settings: Settings, providers: readonly Provider
 export function providerCheck(result: KeyVerification | undefined, provider: Provider): ProviderCheck | undefined {
 	if (!result) return undefined;
 	if (provider === 'openai') return result.openai;
+	if (provider === 'treg') return result.treg;
 	return result.monid;
 }

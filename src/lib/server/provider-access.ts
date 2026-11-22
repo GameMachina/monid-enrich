@@ -35,6 +35,7 @@ export const MCP_POLICY: AccessPolicy = { sources: ['request', 'vault'], strict:
 const PROVIDER_INFO: Record<ProviderAlias, { label: string; failure: FailureProvider; refuses?: readonly number[] }> = {
 	openai: { label: 'OpenAI', failure: 'openai' },
 	monid: { label: 'Monid', failure: 'monid' },
+	treg: { label: 'Treg', failure: 'treg' },
 	context: { label: 'Monid', failure: 'monid' },
 	typesafe: { label: 'Monid', failure: 'monid' },
 	hunter: { label: 'Monid', failure: 'monid' },
@@ -198,7 +199,7 @@ export function providerAccess(grant: AccessGrant, adapters: AccessAdapters = {}
 	const contextUserEmail = grant.contextUserEmail ?? grant.account?.user.email;
 	let checked: Promise<void> | undefined;
 	const checkEndpoint = () => checked ??= ensureSafeEndpoint(grant.openaiBaseUrl, adapters.lookup);
-	const providerKey = (provider: ProviderAlias): Provider => provider === 'openai' ? 'openai' : 'monid';
+	const providerKey = (provider: ProviderAlias): Provider => provider === 'openai' || provider === 'treg' ? provider : 'monid';
 	const requireKey = (provider: ProviderAlias) => {
 		const key = keys[providerKey(provider)];
 		if (!key) throw new CredentialError(`Add your ${PROVIDER_INFO[provider].label} API key in Configuration to run this column.`, 401, 'credential_missing', PROVIDER_INFO[provider].failure);
@@ -272,11 +273,13 @@ export async function serverKeyAvailability(request: Request) {
 	return {
 		...available,
 		monidSaved: Boolean(vault?.keys.monid),
+		tregSaved: Boolean(vault?.keys.treg),
 		openaiSaved: Boolean(vault?.keys.openai),
 		enrichmentTrial: false,
 		openaiTrial: undefined,
 		openai: available.openai,
 		monid: available.monid,
+		treg: available.treg,
 		typesafeTrial: false,
 		typesafe: false,
 		context: available.monid,

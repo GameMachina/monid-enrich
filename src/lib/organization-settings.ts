@@ -3,12 +3,12 @@ import { DEFAULT_MODEL } from './types';
 import { logoDomain } from './organization-logo';
 import { DEFAULT_ALLOWED_PHONE_PROVIDERS, PhoneProviderSchema } from './phone-strategy';
 
-/** Legacy operation aliases remain as type names for old sheets; runtime connections only expose OpenAI and Monid. */
-export type Provider = 'openai' | 'monid' | 'context' | 'typesafe' | 'hunter' | 'prospeo' | 'quickenrich' | 'apollo' | 'contactout';
-const PROVIDER_IDS = ['openai', 'monid'] as const;
+/** Legacy operation aliases remain as type names for old sheets; runtime connections expose OpenAI, Monid, and Treg. */
+export type Provider = 'openai' | 'monid' | 'treg' | 'context' | 'typesafe' | 'hunter' | 'prospeo' | 'quickenrich' | 'apollo' | 'contactout';
+const PROVIDER_IDS = ['openai', 'monid', 'treg'] as const;
 export const PROVIDERS: readonly Provider[] = PROVIDER_IDS;
 export type ProviderAlias = Provider;
-export const providerField: Record<Provider, 'openaiKey' | 'monidKey'> = { openai: 'openaiKey', monid: 'monidKey', context: 'monidKey', typesafe: 'monidKey', hunter: 'monidKey', prospeo: 'monidKey', quickenrich: 'monidKey', apollo: 'monidKey', contactout: 'monidKey' };
+export const providerField: Record<Provider, 'openaiKey' | 'monidKey' | 'tregKey'> = { openai: 'openaiKey', monid: 'monidKey', treg: 'tregKey', context: 'monidKey', typesafe: 'monidKey', hunter: 'monidKey', prospeo: 'monidKey', quickenrich: 'monidKey', apollo: 'monidKey', contactout: 'monidKey' };
 export const MODEL_ID = /^[a-z0-9.\-_:/]+$/i;
 /** Classifier setting that selects the Decisions API (TypeSafe Jev) rather than naming a model. */
 export const DECISIONS_CLASSIFIER = 'decisions';

@@ -15,7 +15,9 @@ import { cellTransition } from '../cell-lifecycle';
 import type { ProviderAccess } from './provider-access';
 import { hashMcpSecret, type McpStore } from './mcp-store';
 import { logWorkspaceError } from './workspace-logging';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { isTregIdempotencyKeyReusable } from './treg';
+import { inputFingerprint } from '../enrichment-freshness';
 import type { WorkspaceStore } from './workspace-store';
 
 const id = z.string().min(1).max(128);
@@ -31,7 +33,7 @@ function validateColumnInput(value: z.infer<typeof columnInputShape>, context: z
 }
 const columnInput = columnInputShape.superRefine(validateColumnInput);
 const enrichedColumnInput = columnInputShape.extend({ type: z.literal('enriched').default('enriched'), op: ColumnOpSchema }).superRefine(validateColumnInput);
-export const operationGuidance = `Use Monid Enrich's built-in operations for company, people, email, and web data. Every external data request must go through the app's Monid adapter; do not call vendor MCPs or vendor APIs directly. Use the workspace's Monid connection for supported data lookups. OpenAI reasoning features run only when the workspace supplies an OpenAI key; never substitute another model. If an operation is unsupported, explain the gap rather than using another provider. Do not guess identities, profile URLs, or unsupported facts. For people lists, keep Name as the source column and enrich it in place so profile photo and match metadata stay attached to the row. Use templates and formulas for deterministic local transformations, specialized operations for supported company/person/email/web data, check/classify/score for reasoning, and ai or answer for research that needs the optional OpenAI key. Use enrich_cells to persist results and provenance. Provider credentials remain workspace-scoped and server-side. Editing source values or an operation keeps saved results but marks affected cells outdated; enrich_cells skips finished cells unless overwrite=true. Refresh prerequisites before dependents and use a fresh app idempotency key when intentionally starting a new run.`;
+export const operationGuidance = `Use Monid Enrich's built-in operations for company, people, email, and web data. Every external data request must go through its selected provider adapter; never call vendor MCPs or vendor APIs directly. Contact columns explicitly select either the workspace Monid wallet or the separate Treg team balance. The selected provider is recorded on the cell, and unsupported Treg operations must be reported without switching to Monid. OpenAI reasoning features run only when the workspace supplies an OpenAI key; never substitute another model. Do not guess identities, profile URLs, or unsupported facts. For people lists, keep Name as the source column and enrich it in place so profile photo and match metadata stay attached to the row. Use templates and formulas for deterministic local transformations, specialized operations for supported company/person/email/web data, check/classify/score for reasoning, and ai or answer for research that needs the optional OpenAI key. Use enrich_cells to persist results and provenance. Provider credentials remain workspace-scoped and server-side. Editing source values or an operation keeps saved results but marks affected cells outdated; enrich_cells skips finished cells unless overwrite=true. Refresh prerequisites before dependents and use a fresh app idempotency key when intentionally starting a new run.`;
 const edit = z.object({ rowId: id, columnId: id, value });
 const TYPED_VALUES = 'Columns with a typed format (website, webpage, currency, percent, unit, checkbox, category) store values normalized to it, such as example.com or 1200; a value that does not fit refuses the whole call, naming each cell.';
 const sheetId = { sheetId: id };
@@ -242,15 +244,15 @@ export class McpOperations {
 	    except a saved result, which is never replaced by that reason; cells waiting on others are left alone. */
 	/** One row at a time: each row commits to the same sheet revision, and the deadline budget assumes sequential rows.
 	    A row is started only if its worst case still fits before the request deadline. */
-	private async *enrichRows(sheetId: string, rowIds: string[], columnId: string, overwrite: boolean, worstCase: number): AsyncGenerator<CellOutcome> {
+	private async *enrichRows(sheetId: string, rowIds: string[], columnId: string, overwrite: boolean, worstCase: number, batchKey: string): AsyncGenerator<CellOutcome> {
 		const started = this.now();
 		for (const rowId of rowIds) {
 			if (this.now() - started + worstCase > ROW_DEADLINE_MS) yield { rowId, status: 'not_started' };
-			else yield this.enrichCell(sheetId, rowId, columnId, overwrite);
+			else yield this.enrichCell(sheetId, rowId, columnId, overwrite, batchKey);
 		}
 	}
 
-	private async enrichCell(sheetId: string, rowId: string, columnId: string, overwrite: boolean): Promise<CellOutcome> {
+	private async enrichCell(sheetId: string, rowId: string, columnId: string, overwrite: boolean, batchKey: string): Promise<CellOutcome> {
 		for (let tries = 0; tries < 3; tries++) {
 			const snapshot = await this.snapshot(sheetId);
 			const plan = this.plan(snapshot, rowId, columnId);
@@ -258,18 +260,27 @@ export class McpOperations {
 			if (plan.busy) return { rowId, status: 'blocked', error: BUSY_MESSAGE };
 			const { readiness } = plan;
 			if (readiness.kind === 'waiting' || readiness.kind !== 'ready' && plan.cell?.s === 'done') return { rowId, status: 'blocked', error: readiness.message };
-			const cell = readiness.kind === 'ready' ? startCell(plan, this.owner) : failureCell(plan, readiness.message);
+			const retryMeta = plan.cell?.m;
+			const reusableRetry = plan.cell?.s === 'error' && retryMeta?.inputFingerprint === inputFingerprint(plan.version) && isTregIdempotencyKeyReusable(retryMeta, this.now());
+			const idempotencyKey = plan.op.kind === 'email-enrichment' || plan.op.kind === 'phone-enrichment' || plan.op.kind === 'social-enrichment'
+				? plan.op.dataProvider === 'treg'
+					? (reusableRetry ? retryMeta!.tregIdempotencyKey! : createHash('sha256').update(`${batchKey}:${sheetId}:${rowId}:${columnId}`).digest('hex'))
+					: undefined
+				: undefined;
+			const selectedDataProvider = plan.op.kind === 'email-enrichment' || plan.op.kind === 'phone-enrichment' || plan.op.kind === 'social-enrichment' ? plan.op.dataProvider : undefined;
+			const started = readiness.kind === 'ready' ? startCell(plan, this.owner) : failureCell(plan, readiness.message);
+			const cell = selectedDataProvider ? { ...started, m: { ...(started.m ?? {}), dataProvider: selectedDataProvider, inputFingerprint: inputFingerprint(plan.version), ...(idempotencyKey ? { tregIdempotencyKey: idempotencyKey, tregIdempotencyCreatedAt: this.now() } : {}) } } : started;
 			try { await this.write(snapshot, plan.row, columnId, cell); }
 			catch (error) { if (error instanceof WorkspaceError && error.status === 409) continue; throw error; }
 			if (readiness.kind !== 'ready') return { rowId, status: cell.s, error: readiness.message, cell };
-			return this.run(sheetId, plan, cell);
+			return this.run(sheetId, plan, cell, idempotencyKey);
 		}
 		return { rowId, status: 'conflict', error: 'The sheet kept changing. Read it again and retry.' };
 	}
-	private async run(sheetId: string, plan: EnrichmentPlan, marker: Cell): Promise<CellOutcome> {
+	private async run(sheetId: string, plan: EnrichmentPlan, marker: Cell, idempotencyKey?: string): Promise<CellOutcome> {
 		let settled = false;
 		try {
-			const result = await this.execute(this.access, plan.op, plan.record);
+			const result = await this.execute(this.access, plan.op, plan.record, { idempotencyKey });
 			const next = result.error ? failureCell(plan, result.error, result.meta, undefined, marker) : resultCell(plan, result.value, result.meta);
 			const saved = await this.settle(sheetId, plan, marker, (grid) => settleCell(plan, grid, next, marker));
 			settled = saved !== null;
@@ -312,7 +323,7 @@ export class McpOperations {
 		}
 		const outcomes: CellOutcome[] = [];
 		try {
-			for await (const outcome of this.enrichRows(args.sheetId, args.rowIds, args.columnId, args.overwrite, worstCase)) outcomes.push(outcome);
+			for await (const outcome of this.enrichRows(args.sheetId, args.rowIds, args.columnId, args.overwrite, worstCase, args.idempotencyKey)) outcomes.push(outcome);
 			const result = { status: 'finished', outcomes, revision: (await this.sheets.get(this.actor, args.sheetId)).sheet.revision };
 			await this.keys.finish(this.actor, args.idempotencyKey, result);
 			return result;

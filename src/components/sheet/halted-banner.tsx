@@ -10,7 +10,7 @@ import Link from 'next/link';
 import { useEffect } from 'react';
 
 const MONID_BILLING_URL = 'https://app.monid.ai';
-const PROVIDER_NAMES: Record<FailureProvider, string> = { monid: 'Monid', context: 'Monid', openai: 'OpenAI', typesafe: 'OpenAI', email: 'your data provider' };
+const PROVIDER_NAMES: Record<FailureProvider, string> = { monid: 'Monid', treg: 'Treg', context: 'Monid', openai: 'OpenAI', typesafe: 'OpenAI', email: 'your data provider' };
 
 /** What a fix needs to know: a halted run, a failed Find rows, or a failed key check. */
 export type ConnectionIssue = { reason: string; provider?: FailureProvider };

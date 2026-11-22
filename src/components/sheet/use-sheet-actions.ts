@@ -1,7 +1,7 @@
 'use client';
 
 import { useSettings } from '@/components/app/settings-context';
-import { PROVIDER_INFO, REQUIRED_PROVIDERS } from '@/components/app/providers';
+import { DATA_PROVIDER_IDS, PROVIDER_INFO } from '@/components/app/providers';
 import { announce } from '@/components/ui/announcer';
 import { useToast } from '@/components/ui/toast';
 import { trackEvent } from '@/lib/analytics';
@@ -50,8 +50,7 @@ export function useSheetActions({ sheet, commands, content, selection, overlays,
 	const request = (plan: RunPlan | null, seen?: RunEstimate) => {
 		if (!plan) return;
 		if (plan.kind === 'needs-keys') {
-			// Setup only asks for the two required keys; optional providers are connected in Configuration.
-			if (plan.providers.every((provider) => (REQUIRED_PROVIDERS as readonly string[]).includes(provider))) { openKeys(); return; }
+			if (plan.providers.length === 1 && DATA_PROVIDER_IDS.includes(plan.providers[0] as 'monid' | 'treg')) { openKeys(plan.providers[0] as 'monid' | 'treg'); return; }
 			const names = plan.providers.map((provider) => PROVIDER_INFO[provider].name).join(' and ');
 			setConfirm({ title: `Connect ${names}`, description: `This column runs on ${names}. Add ${plan.providers.length === 1 ? 'its key' : 'their keys'} in Configuration → Connections, then run it again.`, label: 'Open Connections', action: async () => { router.push('/app/settings'); } });
 			return;
@@ -59,7 +58,7 @@ export function useSheetActions({ sheet, commands, content, selection, overlays,
 		if (plan.kind === 'nothing') { toast(NOTHING_TO_RUN[plan.reason], 'info'); return; }
 		const { estimate } = plan;
 		if (!asksFirst(estimate, seen)) { void plan.execute().catch(report('Could not queue these cells. Please try again.')); return; }
-		setConfirm({ title: `Run ${plural(estimate.cells, 'cell')}?`, description: `${estimate.message}. Monid usage depends on the endpoints and results; any OpenAI usage is billed separately. Actual Monid cost appears in cell details.`, label: 'Run', action: plan.execute });
+		setConfirm({ title: `Run ${plural(estimate.cells, 'cell')}?`, description: `${estimate.message}. Each selected data provider bills its own balance: Monid usage goes to the workspace Monid wallet, Treg usage goes to the separate Treg team balance, and any OpenAI usage is billed separately. Actual provider cost appears in cell details.`, label: 'Run', action: plan.execute });
 	};
 	const runCells = (targets: Row[], columns: Column[], mode: RunMode, options: { limitToRows?: boolean; optimistic?: boolean } = {}) => request(commands.plan(targets, columns, mode, { ready: providerReady, grid: content.grid, sheetColumns: sheet.columns, ...options }));
 	const confirmDeleteRows = (targets: Row[]) => setConfirm({

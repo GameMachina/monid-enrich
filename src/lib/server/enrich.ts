@@ -6,6 +6,7 @@ import { renderEmailDraft } from '../email-draft';
 import { EmailDraftSchema } from '../types';
 import { runEmailWaterfall } from './contextdevenrichmentwaterfall';
 import { runMonidPhoneWaterfall, runMonidSocialWaterfall } from './monid-contact-waterfalls';
+import { runTregContact, TregCallError } from './treg';
 import { lookupMobilePhone, runContactProvider } from './contact-providers';
 import { searchCompanySuggestions } from './company-search';
 import { fundingLabel } from '../funding';
@@ -35,15 +36,16 @@ interface Run {
 }
 
 /** Run one column operation for one row. Never throws: errors come back as { error }. */
-export async function runOp(access: ProviderAccess, op: ColumnOp, row: Row): Promise<EnrichResponse> {
+export async function runOp(access: ProviderAccess, op: ColumnOp, row: Row, options: { idempotencyKey?: string; signal?: AbortSignal } = {}): Promise<EnrichResponse> {
 	const started = Date.now();
 	// Everything this run asks of a provider, company research included, is recorded here by the clients themselves.
 	const spend = new Spend();
 	const run: Run = { access: access.withSpend(spend), sources: new Set(), companyContext: '' };
 	try {
 		if (!evaluatesLocally(op)) run.companyContext = await companyContextForQuery(run.access, instructionText(op));
-		const result = await execute(run, op, row);
-		const meta: CellMeta = { ...result.meta, durationMs: Date.now() - started };
+		const result = await execute(run, op, row, options);
+		const selectedProvider = op.kind === 'email-enrichment' || op.kind === 'phone-enrichment' || op.kind === 'social-enrichment' ? op.dataProvider : undefined;
+		const meta: CellMeta = { ...(selectedProvider ? { dataProvider: selectedProvider } : {}), ...result.meta, durationMs: Date.now() - started };
 		if (spend.credits) meta.credits = spend.credits;
 		if (spend.monidRuns.length) meta.monidRuns = [...spend.monidRuns];
 		if (spend.costUsd) meta.monidCostUsd = spend.costUsd;
@@ -54,7 +56,9 @@ export async function runOp(access: ProviderAccess, op: ColumnOp, row: Row): Pro
 	} catch (error) {
 		// A failure the server cannot explain may have come after the request was sent.
 		const outcome = classifyFailure(error, billingProvider(op)) ?? failure('provider_error', billingProvider(op));
-		return { value: null, error: access.redact(error), failure: afterSpend(outcome, spend.paid), meta: { durationMs: Date.now() - started, credits: spend.credits || undefined, monidRuns: spend.monidRuns.length ? [...spend.monidRuns] : undefined, monidCostUsd: spend.costUsd || undefined } };
+		const providerMeta = error instanceof TregCallError ? { ...error.meta, tregIdempotencyKey: error.idempotencyKey, tregIdempotencyCreatedAt: error.meta.tregIdempotencyCreatedAt ?? Date.now() } : {};
+		const selectedProvider = op.kind === 'email-enrichment' || op.kind === 'phone-enrichment' || op.kind === 'social-enrichment' ? op.dataProvider : undefined;
+		return { value: null, error: access.redact(error), failure: afterSpend(outcome, spend.paid), meta: { ...(selectedProvider ? { dataProvider: selectedProvider } : {}), ...providerMeta, durationMs: Date.now() - started, credits: spend.credits || undefined, monidRuns: spend.monidRuns.length ? [...spend.monidRuns] : undefined, monidCostUsd: spend.costUsd || undefined } };
 	}
 }
 
@@ -131,7 +135,7 @@ const OUTPUT_HINT: Record<OutputType, string> = {
 	list: 'Answer with a list of short items.',
 };
 
-async function execute(run: Run, op: ColumnOp, row: Row): Promise<OpResult> {
+async function execute(run: Run, op: ColumnOp, row: Row, options: { idempotencyKey?: string; signal?: AbortSignal }): Promise<OpResult> {
 	switch (op.kind) {
   case 'email-draft': {
    const fields = renderEmailDraft(op, row);
@@ -165,11 +169,11 @@ async function execute(run: Run, op: ColumnOp, row: Row): Promise<OpResult> {
 		case 'company':
 			return runCompany(run, op, row);
 		case 'email-enrichment':
-			return runEmailWaterfall(run.access, op, row);
+			return op.dataProvider === 'treg' ? runTregContact(run.access, op, row, options) : runEmailWaterfall(run.access, op, row);
 		case 'phone-enrichment':
-			return runMonidPhoneWaterfall(run.access, op, row);
+			return op.dataProvider === 'treg' ? runTregContact(run.access, op, row, options) : runMonidPhoneWaterfall(run.access, op, row);
 		case 'social-enrichment':
-			return runMonidSocialWaterfall(run.access, op, row);
+			return op.dataProvider === 'treg' ? runTregContact(run.access, op, row, options) : runMonidSocialWaterfall(run.access, op, row);
 		case 'hunter':
 		case 'prospeo':
 			return runContactProvider(run.access, op, row);

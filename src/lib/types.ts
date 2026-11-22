@@ -40,6 +40,9 @@ export const EmailDraftSchema = z.object({
 export type EmailDraft = z.infer<typeof EmailDraftSchema>;
 
 export const EMAIL_PROVIDERS = ['quickenrich', 'hunter', 'apollo', 'prospeo', 'contactout'] as const;
+export const DATA_PROVIDERS = ['monid', 'treg'] as const;
+export const DataProviderSchema = z.enum(DATA_PROVIDERS);
+export type DataProvider = typeof DATA_PROVIDERS[number];
 export type EmailProvider = typeof EMAIL_PROVIDERS[number] | 'monid';
 const STORED_EMAIL_PROVIDERS = ['monid', ...EMAIL_PROVIDERS] as const;
 export const PHONE_LOOKUP_PROVIDERS = ['leadmagic', 'clay', 'ai_ark', 'reversecontact', 'prospeo'] as const;
@@ -48,14 +51,16 @@ const PhoneLookupProviderSchema = z.enum(PHONE_LOOKUP_PROVIDERS);
 export const ColumnOpSchema = z.discriminatedUnion('kind', [
  z.object({
   kind: z.literal('email-enrichment'),
-  name: z.string().trim().min(1).max(300),
+  dataProvider: DataProviderSchema.default('monid'),
+  name: z.string().trim().max(300).default(''),
   company: z.string().max(300).default(''),
-  domain: z.string().trim().min(1).max(500),
+  domain: z.string().trim().max(500).default(''),
   profileUrl: z.string().max(500).default(''),
   providers: z.array(z.enum(STORED_EMAIL_PROVIDERS)).min(1).max(5).default([...EMAIL_PROVIDERS]).refine(items => new Set(items).size === items.length, 'Each provider can appear only once.'),
  }),
  z.object({
   kind: z.literal('phone-enrichment'),
+  dataProvider: DataProviderSchema.default('monid'),
   name: z.string().trim().max(300).default(''),
   company: z.string().max(300).default(''),
   domain: z.string().trim().max(500).default(''),
@@ -65,6 +70,7 @@ export const ColumnOpSchema = z.discriminatedUnion('kind', [
  }),
  z.object({
   kind: z.literal('social-enrichment'),
+  dataProvider: DataProviderSchema.default('monid'),
   name: z.string().trim().max(300).default(''),
   company: z.string().max(300).default(''),
   domain: z.string().trim().max(500).default(''),
@@ -180,7 +186,11 @@ export const ColumnOpSchema = z.discriminatedUnion('kind', [
 	/** A plain template over other columns; no network. */
 	z.object({ kind: z.literal('template'), template: z.string().min(1).max(2000) }),
 ]);
-export type ColumnOp = z.infer<typeof ColumnOpSchema>;
+type ParsedColumnOp = z.infer<typeof ColumnOpSchema>;
+type OptionalDataProvider<T> = T extends { kind: 'email-enrichment' | 'phone-enrichment' | 'social-enrichment'; dataProvider: DataProvider }
+	? Omit<T, 'dataProvider'> & { dataProvider?: DataProvider }
+	: T;
+export type ColumnOp = OptionalDataProvider<ParsedColumnOp>;
 export type OpKind = ColumnOp['kind'];
 
 /* ───────────────────────────── Sheet data model ───────────────────────────── */
@@ -231,12 +241,20 @@ export interface CellMeta {
 	credits?: number;
 	/** Provider-specific usage; kept separate from Context.dev credits. */
 	provider?: EmailProvider | PhoneLookupProvider;
+	/** Explicit data provider selected for this operation; separate from any waterfall's internal source. */
+	dataProvider?: DataProvider;
 	enrichment?: { verified?: boolean; verificationStatus?: string; costUsd: number; attempts: Array<{ provider: EmailProvider; source: 'own-key' | 'included' | 'monid-workspace'; status: string; costUsd: number }> };
 	providerCredits?: number;
 	providerCreditUnit?: string;
 	/** Monid's receipt IDs and run statuses for data-provider calls made for this cell. */
 	monidRuns?: Array<{ runId?: string; provider: string; endpoint: string; status: string; costUsd?: number; billedUnits?: number; price?: { type?: string; amount?: number; currency?: string }; resultCount?: number; completedAt?: string }>;
 	monidCostUsd?: number;
+	/** Treg call receipts and spend, kept separate from Monid workspace runs and wallet totals. */
+	tregRuns?: Array<{ callId?: string; operation: string; endpoint: string; status: string; costUsd?: number; costMicroUsd?: number; servedVia?: string; completedAt?: string }>;
+	tregCostUsd?: number;
+	/** Reused only for an explicit retry of an uncertain Treg request, within Treg's idempotency window. */
+	tregIdempotencyKey?: string;
+	tregIdempotencyCreatedAt?: number;
 	durationMs?: number;
 	pageUrl?: string;
 	raw?: unknown;
@@ -359,12 +377,14 @@ export const EnrichRequestSchema = z.object({
 	/** Column name → current cell value for the row. */
 	row: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null(), z.array(z.string())])),
 	model: z.string().max(100).optional(),
+	/** Stable per-cell retry key for providers that support idempotent execution. */
+	idempotencyKey: z.string().min(8).max(128).optional(),
 });
 
 /** Why an enrichment failed. Set where the failure is understood; code branches on this, never on `error` text. */
 export const FAILURE_REASONS = ['rate_limited', 'credits_exhausted', 'credential_missing', 'credential_invalid', 'timeout', 'provider_error', 'input_invalid'] as const;
 export type FailureReason = (typeof FAILURE_REASONS)[number];
-export type FailureProvider = 'openai' | 'monid' | 'context' | 'typesafe' | 'email';
+export type FailureProvider = 'openai' | 'monid' | 'treg' | 'context' | 'typesafe' | 'email';
 export interface EnrichFailure {
 	reason: FailureReason;
 	/** The same request may succeed if repeated later without user action. */
@@ -404,6 +424,7 @@ export interface KeyVerification {
 	openai: { ok: boolean; message?: string; issue?: 'key' | 'billing' | 'model' | 'rate-limit' | 'connection'; inference?: boolean };
 	context: { ok: boolean; message?: string; credits?: number; issue?: 'key' | 'credits' };
 	monid?: { ok: boolean; message?: string; balanceUsd?: number; issue?: 'key' | 'balance' };
+	treg?: { ok: boolean; message?: string; balanceUsd?: number; issue?: 'key' | 'balance' | 'connection' };
 	typesafe: { ok: boolean; message?: string; configured: boolean };
 }
 

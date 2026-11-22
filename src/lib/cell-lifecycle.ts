@@ -21,7 +21,11 @@ function settled(cell: Cell, at: number): Cell {
 /** A failure keeps the result its run started from (a failure's own metadata is not one), so a failed or stale re-run
     never erases a value; otherwise it records the failure's metadata. */
 function failed(cell: Cell, e: string, m: CellMeta | undefined, at: number): Cell {
-	if (cell.v !== null || (cell.m && cell.s !== 'error')) return { v: cell.v, ...(cell.m ? { m: cell.m } : {}), s: 'error', e, t: at };
+	if (cell.v !== null || (cell.m && cell.s !== 'error')) {
+		// Keep the previous value, but attach this attempt's provider/run receipt so the cell detail reflects what just failed.
+		const meta = cell.s === 'running' && m ? { ...cell.m, ...m } : cell.m;
+		return { v: cell.v, ...(meta ? { m: meta } : {}), s: 'error', e, t: at };
+	}
 	return { v: null, s: 'error', e, ...(m ? { m } : {}), t: at };
 }
 

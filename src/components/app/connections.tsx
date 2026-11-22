@@ -10,13 +10,13 @@ import { MenuButton, type MenuItem } from '@/components/ui/menu';
 import { useToast } from '@/components/ui/toast';
 import { useSettings } from './settings-context';
 import { ConnectionDialog, ProviderLogo } from './keys-dialog';
-import { CONNECTION_ORDER, formatExpiry, PROVIDER_INFO, REQUIRED_PROVIDERS, type Connection } from './providers';
+import { CONNECTION_ORDER, DATA_PROVIDER_IDS, formatExpiry, isReady, PROVIDER_INFO, type Connection } from './providers';
 import { providerCheck, useVerification, type ProviderCheck } from './use-verification';
 
 const TONE = { success: 'text-success', danger: 'text-danger', warning: 'text-warning', muted: 'text-fg-subtle' } as const;
 
-function status(provider: Provider, connection: Connection, check?: ProviderCheck): { text: string; tone: keyof typeof TONE } {
-	if (connection.state === 'missing') return { text: connection.detail ?? 'Not connected', tone: (REQUIRED_PROVIDERS as readonly Provider[]).includes(provider) ? 'warning' : 'muted' };
+function status(provider: Provider, connection: Connection, check?: ProviderCheck, hasDataProvider = false): { text: string; tone: keyof typeof TONE } {
+	if (connection.state === 'missing') return { text: connection.detail ?? 'Not connected', tone: DATA_PROVIDER_IDS.includes(provider as 'monid' | 'treg') && !hasDataProvider ? 'warning' : 'muted' };
 	if (connection.state === 'expired') return { text: 'Expired', tone: 'danger' };
 	if (check && !check.ok) return { text: check.message ?? 'Needs attention', tone: 'danger' };
 	if (connection.state === 'included') return { text: 'Included trial', tone: 'muted' };
@@ -33,6 +33,7 @@ function detail(provider: Provider, connection: Connection) {
 /** Every provider in one list: logo, status, and one action menu. Configured connections are checked (without inference) on load. */
 export function Connections() {
 	const { settings, connections, organization, server, disconnectProvider } = useSettings();
+	const hasDataProvider = DATA_PROVIDER_IDS.some((provider) => isReady(connections[provider]));
 	const { toast } = useToast();
 	const [editing, setEditing] = useState<{ provider: Provider } | null>(null);
 	const [disconnecting, setDisconnecting] = useState<Provider | null>(null);
@@ -57,7 +58,7 @@ export function Connections() {
 			<ul className="divide-y divide-line-subtle">
 				{CONNECTION_ORDER.map((provider) => {
 					const connection = connections[provider];
-					const label = status(provider, connection, providerCheck(verification.result, provider));
+					const label = status(provider, connection, providerCheck(verification.result, provider), hasDataProvider);
 					return (
 						<li key={provider} className="flex items-center gap-3 py-3">
 							<ProviderLogo provider={provider} />
@@ -92,7 +93,7 @@ export function Connections() {
 			{editing && <ConnectionDialog provider={editing.provider} onClose={() => setEditing(null)} />}
 			{disconnecting && <ConfirmDialog
 				title={`Disconnect ${PROVIDER_INFO[disconnecting].name}?`}
-				description="The encrypted workspace copy is removed. This does not revoke the key at Monid or OpenAI."
+				description={`The encrypted workspace copy of this ${PROVIDER_INFO[disconnecting].name} key is removed. This does not revoke it at the provider.`}
 				confirmLabel="Disconnect"
 				danger
 				loading={busy}

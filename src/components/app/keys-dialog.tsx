@@ -74,26 +74,32 @@ function VerifiedKeyField({ provider, value, onChange, required, autoFocus, help
 type Workspace = ReturnType<typeof useSettings>;
 
 /** What first-run setup asks for, given the workspace's connections and the trimmed keys typed so far. */
-function setupNeeds({ connections }: Workspace, typed: { monidKey: string }) {
+function setupNeeds({ connections }: Workspace, typed: { monidKey: string; tregKey: string }, requiredProvider?: 'monid' | 'treg') {
 	const askMonid = !isReady(connections.monid);
+	const askTreg = !isReady(connections.treg);
 	const askOpenAI = !isReady(connections.openai);
-	return { askMonid, askOpenAI, title: 'Connect your data provider', missing: askMonid && !typed.monidKey, typeable: askMonid || askOpenAI };
+	const hasMonid = !askMonid || Boolean(typed.monidKey);
+	const hasTreg = !askTreg || Boolean(typed.tregKey);
+	const missing = requiredProvider ? !(requiredProvider === 'monid' ? hasMonid : hasTreg) : !(hasMonid || hasTreg);
+	return { askMonid, askTreg, askOpenAI, title: requiredProvider ? `Connect ${requiredProvider === 'monid' ? 'Monid' : 'Treg'}` : 'Connect a data provider', missing, typeable: askMonid || askTreg || askOpenAI };
 }
 
 /** First run and key-requiring actions: only the two required connections, saved without waiting for live checks. */
 export function KeysDialog({ onClose }: { onClose: () => void }) {
 	const workspace = useSettings();
-	const { update, connections, workspaceName } = workspace;
+	const { update, connections, workspaceName, keysRequiredProvider } = workspace;
 	const [monidKey, setMonidKey] = useState('');
+	const [tregKey, setTregKey] = useState('');
 	const [openaiKey, setOpenaiKey] = useState('');
 	const [saving, setSaving] = useState(false);
 	const [saveError, setSaveError] = useState('');
-	const needs = setupNeeds(workspace, { monidKey: monidKey.trim() });
+	const needs = setupNeeds(workspace, { monidKey: monidKey.trim(), tregKey: tregKey.trim() }, keysRequiredProvider);
 
 	async function save() {
 		setSaving(true); setSaveError('');
 		const patch: Partial<Settings> = {};
 		if (monidKey.trim()) patch.monidKey = monidKey.trim();
+		if (tregKey.trim()) patch.tregKey = tregKey.trim();
 		if (openaiKey.trim()) patch.openaiKey = openaiKey.trim();
 		try {
 			await update(patch);
@@ -106,19 +112,22 @@ export function KeysDialog({ onClose }: { onClose: () => void }) {
 	return (
 		<Dialog
 			title={needs.title}
-			description={`Monid powers data enrichment for ${workspaceName || 'your workspace'}. Keys are encrypted on this server. OpenAI is optional and only uses a key you provide.`}
+			description={`Choose Monid or Treg for each supported data column. Their connections and billing stay separate for ${workspaceName || 'your workspace'}; there is no provider fallback. OpenAI is optional and only uses a key you provide.`}
 			onClose={onClose}
 			size="lg"
 			footer={needs.typeable ? <Button variant="brand" size="sm" loading={saving} disabled={needs.missing} onClick={() => void save()}>Save and start</Button> : <Button size="sm" onClick={onClose}>Not now</Button>}
 		>
 			<div className="flex flex-col gap-3">
-				<ProviderCard provider="monid" status={needs.askMonid ? undefined : <ConnectedBadge />}>
-					{needs.askMonid && <VerifiedKeyField provider="monid" required value={monidKey} onChange={setMonidKey} autoFocus />}
+				<ProviderCard provider="monid" status={needs.askMonid ? <span className="text-caption text-fg-subtle">{keysRequiredProvider === 'monid' ? 'Required for this run' : 'Optional'}</span> : <ConnectedBadge />}>
+					{needs.askMonid && <VerifiedKeyField provider="monid" required={keysRequiredProvider === 'monid'} value={monidKey} onChange={setMonidKey} autoFocus />}
+				</ProviderCard>
+				<ProviderCard provider="treg" status={needs.askTreg ? <span className="text-caption text-fg-subtle">{keysRequiredProvider === 'treg' ? 'Required for this run' : 'Optional'}</span> : <ConnectedBadge />}>
+					{needs.askTreg && <VerifiedKeyField provider="treg" required={keysRequiredProvider === 'treg'} value={tregKey} onChange={setTregKey} autoFocus={!needs.askMonid} />}
 				</ProviderCard>
 				<ProviderCard provider="openai" status={needs.askOpenAI ? <span className="text-caption text-fg-subtle">Optional</span> : <OpenAIStatus included={connections.openai.state === 'included'} />}>
 					{needs.askOpenAI && <VerifiedKeyField provider="openai" value={openaiKey} onChange={setOpenaiKey} />}
 				</ProviderCard>
-				<p className="text-caption text-fg-subtle">Without OpenAI, enrichment and spreadsheet features still work. AI reasoning, classification, scoring, and natural-language row generation need your OpenAI key.</p>
+				<p className="text-caption text-fg-subtle">Connect either data provider to start. Monid and Treg are selected per supported column and bill separate balances. OpenAI reasoning, classification, scoring, and natural-language row generation need your own OpenAI key.</p>
 				{saveError && <p role="alert" className="text-body-sm text-danger">{saveError}</p>}
 			</div>
 		</Dialog>

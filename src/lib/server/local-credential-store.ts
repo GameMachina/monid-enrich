@@ -8,9 +8,9 @@ import { SELF_HOSTED_ISSUER } from '../auth-identity';
 import { decryptSecret, encryptSecret } from './credentials';
 import { WorkspaceError } from '../workspace';
 
-type KeyName = 'monid' | 'openai';
+type KeyName = 'monid' | 'openai' | 'treg';
 type VaultFile = Record<string, Partial<Record<KeyName, string>>>;
-const NAMES: readonly KeyName[] = ['monid', 'openai'];
+const NAMES: readonly KeyName[] = ['monid', 'openai', 'treg'];
 let writes: Promise<unknown> = Promise.resolve();
 
 function directory() { return path.resolve(/*turbopackIgnore: true*/ process.env.ENRICHABLE_LOCAL_VAULT_DIR?.trim() || path.join(process.cwd(), '.data')); }
@@ -89,7 +89,7 @@ export async function updateLocalCredentials(account: Account, patch: Partial<Re
 			if (value === undefined) continue;
 			if (value === null || value.trim() === '') delete saved[name];
 			else {
-				if (value.length > 512 || /[\r\n]/.test(value)) throw new WorkspaceError(`Invalid ${name === 'monid' ? 'Monid' : 'OpenAI'} API key.`, 400);
+				if (value.length > 512 || /[\r\n]/.test(value)) throw new WorkspaceError(`Invalid ${name === 'monid' ? 'Monid' : name === 'treg' ? 'Treg' : 'OpenAI'} API key.`, 400);
 				saved[name] = encryptSecret(key, value.trim(), [workspace, name]);
 			}
 		}

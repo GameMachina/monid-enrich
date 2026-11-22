@@ -12,6 +12,7 @@ export interface Settings {
 	companyDomain?: string;
 	openaiKey: string;
 	monidKey: string;
+	tregKey: string;
 	/** Legacy fields are only retained to clear old browser settings during migration. */
 	contextKey: string;
 	typesafeKey: string;
@@ -38,7 +39,7 @@ const STORAGE_KEY = 'enrichable.settings.v1';
 const listeners = new Set<() => void>();
 const publish = () => { for (const listener of listeners) listener(); };
 
-export const DEFAULT_SETTINGS: Settings = { openaiKey: '', monidKey: '', contextKey: '', typesafeKey: '', hunterKey: '', quickenrichKey: '', apolloKey: '', contactoutKey: '', prospeoKey: '', logolinkKey: '', model: DEFAULT_MODEL, classifierModel: 'decisions', openaiBaseUrl: '', concurrency: 4, preferJev: false, mobilePhoneProviders: [...DEFAULT_ALLOWED_PHONE_PROVIDERS] };
+export const DEFAULT_SETTINGS: Settings = { openaiKey: '', monidKey: '', tregKey: '', contextKey: '', typesafeKey: '', hunterKey: '', quickenrichKey: '', apolloKey: '', contactoutKey: '', prospeoKey: '', logolinkKey: '', model: DEFAULT_MODEL, classifierModel: 'decisions', openaiBaseUrl: '', concurrency: 4, preferJev: false, mobilePhoneProviders: [...DEFAULT_ALLOWED_PHONE_PROVIDERS] };
 const publicFields = ['model', 'classifierModel', 'openaiBaseUrl', 'concurrency', 'preferJev', 'companyDomain', 'mobilePhoneProviders'] as const;
 let localWorkspaceRevision = 0;
 
@@ -54,7 +55,7 @@ function loadLocalSettings(): Settings {
 		const raw = window.localStorage.getItem(key);
 		if (cached && cachedStorageKey === key && cachedRaw === raw) return cached;
 		const saved = raw ? JSON.parse(raw) as Partial<Settings> : {};
-		cached = { ...DEFAULT_SETTINGS, ...saved, openaiKey: '', monidKey: '', contextKey: '', typesafeKey: '', hunterKey: '', quickenrichKey: '', apolloKey: '', contactoutKey: '', prospeoKey: '', logolinkKey: '', classifierModel: saved.classifierModel || saved.model || DEFAULT_MODEL, preferJev: false };
+		cached = { ...DEFAULT_SETTINGS, ...saved, openaiKey: '', monidKey: '', tregKey: '', contextKey: '', typesafeKey: '', hunterKey: '', quickenrichKey: '', apolloKey: '', contactoutKey: '', prospeoKey: '', logolinkKey: '', classifierModel: saved.classifierModel || saved.model || DEFAULT_MODEL, preferJev: false };
 		cachedStorageKey = key;
 		cachedRaw = raw;
 		return cached;
@@ -82,7 +83,7 @@ function clearLegacyLocalSecrets(preferences: Partial<Settings>) {
 }
 
 function saveLocalSettings(patch: Partial<Settings>) {
-	const next = { ...loadLocalSettings(), ...patch, openaiKey: '', monidKey: '', contextKey: '', typesafeKey: '', hunterKey: '', quickenrichKey: '', apolloKey: '', contactoutKey: '', prospeoKey: '', logolinkKey: '' };
+	const next = { ...loadLocalSettings(), ...patch, openaiKey: '', monidKey: '', tregKey: '', contextKey: '', typesafeKey: '', hunterKey: '', quickenrichKey: '', apolloKey: '', contactoutKey: '', prospeoKey: '', logolinkKey: '' };
 	const key = accountStorageKey(STORAGE_KEY);
 	const raw = JSON.stringify(next);
 	window.localStorage.setItem(key, raw);
@@ -111,6 +112,7 @@ async function saveStandaloneCredentials(patch: Partial<Settings>) {
 	const providers: Record<string, string | null> = {};
 	if (patch.monidKey !== undefined) providers.monid = patch.monidKey.trim() || null;
 	if (patch.openaiKey !== undefined) providers.openai = patch.openaiKey.trim() || null;
+	if (patch.tregKey !== undefined) providers.treg = patch.tregKey.trim() || null;
 	if (!Object.keys(providers).length) return;
 	const response = await fetch('/api/local-connections', { method: 'POST', headers: { ...accountHeaders(), 'content-type': 'application/json' }, body: JSON.stringify({ providers }), cache: 'no-store' });
 	if (!response.ok) throw new Error((await response.json().catch(() => null))?.error || 'Could not save this connection securely on the server.');
@@ -139,6 +141,7 @@ export function keyHeaders(settings: Settings = loadSettings()): Record<string, 
 	const headers: Record<string, string> = { 'content-type': 'application/json', ...accountHeaders() };
 	if (settings.openaiKey) headers['x-openai-key'] = settings.openaiKey;
 	if (settings.monidKey) headers['x-monid-key'] = settings.monidKey;
+	if (settings.tregKey) headers['x-treg-key'] = settings.tregKey;
 	if (settings.model) headers['x-openai-model'] = settings.model;
 	if (settings.classifierModel) headers['x-classifier-model'] = settings.classifierModel;
 	if (settings.openaiBaseUrl) headers['x-openai-base-url'] = settings.openaiBaseUrl;
@@ -183,7 +186,7 @@ export function initializeOrganizationSettings(): Promise<boolean> {
 async function connectOrganization(previous: Partial<Settings>) {
 	const data = await organizationRequest('GET');
 	if (data.local) {
-		if (previous.monidKey || previous.openaiKey) await saveStandaloneCredentials({ monidKey: previous.monidKey, openaiKey: previous.openaiKey });
+		if (previous.monidKey || previous.openaiKey || previous.tregKey) await saveStandaloneCredentials({ monidKey: previous.monidKey, openaiKey: previous.openaiKey, tregKey: previous.tregKey });
 		clearLegacyLocalSecrets(previous);
 		localWorkspaceRevision = data.revision ?? 0;
 		if (data.revision === 0 && previous.mobilePhoneProviders) {
@@ -198,7 +201,8 @@ async function connectOrganization(previous: Partial<Settings>) {
 	const providers = Object.fromEntries([
 		...(!data.providers.monid?.configured && previous.monidKey ? [['monid', previous.monidKey]] : []),
 		...(!data.providers.openai?.configured && previous.openaiKey ? [['openai', previous.openaiKey]] : []),
-	]) as Partial<Record<'monid' | 'openai', string>>;
+		...(!data.providers.treg?.configured && previous.tregKey ? [['treg', previous.tregKey]] : []),
+	]) as Partial<Record<'monid' | 'openai' | 'treg', string>>;
 	const preferences = Object.fromEntries(publicFields.flatMap((field) => previous[field] === undefined ? [] : [[field, previous[field]]])) as Partial<Settings>;
 	const migrated = Object.keys(providers).length || Object.keys(preferences).length
 		? await organizationRequest('PATCH', { revision: data.revision, providers, preferences })

@@ -48,7 +48,7 @@ export class OrganizationStore {
    const savedPreferences = (await sql.query('SELECT preferences FROM enrichable.organization_settings WHERE workspace_id=$1', [workspace])).rows[0]?.preferences as Record<string, unknown>;
    if (args.importOnly && Object.keys(savedPreferences ?? {}).length > 0) throw new WorkspaceError('Organization settings already exist. Import cannot overwrite them.', 409);
    const preferences = parseInput(organizationPreferencesSchema, { ...current.preferences, ...args.preferences });
-   for (const provider of ['openai', 'monid'] as const) {
+   for (const provider of ['openai', 'monid', 'treg'] as const) {
     const secret = args.providers?.[provider];
     if (secret === undefined) continue;
     if (args.importOnly && current.providers[provider]) throw new WorkspaceError('An organization provider already exists. Import cannot overwrite it.', 409);

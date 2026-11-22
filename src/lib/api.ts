@@ -19,7 +19,7 @@ export class ApiError extends Error {
 	}
 }
 
-const FAILURE_PROVIDERS: readonly FailureProvider[] = ['openai', 'context', 'typesafe', 'email'];
+const FAILURE_PROVIDERS: readonly FailureProvider[] = ['openai', 'monid', 'treg', 'context', 'typesafe', 'email'];
 
 /** Accept only a well-formed failure from the response body. */
 export function parseFailure(value: unknown): EnrichFailure | undefined {
@@ -40,7 +40,7 @@ export async function readError(response: Response): Promise<ApiError> {
 	return new ApiError(message, response.status, failure);
 }
 
-export async function enrichCell(op: ColumnOp, row: Record<string, CellValue>, signal?: AbortSignal): Promise<EnrichResponse> {
+export async function enrichCell(op: ColumnOp, row: Record<string, CellValue>, signal?: AbortSignal, idempotencyKey?: string): Promise<EnrichResponse> {
 	const settings = loadSettings();
 	const deadline = new AbortController();
 	const timer = setTimeout(() => deadline.abort(), ENRICHMENT_REQUEST_MS);
@@ -48,7 +48,7 @@ export async function enrichCell(op: ColumnOp, row: Record<string, CellValue>, s
 		const response = await contextRequest('/api/enrich', {
 			method: 'POST',
 			headers: { ...keyHeaders(), 'x-prefer-jev': settings.preferJev ? 'true' : 'false' },
-			body: JSON.stringify({ op, row }),
+			body: JSON.stringify({ op, row, ...(idempotencyKey ? { idempotencyKey } : {}) }),
 			signal: signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal,
 		});
 		if (!response.ok) throw await readError(response);
@@ -88,6 +88,8 @@ export interface ServerKeys {
 	openai: boolean;
 	monid?: boolean;
 	monidSaved?: boolean;
+	treg?: boolean;
+	tregSaved?: boolean;
 	openaiSaved?: boolean;
 	context?: boolean;
 	typesafe?: boolean;
