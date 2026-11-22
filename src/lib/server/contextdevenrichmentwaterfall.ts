@@ -5,6 +5,7 @@ import type { ProviderAccess } from './provider-access';
 import { CredentialError } from './credentials';
 import { inputError } from './enrich-failure';
 import { runMonidOperation, type MonidOperationInputs } from './monid';
+import { runMonidEmailWaterfall } from './monid-contact-waterfalls';
 
 type Identity = { name: string; company: string; domain: string; profileUrl: string };
 type SharedRequest = { operation: 'email.find'; input: MonidOperationInputs['email.find']; boundUsd: number };
@@ -50,22 +51,7 @@ function actualCost(run: { cost?: { value?: number }; billing?: unknown }) {
 
 export async function runEmailWaterfall(access: ProviderAccess, op: Extract<ColumnOp, { kind: 'email-enrichment' }>, row: Record<string, CellValue>, _ledger?: unknown): Promise<EnrichResponse> {
 	void _ledger;
-	const input = (value: string) => renderTemplate(value, row).trim();
-	const identity: Identity = { name: input(op.name), company: input(op.company), domain: toDomain(input(op.domain)), profileUrl: input(op.profileUrl) };
-	if (!identity.name || !/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(identity.domain)) throw inputError('Provide a person name and company domain for this row.', 'monid');
-	if (identity.profileUrl) {
-		let profile: URL;
-		try { profile = new URL(identity.profileUrl); } catch { throw inputError('Enter a valid LinkedIn profile URL.', 'monid'); }
-		if (profile.protocol !== 'https:' || !['linkedin.com', 'www.linkedin.com'].includes(profile.hostname) || !/^\/(in|pub)\//.test(profile.pathname)) throw inputError('Enter a valid LinkedIn profile URL.', 'monid');
-	}
-	const request = sharedRequest('monid', identity);
-	const attempt: NonNullable<CellMeta['enrichment']>['attempts'][number] = { provider: 'monid', source: 'own-key', status: 'Running', costUsd: 0 };
-	const run = await runMonidOperation(access.requireKey('monid'), request.operation, request.input, { spend: access.spend, actor: access.account, timeoutMs: 120_000 });
-	const candidate = emailCandidate('monid', run.output);
-	attempt.costUsd = actualCost(run);
-	attempt.status = candidate.email ? 'Found' : 'No email found';
-	const meta: CellMeta = { provider: 'monid', sources: candidate.sources, confidence: candidate.confidence, reasoning: candidate.email ? `Monid match status: ${candidate.verificationStatus}.` : 'No work email found.', enrichment: { costUsd: attempt.costUsd, attempts: [attempt], verified: candidate.verified, verificationStatus: candidate.verificationStatus } };
-	return { value: candidate.email as CellValue, meta };
+	return runMonidEmailWaterfall(access, op, row);
 }
 
 export type EmailWaterfallFailure = EnrichFailure;

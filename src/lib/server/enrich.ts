@@ -5,6 +5,7 @@ import { enrichmentValue } from '../enrichment-value';
 import { renderEmailDraft } from '../email-draft';
 import { EmailDraftSchema } from '../types';
 import { runEmailWaterfall } from './contextdevenrichmentwaterfall';
+import { runMonidPhoneWaterfall, runMonidSocialWaterfall } from './monid-contact-waterfalls';
 import { lookupMobilePhone, runContactProvider } from './contact-providers';
 import { searchCompanySuggestions } from './company-search';
 import { fundingLabel } from '../funding';
@@ -165,6 +166,10 @@ async function execute(run: Run, op: ColumnOp, row: Row): Promise<OpResult> {
 			return runCompany(run, op, row);
 		case 'email-enrichment':
 			return runEmailWaterfall(run.access, op, row);
+		case 'phone-enrichment':
+			return runMonidPhoneWaterfall(run.access, op, row);
+		case 'social-enrichment':
+			return runMonidSocialWaterfall(run.access, op, row);
 		case 'hunter':
 		case 'prospeo':
 			return runContactProvider(run.access, op, row);

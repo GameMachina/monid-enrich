@@ -1,6 +1,7 @@
 import type { DateFormat } from './date-format';
 import type { ActionColumnDefinition } from './action-column';
 import { PhoneProviderStrategySchema } from './phone-strategy';
+import { SocialPlatformSchema, SocialProviderSchema } from './social-platform';
 import { z } from 'zod';
 
 /* ───────────────────────────── Column operations ─────────────────────────────
@@ -38,9 +39,12 @@ export const EmailDraftSchema = z.object({
 });
 export type EmailDraft = z.infer<typeof EmailDraftSchema>;
 
-export const EMAIL_PROVIDERS = ['monid'] as const;
-export type EmailProvider = typeof EMAIL_PROVIDERS[number] | 'quickenrich' | 'hunter' | 'apollo' | 'prospeo' | 'contactout';
-const STORED_EMAIL_PROVIDERS = ['monid', 'quickenrich', 'hunter', 'apollo', 'prospeo', 'contactout'] as const;
+export const EMAIL_PROVIDERS = ['quickenrich', 'hunter', 'apollo', 'prospeo', 'contactout'] as const;
+export type EmailProvider = typeof EMAIL_PROVIDERS[number] | 'monid';
+const STORED_EMAIL_PROVIDERS = ['monid', ...EMAIL_PROVIDERS] as const;
+export const PHONE_LOOKUP_PROVIDERS = ['leadmagic', 'clay', 'ai_ark', 'reversecontact', 'prospeo'] as const;
+export type PhoneLookupProvider = typeof PHONE_LOOKUP_PROVIDERS[number];
+const PhoneLookupProviderSchema = z.enum(PHONE_LOOKUP_PROVIDERS);
 export const ColumnOpSchema = z.discriminatedUnion('kind', [
  z.object({
   kind: z.literal('email-enrichment'),
@@ -48,8 +52,26 @@ export const ColumnOpSchema = z.discriminatedUnion('kind', [
   company: z.string().max(300).default(''),
   domain: z.string().trim().min(1).max(500),
   profileUrl: z.string().max(500).default(''),
-  // Older saved sheets may list vendor names. The executor ignores those labels and sends the single supported operation through Monid.
   providers: z.array(z.enum(STORED_EMAIL_PROVIDERS)).min(1).max(5).default([...EMAIL_PROVIDERS]).refine(items => new Set(items).size === items.length, 'Each provider can appear only once.'),
+ }),
+ z.object({
+  kind: z.literal('phone-enrichment'),
+  name: z.string().trim().max(300).default(''),
+  company: z.string().max(300).default(''),
+  domain: z.string().trim().max(500).default(''),
+  profileUrl: z.string().max(500).default(''),
+  email: z.string().max(320).default(''),
+  providers: z.array(PhoneLookupProviderSchema).min(1).max(5).default(['ai_ark', 'reversecontact']).refine(items => new Set(items).size === items.length, 'Each provider can appear only once.'),
+ }),
+ z.object({
+  kind: z.literal('social-enrichment'),
+  name: z.string().trim().max(300).default(''),
+  company: z.string().max(300).default(''),
+  domain: z.string().trim().max(500).default(''),
+  profileUrl: z.string().max(500).default(''),
+  email: z.string().max(320).default(''),
+  platform: SocialPlatformSchema.default('linkedin'),
+  providers: z.array(SocialProviderSchema).min(1).max(5).default(['people_enrich', 'web_search']).refine(items => new Set(items).size === items.length, 'Each provider can appear only once.'),
  }),
  z.object({
   kind: z.literal('email-draft'),
@@ -208,8 +230,8 @@ export interface CellMeta {
 	model?: string;
 	credits?: number;
 	/** Provider-specific usage; kept separate from Context.dev credits. */
-	provider?: EmailProvider;
- enrichment?: { verified?: boolean; verificationStatus?: string; costUsd: number; attempts: Array<{ provider: EmailProvider; source: 'own-key' | 'included'; status: string; costUsd: number }> };
+	provider?: EmailProvider | PhoneLookupProvider;
+	enrichment?: { verified?: boolean; verificationStatus?: string; costUsd: number; attempts: Array<{ provider: EmailProvider; source: 'own-key' | 'included' | 'monid-workspace'; status: string; costUsd: number }> };
 	providerCredits?: number;
 	providerCreditUnit?: string;
 	/** Monid's receipt IDs and run statuses for data-provider calls made for this cell. */

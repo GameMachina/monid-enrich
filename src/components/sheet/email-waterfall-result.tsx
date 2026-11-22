@@ -14,15 +14,17 @@ export function EmailWaterfallResult({ enrichment, providers }: { enrichment: No
    const attempt = enrichment.attempts.find(item => item.provider === provider);
    const found = attempt?.status === 'Found' || attempt?.status === 'Verified';
    const status = !attempt ? 'Not attempted' : found ? `Email found · Provider verification: ${enrichment.verificationStatus ?? (attempt.status === 'Verified' ? 'verified' : 'unknown')}` : attempt.status;
-   const StatusIcon = !attempt ? CircleMinus : found ? CircleCheck : CircleX;
-   return <li key={provider} className="relative flex min-h-9 items-center gap-2" title={`${info.name}: ${status}${attempt ? ` · ${attempt.source === 'own-key' ? 'Your key' : 'Included credit'}` : ''}`}>
+   const skipped = attempt?.status.startsWith('Skipped');
+   const StatusIcon = !attempt || skipped ? CircleMinus : found ? CircleCheck : CircleX;
+   const sourceName = attempt?.source === 'monid-workspace' ? 'Monid workspace wallet' : attempt?.source === 'own-key' ? 'Your key' : 'Included credit';
+   return <li key={provider} className="relative flex min-h-9 items-center gap-2" title={`${info.name}: ${status}${attempt ? ` · ${sourceName}` : ''}`}>
     {index < order.length - 1 && <span aria-hidden="true" className="absolute top-8 left-3.5 h-2 w-px bg-line-subtle" />}
     <span className={`relative z-10 flex size-7 shrink-0 items-center justify-center rounded-md border border-line-subtle bg-surface ${!attempt ? 'opacity-40 grayscale' : ''}`}>
      <Image src={info.logo} alt="" width={18} height={18} unoptimized className="size-[18px] rounded-sm object-contain" />
     </span>
-    <span className={`min-w-0 flex-1 text-body-sm ${!attempt ? 'text-fg-subtle' : 'text-fg'}`}>{info.name}</span>
+    <span className={`min-w-0 flex-1 text-body-sm ${!attempt || skipped ? 'text-fg-subtle' : 'text-fg'}`}>{info.name}</span>
     {!attempt && <span className="text-[11px] text-fg-subtle">Not attempted</span>}
-    <StatusIcon aria-hidden="true" strokeWidth={1.75} className={`size-[18px] shrink-0 ${!attempt ? 'rotate-90 text-fg-subtle opacity-50' : found ? 'text-emerald-600' : 'text-danger'}`} />
+    <StatusIcon aria-hidden="true" strokeWidth={1.75} className={`size-[18px] shrink-0 ${!attempt || skipped ? 'text-fg-subtle opacity-50' : found ? 'text-emerald-600' : 'text-danger'}`} />
     <span className="sr-only">{status}</span>
    </li>;
   })}

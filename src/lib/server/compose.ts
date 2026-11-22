@@ -3,8 +3,9 @@ import 'server-only';
 
 import { generateText, Output } from 'ai';
 import { z } from 'zod';
-import { type ColumnOp, type ComposeColumnRequest, type ComposeColumnResponse, EMAIL_PROVIDERS, PROSPEO_FIELDS, OUTPUT_TYPES, type PageSource } from '../types';
+import { type ColumnOp, type ComposeColumnRequest, type ComposeColumnResponse, PROSPEO_FIELDS, OUTPUT_TYPES, type PageSource } from '../types';
 import { ColumnOpInputSchema, instructionField, instructionText, OP_KINDS, OPERATIONS } from '../operations';
+import { SOCIAL_PLATFORMS } from '../social-platform';
 import type { ProviderAccess } from './provider-access';
 
 const GUIDE = `You turn a plain-language request into one spreadsheet column definition. Pick the best supported operation that answers it well. All external data requests must use the Monid adapter. Monid pricing varies by endpoint and returned results; actual usage is shown in cell details. OpenAI reasoning requires the workspace member’s own connected key. Never call another provider directly or fall back to another model:
@@ -13,6 +14,8 @@ const GUIDE = `You turn a plain-language request into one spreadsheet column def
 - company: one of exactly these supported firmographic fields for a domain column: description, title, slogan, industry, employees, city, country, address, email, phone, ticker, linkedin, twitter, pricing_url, careers_url, blog_url, contact_url, logo_url, primary_color, language, funding_total, funding_stage, funding_latest_round, funding_latest_date, funding_latest_amount, funding_round_count. Unsupported fields require ai with the user supplied OpenAI key and Monid web research.
 - person: a fact about a person (title, company, location, LinkedIn, schools, degrees, experience) from a name + company, email, or profile URL column. For a mobile phone, set personField to mobile and include references for personName, personCompany and personProfileUrl; the lookup requires a LinkedIn personal profile URL.
 - email-enrichment: find a work email from personName and domain; optionally use personCompany and personProfileUrl. Routes through Monid email finding only and keeps Monid match score, verification status, sources, run ID, and actual cost.
+- phone-enrichment: find a phone number using the selected Monid provider waterfall. Use personName, personCompany/domain, personProfileUrl, and personEmail when available.
+- social-enrichment: find one public profile URL on the selected social platform using the selected Monid provider waterfall. Use personName and optional company/domain, profile URL, or email clues.
 - hunter: legacy operation alias for Monid email finding or verification. Use personName and domain to find, or personEmail to verify. Verification returns a text status, not a boolean.
 - prospeo: legacy operation alias for supported Monid people enrichment. Use personProfileUrl, personEmail, or personName and company domain. For a mobile number, supply personName, personCompany, and personProfileUrl. For email with onlyVerifiedEmail=true, return only a Monid-verified address.
 - scrape: read a page. scrapeMode "highlights" with a query for passages, "extract" with fields for structured facts from a page, "title", or "url" (just find the page, e.g. the pricing page URL).
@@ -41,7 +44,7 @@ const PERSON_FIELDS = ['title', 'company', 'company_domain', 'location', 'bio', 
    shape and the server folds it into a ColumnOp. */
 const FlatSchema = z.object({
 	name: z.string().describe('Column header, Title case, under 40 characters.'),
-	kind: z.enum(['email-enrichment', 'email-draft', 'ai', 'check', 'classify', 'score', 'scrape', 'search', 'company', 'person', 'hunter', 'prospeo', 'answer', 'formula']),
+	kind: z.enum(['email-enrichment', 'phone-enrichment', 'social-enrichment', 'email-draft', 'ai', 'check', 'classify', 'score', 'scrape', 'search', 'company', 'person', 'hunter', 'prospeo', 'answer', 'formula']),
 	text: z.string().describe('Main input for the operation; see the rules.'),
 	rationale: z.string().describe('One sentence on why this operation.'),
 	output: z.enum(OUTPUT_TYPES).nullable().describe('ai and answer only.'),
@@ -74,6 +77,7 @@ const FlatSchema = z.object({
 	emailMode: z.enum(['ai', 'template']).nullable(),
 	emailFields: z.object({ to: z.string(), cc: z.string(), bcc: z.string(), subject: z.string(), body: z.string() }).nullable(),
 	answerMode: z.enum(['fast', 'ultra']).nullable(),
+	socialPlatform: z.enum(SOCIAL_PLATFORMS).nullable().describe('social-enrichment only.'),
 });
 type Flat = z.infer<typeof FlatSchema>;
 
@@ -97,7 +101,11 @@ function toOp(flat: Flat, decider: 'openai'): ComposeColumnResponse['op'] {
 		case 'formula':
 			return { kind: 'formula', request: flat.text };
 		case 'email-enrichment':
-			return { kind: 'email-enrichment', name: flat.personName ?? '', domain: flat.domain ?? '', company: flat.personCompany ?? '', profileUrl: flat.personProfileUrl ?? '', providers: [...EMAIL_PROVIDERS] };
+			return { kind: 'email-enrichment', name: flat.personName ?? '', domain: flat.domain ?? '', company: flat.personCompany ?? '', profileUrl: flat.personProfileUrl ?? '', providers: ['hunter'] };
+		case 'phone-enrichment':
+			return { kind: 'phone-enrichment', name: flat.personName ?? '', domain: flat.domain ?? '', company: flat.personCompany ?? '', profileUrl: flat.personProfileUrl ?? '', email: flat.personEmail ?? '', providers: ['ai_ark', 'reversecontact'] };
+		case 'social-enrichment':
+			return { kind: 'social-enrichment', name: flat.personName ?? '', domain: flat.domain ?? '', company: flat.personCompany ?? '', profileUrl: flat.personProfileUrl ?? '', email: flat.personEmail ?? '', platform: flat.socialPlatform ?? 'linkedin', providers: ['people_enrich', 'web_search'] };
 		case 'email-draft':
 			return { kind: 'email-draft', mode: flat.emailMode ?? 'ai', prompt: flat.text, to: '', cc: '', bcc: '', subject: '', body: '', ...flat.emailFields };
 		case 'ai':

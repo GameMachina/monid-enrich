@@ -112,6 +112,61 @@ export function runMonidOperation<K extends MonidOperationName>(apiKey: string, 
 	return runMonid(apiKey, endpoint.provider, endpoint.endpoint, input, options);
 }
 
+/** Typed request contracts for provider routes inspected in Monid's live catalog. */
+export interface MonidWaterfallInputs {
+	'email.quickenrich': { body: { linkedinUrl?: string; companyDomain?: string; firstName?: string; lastName?: string } };
+	'email.hunter': { queryParams: { domain: string; company?: string; full_name?: string; first_name?: string; last_name?: string; linkedin_handle?: string; max_duration?: number } };
+	'email.apollo': { queryParams: { name?: string; first_name?: string; last_name?: string; domain?: string; organization_name?: string; linkedin_url?: string } };
+	'email.prospeo': { body: { linkedinUrl?: string; fullName?: string; firstName?: string; lastName?: string; companyWebsite?: string; companyName?: string; onlyVerifiedEmail?: boolean } };
+	'email.contactout': { queryParams: { profile: string; email_type?: 'work' | 'none' } };
+	'phone.leadmagic': { body: { profileUrl?: string; workEmail?: string; personalEmail?: string; email?: string } };
+	'phone.clay': { body: { 'Social Profile URL': string; 'Full Name': string; 'Company Name': string; 'Company Domain'?: string; 'Work Email'?: string; 'Personal Email'?: string } };
+	'phone.aiArk': { body: { linkedinUrl?: string; domain?: string; fullName?: string } };
+	'phone.reverseContact': { body: { url?: string; fullName?: string; firstName?: string; lastName?: string; companyDomain?: string } };
+	'phone.prospeo': { body: { linkedinUrl?: string; email?: string; fullName?: string; firstName?: string; lastName?: string; companyWebsite?: string; companyName?: string; enrichMobile: true } };
+	'social.linkedin.apify': { body: { profileScraperMode: 'Short'; firstName: string; lastName: string; strictSearch: true; maxPages: 1; maxItems: 5 } };
+	'social.linkedin.ploid': { body: { filters: { keywords: string; currentCompany?: string }; limit: number } };
+	'social.linkedin.anyapi': { body: { query: string } };
+	'social.instagram.anyapi': { body: { query: string } };
+	'social.instagram.tikhub': { queryParams: { query: string; select: 'users' } };
+	'social.facebook.litescrape': { queryParams: { query: string; limit: number } };
+	'social.x.anyapi': { body: { query: string } };
+	'social.tiktok.anyapi': { body: { query: string } };
+	'social.tiktok.tikhub': { queryParams: { keyword: string } };
+	'social.youtube.tikhub': { queryParams: { keyword: string; need_format: true } };
+	'social.youtube.litescrape': { queryParams: { q: string; type: 'channel' } };
+}
+type MonidWaterfallName = keyof MonidWaterfallInputs;
+const MONID_WATERFALL_ROUTES = {
+	'email.quickenrich': { provider: 'anyapi', endpoint: '/email_finding.quickenrich' },
+	'email.hunter': { provider: 'hunterio', endpoint: '/email-finder' },
+	'email.apollo': { provider: 'apollo', endpoint: '/people/match' },
+	'email.prospeo': { provider: 'anyapi', endpoint: '/person_enrichment.prospeo' },
+	'email.contactout': { provider: 'contactout', endpoint: '/v1/people/linkedin/work-email' },
+	'phone.leadmagic': { provider: 'anyapi', endpoint: '/mobile_phone.leadmagic' },
+	'phone.clay': { provider: 'clay', endpoint: '/enrichment/mobile-phone' },
+	'phone.aiArk': { provider: 'anyapi', endpoint: '/mobile_phone.ai_ark' },
+	'phone.reverseContact': { provider: 'reversecontact', endpoint: '/v2/contact/phone' },
+	'phone.prospeo': { provider: 'anyapi', endpoint: '/person_enrichment.prospeo' },
+	'social.linkedin.apify': { provider: 'apify', endpoint: '/harvestapi/linkedin-profile-search-by-name' },
+	'social.linkedin.ploid': { provider: 'ploid', endpoint: '/linkedin/search' },
+	'social.linkedin.anyapi': { provider: 'anyapi', endpoint: '/linkedin.search_profiles_thin' },
+	'social.instagram.anyapi': { provider: 'anyapi', endpoint: '/instagram.search_profiles' },
+	'social.instagram.tikhub': { provider: 'tikhub', endpoint: '/api/v1/instagram/v1/fetch_search' },
+	'social.facebook.litescrape': { provider: 'litescrape', endpoint: '/facebook/search-profiles' },
+	'social.x.anyapi': { provider: 'anyapi', endpoint: '/twitter.search_users' },
+	'social.tiktok.anyapi': { provider: 'anyapi', endpoint: '/tiktok.search_users' },
+	'social.tiktok.tikhub': { provider: 'tikhub', endpoint: '/api/v1/tiktok/web/fetch_search_user' },
+	'social.youtube.tikhub': { provider: 'tikhub', endpoint: '/api/v1/youtube/web_v2/search_channels' },
+	'social.youtube.litescrape': { provider: 'litescrape', endpoint: '/youtube/search' },
+} as const satisfies Record<MonidWaterfallName, { provider: string; endpoint: string }>;
+
+/** Routes a typed waterfall operation through Monid's authenticated run and polling layer. */
+export function runMonidWaterfall<K extends MonidWaterfallName>(apiKey: string, operation: K, input: MonidWaterfallInputs[K], options: { signal?: AbortSignal; spend?: Spend; actor?: Account; timeoutMs?: number } = {}) {
+	const route = MONID_WATERFALL_ROUTES[operation];
+	return runMonid(apiKey, route.provider, route.endpoint, input as MonidInput, options);
+}
+
 function jsonObject(value: unknown): Record<string, unknown> {
 	return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }

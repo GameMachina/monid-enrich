@@ -9,6 +9,8 @@ import { ColumnOpSchema, type ColumnOp, type OpKind } from '../src/lib/types';
 /** One valid definition per kind; Record<OpKind, …> fails to compile when a kind is added without one. */
 const SAMPLES: Record<OpKind, ColumnOp> = {
 	'email-enrichment': { kind: 'email-enrichment', name: '{{Name}}', company: '', domain: '{{Domain}}', profileUrl: '', providers: ['hunter'] },
+	'phone-enrichment': { kind: 'phone-enrichment', name: '{{Name}}', company: '', domain: '{{Domain}}', profileUrl: '', email: '', providers: ['ai_ark', 'reversecontact'] },
+	'social-enrichment': { kind: 'social-enrichment', name: '{{Name}}', company: '', domain: '', profileUrl: '', email: '', platform: 'linkedin', providers: ['people_enrich', 'web_search'] },
 	'email-draft': { kind: 'email-draft', mode: 'ai', prompt: 'Intro', to: '{{Email}}', cc: '', bcc: '', subject: '', body: '' },
 	ai: { kind: 'ai', prompt: 'CEO?', output: 'text', research: 'web', page: { type: 'homepage', column: 'Domain' } },
 	check: { kind: 'check', question: 'B2B?', decider: 'openai', threshold: 0.5, page: { type: 'find', column: 'Domain', page: 'pricing' } },
@@ -106,6 +108,18 @@ test('mobile columns validate inputs against their selected Monid route and wate
 	const waterfall: ColumnOp = { kind: 'person', field: 'mobile', phoneStrategy: 'leadmagic-then-clay', email: '{{Email}}' };
 	assert.equal(ColumnOpInputSchema.safeParse(waterfall).success, true);
 	assert.equal(operation('person').worstCaseMs(waterfall as never), 240_000);
+});
+
+test('phone and social columns accept ordered Monid routes and reject unusable configurations', () => {
+	const phone = SAMPLES['phone-enrichment'] as Extract<ColumnOp, { kind: 'phone-enrichment' }>;
+	assert.equal(ColumnOpInputSchema.safeParse({ ...phone, providers: ['leadmagic', 'clay', 'ai_ark', 'reversecontact', 'prospeo'] }).success, true);
+	const noPhoneInputs = { ...phone, name: '', domain: '', providers: ['leadmagic'] };
+	assert.equal(ColumnOpInputSchema.safeParse(noPhoneInputs).success, false);
+
+	const social = SAMPLES['social-enrichment'] as Extract<ColumnOp, { kind: 'social-enrichment' }>;
+	assert.equal(ColumnOpInputSchema.safeParse({ ...social, providers: ['people_enrich', 'web_search', 'apify', 'ploid', 'anyapi'] }).success, true);
+	const wrongNetwork = { ...social, platform: 'instagram' as const, providers: ['apify' as const] };
+	assert.equal(ColumnOpInputSchema.safeParse(wrongNetwork).success, false);
 });
 
 test('an extract needs fields or instructions before it is saved, while stored definitions stay loadable', () => {

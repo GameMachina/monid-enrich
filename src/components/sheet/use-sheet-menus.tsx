@@ -6,9 +6,10 @@ import { defaultEmailWaterfall } from '@/lib/email-waterfall';
 import { OPERATIONS } from '@/lib/operations';
 import { uniqueName } from '@/lib/references';
 import type { SheetCommands } from '@/lib/sheet-commands';
-import type { Column, Row, Sheet, Sort } from '@/lib/types';
-import { ArrowDown, ArrowUp, Columns3, Eraser, EyeOff, FileText, Filter, FunctionSquare, Mail, MousePointerClick, MoveLeft, MoveRight, Pencil, Play, Plus, RefreshCw, Sparkles, Trash2, Upload } from 'lucide-react';
+import type { Column, ColumnOp, Row, Sheet, Sort } from '@/lib/types';
+import { ArrowDown, ArrowUp, Columns3, Eraser, EyeOff, FileText, Filter, FunctionSquare, Mail, MousePointerClick, MoveLeft, MoveRight, Pencil, Phone, Play, Plus, RefreshCw, Share2, Sparkles, Trash2, Upload } from 'lucide-react';
 import type { ActiveCell } from './grid';
+import { defaultOp } from './column-operations';
 import { deleteColumnNotice, plural } from './sheet-page-utils';
 import type { SheetActions } from './use-sheet-actions';
 import type { SheetRows } from './use-sheet-data';
@@ -26,6 +27,8 @@ export function useSheetMenus({ sheetId, sheet, allRows, commands, content, sele
 		{ label: 'Action Column', icon: <MousePointerClick />, onSelect: () => overlays.setActionColumn({ insertAt }) },
 		{ label: 'Formula', icon: <FunctionSquare />, onSelect: () => overlays.setFormulaBuilder({ column: newColumn({ name: uniqueName('Formula', columnNames), type: 'source' }), insertAt }) },
 		{ label: 'Find email', icon: <Mail />, onSelect: () => overlays.setEditor({ insertAt, initialOp: defaultEmailWaterfall(sheet.columns), initialName: uniqueName(OPERATIONS['email-enrichment'].columnName, columnNames) }) },
+		{ label: 'Find phone number', icon: <Phone />, onSelect: () => overlays.setEditor({ insertAt, initialOp: defaultOp('phone-enrichment', sheet.columns, false) as ColumnOp, initialName: uniqueName(OPERATIONS['phone-enrichment'].columnName, columnNames) }) },
+		{ label: 'Find social', icon: <Share2 />, onSelect: () => overlays.setEditor({ insertAt, initialOp: defaultOp('social-enrichment', sheet.columns, false) as ColumnOp, initialName: uniqueName(OPERATIONS['social-enrichment'].columnName, columnNames) }) },
 		{ label: 'Blank column', icon: <Columns3 />, onSelect: () => actions.addBlankColumn(insertAt) },
 	];
 	const addItems: MenuItem[] = [

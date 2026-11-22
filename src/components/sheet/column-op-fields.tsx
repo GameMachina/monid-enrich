@@ -11,8 +11,11 @@ import { HelpTooltip } from '@/components/ui/help-tooltip';
 import { Sortable, SortableItem, SortableItemHandle } from '@/components/ui/sortable';
 import { ColumnPrompt } from './column-prompt';
 import { EmailWaterfallPicker } from './email-waterfall-picker';
+import { PhoneWaterfallPicker } from './phone-waterfall-picker';
+import { SocialWaterfallPicker } from './social-waterfall-picker';
 import { useSettings } from '@/components/app/settings-context';
 import { allowedPhoneStrategies, DEFAULT_ALLOWED_PHONE_PROVIDERS, PHONE_STRATEGY_INFO, type PhoneProviderStrategy } from '@/lib/phone-strategy';
+import { SOCIAL_PLATFORM_OPTIONS, type SocialPlatform } from '@/lib/social-platform';
 
 type OpOf<K extends OpKind> = Extract<ColumnOp, { kind: K }>;
 interface Shared { columns: Column[]; domainColumn?: string; jevAvailable: boolean }
@@ -91,6 +94,8 @@ export function OpFields({ op, onChange, ...shared }: Shared & { op: ColumnOp; o
 		case 'company': return <CompanyFields op={op} set={set} {...shared} />;
 		case 'person': return <PersonFields op={op} set={set} {...shared} />;
 		case 'email-enrichment': return <FindEmailFields op={op} set={set} {...shared} />;
+		case 'phone-enrichment': return <FindPhoneFields op={op} set={set} {...shared} />;
+		case 'social-enrichment': return <FindSocialFields op={op} set={set} {...shared} />;
 		case 'hunter': return <HunterFields op={op} set={set} {...shared} />;
 		case 'prospeo': return <ProspeoFields op={op} set={set} {...shared} />;
 		case 'answer': return <ResearchFields op={op} set={set} {...shared} />;
@@ -237,6 +242,33 @@ function FindEmailFields({ op, set, columns }: FieldsProps<'email-enrichment'>) 
 			{FIND_EMAIL_INPUTS.map((input) => <PromptField key={input.key} label={input.label} columns={columns} value={op[input.key]} onChange={(value) => set({ [input.key]: value })} placeholder={input.placeholder} />)}
 		</div>
 		<EmailWaterfallPicker value={op.providers} onChange={(providers) => set({ providers })} />
+	</>;
+}
+
+function FindPhoneFields({ op, set, columns }: FieldsProps<'phone-enrichment'>) {
+	return <>
+		<div className="grid gap-3 sm:grid-cols-2">
+			<PromptField label="Person name" columns={columns} value={op.name} onChange={(name) => set({ name })} placeholder="{{Name}}" />
+			<PromptField label="Company domain" columns={columns} value={op.domain} onChange={(domain) => set({ domain })} placeholder="{{Company website}}" />
+			<PromptField label="Company (optional)" columns={columns} value={op.company} onChange={(company) => set({ company })} placeholder="{{Company}}" />
+			<PromptField label="LinkedIn URL (optional)" columns={columns} value={op.profileUrl} onChange={(profileUrl) => set({ profileUrl })} placeholder="{{LinkedIn}}" />
+			<PromptField label="Work email (optional)" columns={columns} value={op.email} onChange={(email) => set({ email })} placeholder="{{Work email}}" />
+		</div>
+		<PhoneWaterfallPicker value={op.providers} onChange={(providers) => set({ providers })} />
+	</>;
+}
+
+function FindSocialFields({ op, set, columns }: FieldsProps<'social-enrichment'>) {
+	return <>
+		<div className="grid gap-3 sm:grid-cols-2">
+			<Field label="Social network">{(id) => <Select id={id} value={op.platform} onValueChange={(platform) => set({ platform: platform as SocialPlatform, providers: ['people_enrich', 'web_search'] })}>{SOCIAL_PLATFORM_OPTIONS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</Select>}</Field>
+			<PromptField label="Person name" columns={columns} value={op.name} onChange={(name) => set({ name })} placeholder="{{Name}}" />
+			<PromptField label="Company (optional)" columns={columns} value={op.company} onChange={(company) => set({ company })} placeholder="{{Company}}" />
+			<PromptField label="Company domain (optional)" columns={columns} value={op.domain} onChange={(domain) => set({ domain })} placeholder="{{Company website}}" />
+			<PromptField label="Email (optional)" columns={columns} value={op.email} onChange={(email) => set({ email })} placeholder="{{Email}}" />
+			<PromptField label="Profile URL (optional)" columns={columns} value={op.profileUrl} onChange={(profileUrl) => set({ profileUrl })} placeholder="{{Profile URL}}" />
+		</div>
+		<SocialWaterfallPicker platform={op.platform} value={op.providers} onChange={(providers) => set({ providers })} />
 	</>;
 }
 

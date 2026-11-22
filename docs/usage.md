@@ -21,15 +21,17 @@ While typing in an editor, the shortcuts undo text edits. Background enrichment 
 
 ### Column operations
 
-**Add → AI column** opens one composer: describe what you want and Enrichable picks the operation, or choose one yourself from six groups.
+**Add → AI column** opens one composer: describe what you want and Monid Enrich picks the operation, or choose one yourself. The Add column menu also has dedicated contact lookup columns.
 
 | Group | Operations | Services |
 | --- | --- | --- |
-| AI answer | **Ask AI** answers a question about each row, researching the web when it needs to. **Deep research** returns a sourced answer from many pages. **Email draft** writes a personalized email, or fills a template from columns. | OpenAI + Context.dev |
-| Classify | **True / false** returns a yes/no with a calibrated probability (it can read a page first). **Category** picks one of your options. **Score** rates rows on levels you define. | TypeSafe (or OpenAI) + Context.dev |
-| Web page | **Read a page** keeps page text, relevant passages, links or extracted fields. **Web search** keeps the top URL, title or snippet. | Context.dev |
-| Company & person | Firmographics, funding, links and socials for a company; title, employer, education and profiles for a person. | Context.dev |
-| Find email | **Work email** tries your email providers top to bottom and keeps the first work email found. **Verify email** (Hunter) and **Mobile & profile** (Prospeo) are optional. | Your email providers |
+| AI answer | **Ask AI** answers a question about each row, researching the web when it needs to. **Deep research** returns a sourced answer from many pages. **Email draft** writes a personalized email, or fills a template from columns. | OpenAI + Monid |
+| Classify | **True / false** returns a yes/no with a calibrated probability (it can read a page first). **Category** picks one of your options. **Score** rates rows on levels you define. | TypeSafe (or OpenAI) + Monid |
+| Web page | **Read a page** keeps page text, relevant passages, links or extracted fields. **Web search** keeps the top URL, title or snippet. | Monid |
+| Company & person | Firmographics, funding, links and socials for a company; title, employer, education and profiles for a person. | Monid |
+| Find email | **Work email** tries the selected Monid providers top to bottom and keeps the first work email found. | Monid workspace wallet |
+| Find phone number | Tries the selected Monid phone providers in order and keeps the first number found. | Monid workspace wallet |
+| Find social | Select LinkedIn, Instagram, Facebook, X, TikTok, or YouTube; search for a matching public profile with selected Monid providers. | Monid workspace wallet |
 | Formula | **Formula** calculates locally with a 10-row preview. **Text template** combines columns. No API calls. | None |
 
 Runs of more than 50 cells, or roughly 100+ credits, ask for confirmation with a cost estimate first.
@@ -81,15 +83,12 @@ as comma-separated references, suitable for functions such as SUM and AVERAGE.
 
 For self-hosting, enter your optional Logo Link public client ID in Configuration → Connections → Context.dev. Automatic Logo Link connection through Context.dev sign-in is available only on the official hosted service.
 
-## Hunter and Prospeo (optional)
+## Monid enrichment
 
-In Configuration → Connections, connect a Hunter or Prospeo API key. On enrichable.io, keys are encrypted server-side and shared across your team's members, devices, and MCP agents. Self-hosted browser workspaces retain local key storage. Private deployments can instead set `HUNTER_API_KEY` and `PROSPEO_API_KEY`, protected by the [deployment password](../README.md#api-keys).
+Connect a Monid API key in Configuration → Connections. Enrichment runs use the workspace Monid wallet; vendor credentials are not entered into Monid Enrich. Each column stores its provider order, and a waterfall advances only when a provider completes without a match. Errors and uncertain timeouts stop the chain to avoid submitting additional paid requests.
 
-Add an AI column and choose **Find email → Verify email** (Hunter) or **Find email → Mobile & profile** (Prospeo), or describe the lookup in the composer with the provider connected:
+- **Find email** offers QuickEnrich, Hunter, Apollo, Prospeo, and ContactOut through Monid. Add a person name and company domain; LinkedIn is optional for routes that support it.
+- **Find phone number** offers LeadMagic, Clay, AI Ark, Reverse Contact, and Prospeo through Monid. The provider list shows starting prices; actual run cost and Monid run IDs appear in cell details.
+- **Find social** supports LinkedIn, Instagram, Facebook, X, TikTok, and YouTube. Available Monid routes vary by network. Search results are checked against the requested profile host and person name before a URL is saved.
 
-- Hunter finds work email from `{{Name}}` + `{{Company website}}`, or verifies `{{Email}}` and returns a status such as `valid`, `invalid`, or `accept_all`.
-- Prospeo accepts a LinkedIn URL, email, or full name + company domain and returns email, mobile, name, title, employer, company domain, LinkedIn, or location. Verified email is required by default; turn it off to permit other matched profiles. Selecting mobile enables mobile enrichment and uses your Prospeo quota.
-
-Key validation uses free account endpoints. Enrichments use your own provider quota. Missing matches become empty cells; invalid credentials, exhausted quota, and transient rate limits produce cell errors. Provider usage is shown separately from Context.dev credits. No provider keys are stored with shared sheets.
-
-API references: [Hunter V2](https://hunter.io/api-documentation/v2), [Prospeo Enrich Person](https://prospeo.io/api-docs/enrich-person), [Prospeo account information](https://prospeo.io/api-docs/account-information).
+Unsupported networks such as Threads and Bluesky are not offered until a suitable Monid route is inspected and added. OpenAI reasoning remains a separate optional user key and is not used for these provider lookups.

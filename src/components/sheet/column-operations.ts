@@ -6,7 +6,7 @@ import type { Column, ColumnOp, EntityKind, FormulaSuggestion, OpKind, Sheet } f
 export type EditorKind = OpKind | 'formula';
 export type EditorOp = ColumnOp | FormulaSuggestion;
 export interface OperationChoice { kind: EditorKind; label: string; description: string; name: string }
-export interface OperationGroup { id: 'ai' | 'decide' | 'web' | 'data' | 'email' | 'formula'; label: string; choices: OperationChoice[] }
+export interface OperationGroup { id: 'ai' | 'decide' | 'web' | 'data' | 'email' | 'phone' | 'social' | 'formula'; label: string; choices: OperationChoice[] }
 
 /** A catalog operation as the picker shows it; `label` shortens the catalog label where the group already says what it is. */
 const choice = (kind: OpKind, label = OPERATIONS[kind].label): OperationChoice => ({ kind, label, name: OPERATIONS[kind].columnName, description: OPERATIONS[kind].description });
@@ -17,7 +17,9 @@ export const OPERATION_GROUPS: OperationGroup[] = [
 	{ id: 'decide', label: 'Classify', choices: [choice('check', 'True / false'), choice('classify', 'Category'), choice('score')] },
 	{ id: 'web', label: 'Web page', choices: [choice('scrape'), choice('search')] },
 	{ id: 'data', label: 'Company & person', choices: [choice('company', 'Company'), choice('person', 'Person')] },
-		{ id: 'email', label: 'Find email', choices: [choice('email-enrichment', 'Work email'), choice('hunter', 'Verify email'), choice('prospeo', 'Person details')] },
+	{ id: 'email', label: 'Find email', choices: [choice('email-enrichment', 'Work email'), choice('hunter', 'Verify email'), choice('prospeo', 'Person details')] },
+	{ id: 'phone', label: 'Find phone number', choices: [choice('phone-enrichment')] },
+	{ id: 'social', label: 'Find social', choices: [choice('social-enrichment')] },
 	{ id: 'formula', label: 'Formula', choices: [
 		{ kind: 'formula', label: 'Formula', name: 'Formula', description: 'Calculate or transform existing data locally, with a preview of up to 10 rows.' },
 		choice('template'),
@@ -54,6 +56,16 @@ export function defaultOp(kind: EditorKind, columns: Column[], jevAvailable: boo
 		case 'email-enrichment': {
 			const waterfall = defaultEmailWaterfall(columns);
 			return { ...waterfall, domain: waterfall.domain || domain };
+		}
+		case 'phone-enrichment': {
+			const person = columnRef(roleColumn(columns, 'person')?.name);
+			const company = columnRef(roleColumn(columns, 'company')?.name);
+			return { kind, name: person || [columnRef(roleColumn(columns, 'first-name')?.name), columnRef(roleColumn(columns, 'last-name')?.name)].filter(Boolean).join(' '), company, domain: domain, profileUrl: columnRef(roleColumn(columns, 'profile')?.name), email: columnRef(guessEmailColumn(columns)), providers: ['ai_ark', 'reversecontact'] };
+		}
+		case 'social-enrichment': {
+			const person = columnRef(roleColumn(columns, 'person')?.name);
+			const company = columnRef(roleColumn(columns, 'company')?.name);
+			return { kind, name: person || [columnRef(roleColumn(columns, 'first-name')?.name), columnRef(roleColumn(columns, 'last-name')?.name)].filter(Boolean).join(' '), company, domain, profileUrl: columnRef(roleColumn(columns, 'profile')?.name), email: columnRef(guessEmailColumn(columns)), platform: 'linkedin', providers: ['people_enrich', 'web_search'] };
 		}
 		case 'email-draft':
 			return { kind, mode: 'ai', prompt: seed || 'Draft a personalized email using this row.', to: columnRef(guessEmailColumn(columns)), cc: '', bcc: '', subject: '', body: '' };

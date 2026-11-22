@@ -196,7 +196,7 @@ function TextValue({ column, text }: { column: Column; text: string }) {
 	);
 }
 
-const isLinkColumn = ({ format, op }: Column) => format === 'url' || op?.kind === 'search' || (op?.kind === 'scrape' && op.mode === 'url');
+const isLinkColumn = ({ format, op }: Column) => format === 'url' || op?.kind === 'search' || op?.kind === 'social-enrichment' || (op?.kind === 'scrape' && op.mode === 'url');
 
 function runningLabel(column: Column): string {
 	switch (column.op?.kind) {
@@ -211,6 +211,8 @@ function runningLabel(column: Column): string {
 		case 'company':
 			return 'Looking up…';
 		case 'email-enrichment':
+		case 'phone-enrichment':
+		case 'social-enrichment':
 		case 'hunter':
 		case 'prospeo':
 		case 'person':

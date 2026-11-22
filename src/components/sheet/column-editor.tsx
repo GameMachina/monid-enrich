@@ -7,7 +7,7 @@ import { newColumn } from '@/lib/db';
 import { columnAddress } from '@/lib/formula-input';
 import type { RunEstimate } from '@/lib/run-cost';
 import { formatValue } from '@/lib/template';
-import { ColumnOpInputSchema, columnNameFromQuestion } from '@/lib/operations';
+import { ColumnOpInputSchema, columnNameFromQuestion, OPERATIONS } from '@/lib/operations';
 import { danglingReferences, nameTaken, uniqueName } from '@/lib/references';
 import type { RunPlan, SheetCommands } from '@/lib/sheet-commands';
 import type { Column, ColumnOp, Row, Sheet } from '@/lib/types';
@@ -138,18 +138,24 @@ function checkColumn(op: EditorOp, name: string, columns: Column[], others: Colu
 }
 
 /** Only the prompt shows for a new column until AI picks an operation or the user opens setup. */
-function isComposerOnly(column: Column | undefined, dedicatedEmail: boolean, step: Step) {
-	if (column || dedicatedEmail) return false;
+function isDedicatedContact(kind: ColumnOp['kind'] | undefined) {
+	return kind === 'email-enrichment' || kind === 'phone-enrichment' || kind === 'social-enrichment';
+}
+
+function isComposerOnly(column: Column | undefined, dedicatedContact: boolean, step: Step) {
+	if (column || dedicatedContact) return false;
 	return step.step === 'ask' || (step.step === 'composing' && step.from === 'ask');
 }
 
-function editorTitle(column: Column | undefined, dedicatedEmail: boolean) {
+function editorTitle(column: Column | undefined, dedicatedKind: ColumnOp['kind'] | undefined) {
+	if (column && isDedicatedContact(dedicatedKind)) return `Edit ${OPERATIONS[dedicatedKind!].label.toLowerCase()}`;
 	if (column) return 'Edit AI column';
-	return dedicatedEmail ? 'Find email' : 'Add AI column';
+	return isDedicatedContact(dedicatedKind) ? OPERATIONS[dedicatedKind!].label : 'Add AI column';
 }
 
-function editorSize(dedicatedEmail: boolean, kind: EditorKind) {
-	if (dedicatedEmail) return 'sm';
+function editorSize(dedicatedKind: ColumnOp['kind'] | undefined, kind: EditorKind) {
+	if (dedicatedKind === 'email-enrichment') return 'sm';
+	if (dedicatedKind === 'phone-enrichment' || dedicatedKind === 'social-enrichment') return 'lg';
 	return kind === 'formula' ? 'xl' : 'lg';
 }
 
@@ -160,7 +166,7 @@ type ColumnWrites = Pick<SheetCommands, 'addColumns' | 'editColumn'>;
 function savedColumn(column: Column | undefined, name: string, op: ColumnOp, defaultPhoneStrategy: PhoneProviderStrategy): Column {
 	const savedOp = withPhoneStrategy(op, defaultPhoneStrategy);
 	if (column) return { ...column, name, op: savedOp };
-	return newColumn({ name, type: 'enriched', op: savedOp, ...(savedOp.kind === 'email-enrichment' ? { format: 'email' as const } : {}), width: savedOp.kind === 'scrape' && savedOp.mode === 'markdown' ? 320 : 220 });
+	return newColumn({ name, type: 'enriched', op: savedOp, ...(savedOp.kind === 'email-enrichment' ? { format: 'email' as const } : savedOp.kind === 'social-enrichment' ? { format: 'url' as const } : {}), width: savedOp.kind === 'scrape' && savedOp.mode === 'markdown' ? 320 : 220 });
 }
 
 /** Add or edit an AI column: describe it in plain English (AI picks the operation) or set it up by hand. */
@@ -168,7 +174,7 @@ export function ColumnEditorDialog({ sheet, column, sampleRow, rows, insertAt, i
 	const { hasJev, settings, memberPreferences } = useSettings();
 	const jevAvailable = hasJev && settings.preferJev;
 	const allowedPhoneProviders = settings.mobilePhoneProviders?.length ? settings.mobilePhoneProviders : ['leadmagic', 'clay'];
-	const dedicatedEmail = initialOp?.kind === 'email-enrichment' || column?.op?.kind === 'email-enrichment';
+	const dedicatedKind = isDedicatedContact(initialOp?.kind) ? initialOp?.kind : isDedicatedContact(column?.op?.kind) ? column?.op?.kind : undefined;
 	const columnOptions = useMemo(() => sheet.columns.filter((entry) => entry.id !== column?.id), [sheet.columns, column?.id]);
 	const formulaColumn = useMemo(() => newColumn({ name: 'Formula', type: 'source' }), []);
 	const formulaColumns = useMemo(() => [...sheet.columns.slice(0, insertAt ?? sheet.columns.length), formulaColumn, ...sheet.columns.slice(insertAt ?? sheet.columns.length)], [sheet.columns, insertAt, formulaColumn]);
@@ -177,7 +183,7 @@ export function ColumnEditorDialog({ sheet, column, sampleRow, rows, insertAt, i
 	const draft = useColumnComposer({ sheet, column, initialOp, initialName, sampleRow, jevAvailable, columnOptions, formulaColumns, formulaColumn, onReplace: () => setSubmit({ state: 'idle' }), setError });
 	const { op, name } = draft;
 	const composing = draft.step.step === 'composing';
-	const composerOnly = isComposerOnly(column, dedicatedEmail, draft.step);
+	const composerOnly = isComposerOnly(column, Boolean(dedicatedKind), draft.step);
 	const candidateOp = op.kind === 'formula' && 'request' in op ? op : withPhoneStrategy(op as ColumnOp, memberPreferences.defaultPhoneStrategy);
 	const { validation, dangling, duplicateName } = checkColumn(candidateOp, name, sheet.columns, columnOptions);
 	const routeAllowed = op.kind === 'formula' && 'request' in op || phoneStrategyAllowed(candidateOp as ColumnOp, memberPreferences.defaultPhoneStrategy, allowedPhoneProviders);
@@ -220,10 +226,10 @@ export function ColumnEditorDialog({ sheet, column, sampleRow, rows, insertAt, i
 	return (
 		<Dialog
 			unframed={composerOnly}
-			title={editorTitle(column, dedicatedEmail)}
+			title={editorTitle(column, dedicatedKind)}
 			description={column ? 'Change how this column fills, then save or re-run it.' : undefined}
 			onClose={onClose}
-			size={editorSize(dedicatedEmail, op.kind)}
+			size={editorSize(dedicatedKind, op.kind)}
 			footer={footer}
 			footerNote={footerNote}
 		>
@@ -231,7 +237,7 @@ export function ColumnEditorDialog({ sheet, column, sampleRow, rows, insertAt, i
 				<InlineWarning message={error} />
 				{composerOnly && <Composer ask={draft.ask} onAsk={draft.setAsk} columns={columnOptions} composing={composing} disabled={composing || saving} onCompose={composeAsk} onSetup={draft.openSetup} onClose={onClose} />}
 				{!composerOnly && <>
-					{!dedicatedEmail && <SetupHeader step={draft.step} ask={draft.ask} editing={Boolean(column)} busy={composing || saving} kind={op.kind} onKind={draft.switchKind} onDescribe={draft.describe} canTemplate={column?.op?.kind === 'template'} />}
+					{!dedicatedKind && <SetupHeader step={draft.step} ask={draft.ask} editing={Boolean(column)} busy={composing || saving} kind={op.kind} onKind={draft.switchKind} onDescribe={draft.describe} canTemplate={column?.op?.kind === 'template'} />}
 					{op.kind === 'formula'
 						? <FormulaStep key={draft.composed.version} sheet={sheet} columns={formulaColumns} rows={rows} formulaColumn={formulaColumn} taken={columnOptions} insertAt={insertAt} composing={composing} composed={draft.composed} request={op.request} name={name} commands={commands} onClose={onClose} onSaved={onSaved} onFallback={() => void draft.compose(true, draft.composed.formulaAsk, 'setup')} />
 						: <OpSetup version={draft.composed.version} op={op} onChange={draft.replaceOp} columns={columnOptions} sheetColumns={sheet.columns} jevAvailable={jevAvailable} name={name} onName={draft.editName} duplicateName={duplicateName} />}

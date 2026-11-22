@@ -28,7 +28,7 @@ import { organizationKind } from '@/lib/organization-logo';
 
 type SaveCell = (rowId: string, columnId: string, cell: Cell) => Promise<void>;
 
-const PROVIDER_NAMES: Record<EmailProvider, string> = { monid: 'Monid', hunter: 'Monid', prospeo: 'Monid', quickenrich: 'Monid', apollo: 'Monid', contactout: 'Monid' };
+const PROVIDER_NAMES: Record<EmailProvider | 'leadmagic' | 'clay' | 'ai_ark' | 'reversecontact', string> = { monid: 'Monid', hunter: 'Monid', prospeo: 'Monid', quickenrich: 'Monid', apollo: 'Monid', contactout: 'Monid', leadmagic: 'Monid', clay: 'Monid', ai_ark: 'Monid', reversecontact: 'Monid' };
 const subscribeNothing = () => () => {};
 const isBusy = (cell: Cell | undefined) => cell?.s === 'running' || cell?.s === 'queued';
 const panelWidth = (document: boolean, wide: boolean) => document ? 'w-[540px]' : wide ? 'w-[440px]' : 'w-[340px]';
@@ -277,7 +277,7 @@ function UsageSection({ cell }: { cell: Cell | undefined }) {
 		<section className="flex flex-col gap-1 text-caption text-fg-subtle tabular">
 			{meta.credits !== undefined && <span>{meta.credits} Monid credit{plural(meta.credits)}</span>}
 			{meta.monidRuns?.map((run) => <span key={run.runId ?? `${run.provider}:${run.endpoint}`} title={run.runId ? `Monid run ${run.runId}` : undefined}>{monidRunLabel(run.endpoint)} · {run.status}{run.costUsd !== undefined ? ` · $${run.costUsd.toFixed(4)}` : ''}{run.billedUnits !== undefined ? ` · ${run.billedUnits} units` : ''}</span>)}
-			{meta.enrichment && <span>Included credit used: ${meta.enrichment.costUsd.toFixed(4)}</span>}
+			{meta.enrichment && <span>Monid workspace spent: ${meta.enrichment.costUsd.toFixed(4)}</span>}
 			{meta.provider && !meta.enrichment && <span>{PROVIDER_NAMES[meta.provider]}{providerUsage(meta)}</span>}
 			{meta.durationMs !== undefined && <span>{(meta.durationMs / 1000).toFixed(1)} s</span>}
 			{cell?.t && <LocalTime time={cell.t} />}

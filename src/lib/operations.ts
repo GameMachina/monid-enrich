@@ -1,6 +1,7 @@
 import type { Provider } from './organization-settings';
 import { ColumnOpSchema, type ColumnOp, type FailureProvider, type OpKind, type PageSource } from './types';
 import { PHONE_STRATEGY_INFO, type PhoneProviderStrategy } from './phone-strategy';
+import { SOCIAL_WATERFALL_PROVIDERS } from './social-platform';
 
 /* The operation catalog: one record per operation kind, describing it to every caller (editor, runner, freshness,
    cost estimates, MCP, compose and the server executor). Add a kind here and the rest of the app picks it up. */
@@ -60,6 +61,21 @@ const mobileDefinitionIssue = (op: { name?: string; company?: string; domain?: s
 	if (providers.includes('clay') && providers.length === 1) return { field: 'profileUrl', message: 'Clay needs a full name, current company, and LinkedIn profile URL.' };
 	return { field: 'profileUrl', message: 'Add a LinkedIn profile or email for LeadMagic, or a full name, current company, and LinkedIn profile for Clay.' };
 };
+const phoneWaterfallIssue = (op: { name: string; company: string; domain: string; profileUrl: string; email: string; providers: readonly string[] }) => {
+	const name = Boolean(op.name.trim()), company = Boolean(op.company.trim()), domain = Boolean(op.domain.trim()), profile = Boolean(op.profileUrl.trim()), email = Boolean(op.email.trim());
+	const usable = op.providers.some((provider) => {
+		switch (provider) {
+			case 'leadmagic': return profile || email;
+			case 'clay': return profile && name && (company || domain);
+			case 'ai_ark': case 'reversecontact': return profile || name && domain;
+			case 'prospeo': return profile || email || name && (company || domain);
+			default: return false;
+		}
+	});
+	return usable ? null : { field: 'profileUrl', message: 'Add the identifiers needed by a selected provider: a LinkedIn URL or email, or a name with a company domain.' };
+};
+const phoneWaterfallWorstCase = (op: { providers: readonly string[] }) => op.providers.reduce((sum, provider) => sum + (provider === 'clay' ? 180_000 : provider === 'prospeo' ? 90_000 : 60_000), 0);
+const socialWaterfallWorstCase = (op: { providers: readonly string[] }) => op.providers.reduce((sum, provider) => sum + (provider === 'apify' ? 180_000 : provider === 'ploid' ? 60_000 : 45_000), 0);
 
 export const OPERATIONS: { readonly [K in OpKind]: Operation<K> } = {
 	'email-enrichment': {
@@ -67,6 +83,25 @@ export const OPERATIONS: { readonly [K in OpKind]: Operation<K> } = {
 		description: 'Find a work email from a person name and company using the connected Monid workspace.',
 		references: ['name', 'company', 'domain', 'profileUrl'], rowContext: references, local: remote,
 		requires: () => [MONID], credits: free, worstCaseMs: () => 120_000, bills: 'monid',
+	},
+	'phone-enrichment': {
+		label: 'Find phone number', short: 'Phone', columnName: 'Mobile Number',
+		description: 'Find a person’s phone number with an ordered set of Monid providers.',
+		references: ['name', 'company', 'domain', 'profileUrl', 'email'], rowContext: references, local: remote,
+		requires: () => [MONID], credits: free, worstCaseMs: phoneWaterfallWorstCase, bills: 'monid',
+		issue: phoneWaterfallIssue,
+	},
+	'social-enrichment': {
+		label: 'Find social', short: 'Social', columnName: 'Social profile',
+		description: 'Find one person’s public profile on a selected social network using Monid providers.',
+		references: ['name', 'company', 'domain', 'profileUrl', 'email'], rowContext: references, local: remote,
+		requires: () => [MONID], credits: free, worstCaseMs: socialWaterfallWorstCase, bills: 'monid',
+		issue: (op) => {
+			if (!op.name.trim()) return { field: 'name', message: 'Add a person’s name to find their social profile.' };
+			const supported = SOCIAL_WATERFALL_PROVIDERS[op.platform] as readonly string[];
+			if (op.providers.some((provider) => !supported.includes(provider))) return { field: 'providers', message: `Choose providers that support ${op.platform}.` };
+			return null;
+		},
 	},
 	'email-draft': {
 		label: 'Email draft', short: 'Email draft', columnName: 'Email draft',

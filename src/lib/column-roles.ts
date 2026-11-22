@@ -46,6 +46,7 @@ function declaredRole(op: ColumnOp | undefined): ColumnRole | null | undefined {
 		case 'company': return op.field === 'title' ? 'company' : null;
 		case 'person': case 'prospeo': return BY_FIELD[op.field] ?? null;
 		case 'email-enrichment': return 'email';
+		case 'social-enrichment': return 'profile';
 		case 'hunter': return op.action === 'find' ? 'email' : null;
 		case 'scrape': return op.mode === 'url' ? 'webpage' : undefined;
 		default: return undefined;
