@@ -4,11 +4,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import Link from 'next/link';
 import clsx from 'clsx';
-import { ArrowLeft, CheckCircle2, ExternalLink, KeyRound, Search, Unplug } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, Copy, ExternalLink, KeyRound, Search, Unplug } from 'lucide-react';
 import { accountHeaders } from '@/lib/account-storage';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog, Dialog } from '@/components/ui/dialog';
-import { Field, Input, Segmented, Select } from '@/components/ui/field';
+import { Field, Input, Segmented, Select, Textarea } from '@/components/ui/field';
 import { useToast } from '@/components/ui/toast';
 import { useSettings } from './settings-context';
 
@@ -23,6 +23,8 @@ type TregConnection = {
 };
 type TregResource = { ref: string; name: string; detail: string };
 type DirectoryTab = 'all' | 'account' | 'key';
+type TregOAuthCredentials = { clientId: string; clientSecret: string; authUri: string; tokenUri: string; scopes: string[]; redirectUri: string };
+type OAuthStartResult = { ok: true } | { ok: false; error: string };
 
 async function readJson<T>(response: Response, fallback: string): Promise<T> {
 	const body = await response.json().catch(() => null) as (T & { error?: string }) | null;
@@ -55,6 +57,7 @@ export function TregConnectionsPage() {
 	const [search, setSearch] = useState('');
 	const [tab, setTab] = useState<DirectoryTab>('all');
 	const [editing, setEditing] = useState<TregProvider | null>(null);
+	const [oauthSetup, setOAuthSetup] = useState<TregProvider | null>(null);
 	const [disconnecting, setDisconnecting] = useState<TregConnection | null>(null);
 	const [error, setError] = useState('');
 	const [pendingOAuth, setPendingOAuth] = useState<{ state: string; service: string; url: string; popupOpened: boolean } | null>(null);
@@ -149,18 +152,21 @@ export function TregConnectionsPage() {
 		(result[provider.category] ??= []).push(provider); return result;
 	}, {}), [filtered]);
 
-	async function startOAuth(provider: TregProvider) {
+	async function startOAuth(provider: TregProvider, credentials?: TregOAuthCredentials) {
 		setError('');
 		const popup = window.open('about:blank', '_blank', 'popup,width=720,height=760');
 		popupRef.current = popup;
 		try {
-			const response = await fetch('/api/treg/connections/oauth', { method: 'POST', headers: { ...accountHeaders(), 'content-type': 'application/json' }, body: JSON.stringify({ service: provider.service, ...(provider.capability ? { capability: provider.capability } : {}), name: provider.displayName }) });
+			const response = await fetch('/api/treg/connections/oauth', { method: 'POST', headers: { ...accountHeaders(), 'content-type': 'application/json' }, body: JSON.stringify({ service: provider.service, ...(provider.capability ? { capability: provider.capability } : {}), name: provider.displayName, ...(credentials ?? {}) }) });
 			const data = await readJson<{ authorizationUrl: string; state: string }>(response, `Could not start ${provider.displayName} authorization.`);
 			if (popup) popup.location.assign(data.authorizationUrl);
 			setPendingOAuth({ state: data.state, service: provider.service, url: data.authorizationUrl, popupOpened: Boolean(popup) });
+			return { ok: true } as const;
 		} catch (cause) {
 			popup?.close(); popupRef.current = null;
-			setError(cause instanceof Error ? cause.message : `Could not start ${provider.displayName} authorization.`);
+			const message = cause instanceof Error ? cause.message : `Could not start ${provider.displayName} authorization.`;
+			setError(message);
+			return { ok: false, error: message } as const;
 		}
 	}
 
@@ -264,14 +270,15 @@ export function TregConnectionsPage() {
 						{items.map((provider) => {
 							const oauth = usesOAuth(provider);
 							const attached = connectedByService[provider.service] ?? [];
-							const unavailable = provider.enabled === false || oauth && provider.configured === false;
+							const registryOAuthReady = provider.enabled !== false && provider.configured !== false;
+							const unavailable = !oauth && provider.enabled === false;
 							return <article key={provider.service} className="flex min-w-0 flex-col justify-between gap-3 rounded-xl border border-line-subtle bg-surface px-3.5 py-3 shadow-[0_2px_3px_-2px_rgb(0_0_0/0.06)] sm:flex-row sm:items-center">
 								<div className="flex min-w-0 items-center gap-3">
 									<span className="grid size-9 shrink-0 place-items-center rounded-lg border border-line-subtle bg-surface-secondary text-[12px] font-semibold text-fg-muted">{provider.displayName.slice(0, 1).toUpperCase()}</span>
-									<div className="min-w-0"><h4 className="truncate text-body-sm font-medium text-fg">{provider.displayName}</h4><p className="truncate text-caption text-fg-subtle">{attached.length ? `${attached.length} connected · ${provider.summary}` : oauth ? 'Your account' : 'API key'}{!attached.length && provider.summary ? ` · ${provider.summary}` : ''}</p></div>
+									<div className="min-w-0"><h4 className="truncate text-body-sm font-medium text-fg">{provider.displayName}</h4><p className="truncate text-caption text-fg-subtle">{attached.length ? `${attached.length} connected · ${provider.summary}` : oauth ? 'Your account' : 'API key'}{!attached.length && provider.summary ? ` · ${provider.summary}` : !attached.length && oauth && !registryOAuthReady ? ' · Use your OAuth app' : ''}</p></div>
 								</div>
-								{attached.length ? <span className="inline-flex shrink-0 items-center gap-1 text-caption text-success"><CheckCircle2 aria-hidden="true" className="size-3.5" />Connected</span> : unavailable ? <span className="max-w-40 text-right text-caption text-fg-subtle">{provider.enabled === false ? 'Unavailable in Treg' : 'Treg account connection is not configured'}</span> : <Button size="xs" onClick={() => oauth ? void startOAuth(provider) : setEditing(provider)} disabled={!tregReady || Boolean(pendingOAuth)} title={!tregReady ? 'Connect Treg first' : undefined}>
-									{oauth ? <><ExternalLink aria-hidden="true" className="size-3.5" />Connect account</> : <><KeyRound aria-hidden="true" className="size-3.5" />Connect account</>}
+								{attached.length ? <span className="inline-flex shrink-0 items-center gap-1 text-caption text-success"><CheckCircle2 aria-hidden="true" className="size-3.5" />Connected</span> : unavailable ? <span className="max-w-40 text-right text-caption text-fg-subtle">Unavailable in Treg</span> : <Button size="xs" onClick={() => oauth ? registryOAuthReady ? void startOAuth(provider) : setOAuthSetup(provider) : setEditing(provider)} disabled={!tregReady || Boolean(pendingOAuth)} title={!tregReady ? 'Connect Treg first' : undefined}>
+									{oauth ? <><ExternalLink aria-hidden="true" className="size-3.5" />{registryOAuthReady ? 'Connect account' : 'Set up OAuth'}</> : <><KeyRound aria-hidden="true" className="size-3.5" />Connect account</>}
 								</Button>}
 							</article>;
 						})}
@@ -288,8 +295,59 @@ export function TregConnectionsPage() {
 		</div>
 
 		{editing && <TregTokenDialog provider={editing} onClose={() => setEditing(null)} onConnected={async () => { setEditing(null); await refreshConnections(); toast(`${editing.displayName} connected to Treg.`, 'success'); }} />}
+		{oauthSetup && <TregOAuthDialog provider={oauthSetup} onClose={() => setOAuthSetup(null)} onStart={(credentials) => startOAuth(oauthSetup, credentials)} />}
 		{disconnecting && <ConfirmDialog title={`Disconnect ${disconnecting.displayName}?`} description="Treg removes this connection from your Treg team. Future calls will stop using its credential." confirmLabel="Disconnect" danger onClose={() => setDisconnecting(null)} onConfirm={() => disconnect(disconnecting)} />}
 	</div>;
+}
+
+function TregOAuthDialog({ provider, onClose, onStart }: { provider: TregProvider; onClose: () => void; onStart: (credentials: TregOAuthCredentials) => Promise<OAuthStartResult> }) {
+	const [clientId, setClientId] = useState('');
+	const [clientSecret, setClientSecret] = useState('');
+	const [authUri, setAuthUri] = useState('');
+	const [tokenUri, setTokenUri] = useState('');
+	const [scopesText, setScopesText] = useState('');
+	const [redirectUri, setRedirectUri] = useState('https://treg.to/oauth/callback');
+	const [busy, setBusy] = useState(false);
+	const [copied, setCopied] = useState(false);
+	const [error, setError] = useState('');
+	const scopes = scopesText.split(/[\n,]/).map((scope) => scope.trim()).filter(Boolean);
+	const canSubmit = Boolean(clientId.trim() && clientSecret && authUri.trim() && tokenUri.trim() && scopes.length && redirectUri.trim());
+
+	async function copyRedirectUri() {
+		try { await navigator.clipboard.writeText(redirectUri); setCopied(true); window.setTimeout(() => setCopied(false), 1600); }
+		catch { setError('Could not copy the redirect URI. Select and copy it manually.'); }
+	}
+
+	async function submit(event: FormEvent<HTMLFormElement>) {
+		event.preventDefault();
+		if (!canSubmit || busy) return;
+		setBusy(true); setError('');
+		try {
+			const result = await onStart({ clientId: clientId.trim(), clientSecret, authUri: authUri.trim(), tokenUri: tokenUri.trim(), scopes, redirectUri: redirectUri.trim() });
+			if (result.ok) { setClientSecret(''); onClose(); }
+			else setError(result.error);
+		} catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not start OAuth.'); }
+		finally { setBusy(false); }
+	}
+
+	return <Dialog title={`Connect ${provider.displayName}`} description="Treg’s hosted OAuth app is not enabled for this provider. Connect through your own OAuth app; Treg handles the authorization and stores the resulting connection for your team." onClose={() => { if (!busy) onClose(); }} size="lg" footer={<><Button size="sm" disabled={busy} onClick={onClose}>Cancel</Button><Button size="sm" variant="brand" type="submit" form="treg-oauth-form" loading={busy} disabled={!canSubmit}>Continue to {provider.displayName}</Button></>}>
+		<form id="treg-oauth-form" onSubmit={(event) => void submit(event)} className="flex flex-col gap-4">
+			<div className="rounded-lg border border-line-subtle bg-surface-secondary px-3.5 py-3 text-caption text-fg-muted">
+				<p className="font-medium text-fg">Add this redirect URI to your OAuth app</p>
+				<div className="mt-2 flex items-center gap-2"><code className="min-w-0 flex-1 break-all rounded-md bg-surface px-2.5 py-2 text-[12px] text-fg">{redirectUri}</code><Button size="xs" onClick={() => void copyRedirectUri()}><Copy aria-hidden="true" className="size-3.5" />{copied ? 'Copied' : 'Copy'}</Button></div>
+			</div>
+			<div className="grid gap-3 sm:grid-cols-2">
+				<Field label="OAuth client ID" required>{(id) => <Input id={id} value={clientId} autoComplete="off" spellCheck={false} onChange={(event) => setClientId(event.target.value)} />}</Field>
+				<Field label="OAuth client secret" required>{(id) => <Input id={id} type="password" value={clientSecret} autoComplete="new-password" spellCheck={false} onChange={(event) => setClientSecret(event.target.value)} />}</Field>
+				<Field label="Authorization URL" required help="The provider's OAuth authorization endpoint from its developer documentation.">{(id) => <Input id={id} type="url" placeholder="https://…" value={authUri} onChange={(event) => setAuthUri(event.target.value)} />}</Field>
+				<Field label="Token URL" required help="The provider's OAuth token endpoint used by Treg to exchange the authorization code.">{(id) => <Input id={id} type="url" placeholder="https://…" value={tokenUri} onChange={(event) => setTokenUri(event.target.value)} />}</Field>
+			</div>
+			<Field label="OAuth scopes" required help="Enter the exact scopes enabled for your OAuth app, one per line. These determine what the connected account can do.">{(id) => <Textarea id={id} rows={3} value={scopesText} placeholder={'profile.read\nposts.read'} onChange={(event) => setScopesText(event.target.value)} />}</Field>
+			<Field label="Redirect URI" required help="Use the same URI in the provider's OAuth app settings.">{(id) => <Input id={id} type="url" value={redirectUri} onChange={(event) => setRedirectUri(event.target.value)} />}</Field>
+			<p className="text-caption text-fg-subtle">Your OAuth client secret is sent to Treg to start the consent flow and is not saved by this app. Treg stores the connected account for your Treg team. Upstream provider and Treg billing are separate.</p>
+			{error && <p role="alert" className="rounded-lg border border-danger/20 bg-danger-soft px-3 py-2 text-body-sm text-danger">{error}</p>}
+		</form>
+	</Dialog>;
 }
 
 function TregTokenDialog({ provider, onClose, onConnected }: { provider: TregProvider; onClose: () => void; onConnected: () => Promise<void> }) {
