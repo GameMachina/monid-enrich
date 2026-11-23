@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import clsx from 'clsx';
 import { ArrowLeft, CheckCircle2, Copy, ExternalLink, KeyRound, Search, Unplug } from 'lucide-react';
 import { accountHeaders } from '@/lib/account-storage';
@@ -42,6 +43,13 @@ function statusLabel(connection: TregConnection) {
 	if (status.includes('expired') || status.includes('error') || status.includes('invalid')) return { label: 'Needs attention', className: 'text-danger' };
 	if (status.includes('pending')) return { label: 'Pending', className: 'text-warning' };
 	return { label: 'Connected', className: 'text-success' };
+}
+
+function TregProviderLogo({ service, displayName }: { service: string; displayName: string }) {
+	return <span aria-hidden="true" className="relative grid size-9 shrink-0 place-items-center overflow-hidden rounded-lg border border-line-subtle bg-white text-[12px] font-semibold text-fg-muted">
+		<span>{displayName.slice(0, 1).toUpperCase()}</span>
+		<Image src={`/providers/treg/${service}.svg`} alt="" width={28} height={28} unoptimized className="absolute size-7 object-contain" onError={(event) => { event.currentTarget.style.display = 'none'; }} />
+	</span>;
 }
 
 export function TregConnectionsPage() {
@@ -233,7 +241,7 @@ export function TregConnectionsPage() {
 						const resourcePlural = connection.resourcePlural || provider?.resourcePlural;
 						return <li key={connection.secretId} className="flex flex-col gap-2 py-3 sm:flex-row sm:items-start">
 							<div className="flex min-w-0 flex-1 items-start gap-3">
-								<span className="grid size-9 shrink-0 place-items-center rounded-lg border border-line-subtle bg-surface-secondary text-[12px] font-semibold text-fg-muted">{connection.displayName.slice(0, 1).toUpperCase()}</span>
+								<TregProviderLogo service={connection.service} displayName={connection.displayName} />
 								<div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-x-2"><span className="text-body-sm font-medium text-fg">{connection.name || connection.displayName}</span><span className={clsx('inline-flex items-center gap-1 text-caption', status.className)}><CheckCircle2 aria-hidden="true" className="size-3.5" />{status.label}</span></div>
 									<p className="truncate text-caption text-fg-subtle">{connection.displayName}{connection.identity ? ` · ${connection.identity}` : ''}{connection.expiresAt ? ` · expires ${new Date(connection.expiresAt).toLocaleDateString()}` : ''}</p>
 									{connection.resource?.name && <p className="text-caption text-fg-subtle">Using {connection.resource.name}</p>}
@@ -282,11 +290,11 @@ export function TregConnectionsPage() {
 							const registryOAuthReady = provider.configured !== false;
 							return <article key={provider.service} className="flex min-w-0 flex-col justify-between gap-3 rounded-xl border border-line-subtle bg-surface px-3.5 py-3 shadow-[0_2px_3px_-2px_rgb(0_0_0/0.06)] sm:flex-row sm:items-center">
 								<div className="flex min-w-0 items-center gap-3">
-									<span className="grid size-9 shrink-0 place-items-center rounded-lg border border-line-subtle bg-surface-secondary text-[12px] font-semibold text-fg-muted">{provider.displayName.slice(0, 1).toUpperCase()}</span>
-									<div className="min-w-0"><h4 className="truncate text-body-sm font-medium text-fg">{provider.displayName}</h4><p className="truncate text-caption text-fg-subtle">{attached.length ? `${attached.length} connected · ${provider.summary}` : oauth ? 'Your account' : 'API key'}{!attached.length && provider.summary ? ` · ${provider.summary}` : !attached.length && oauth && !registryOAuthReady ? ' · Use your OAuth app' : ''}</p></div>
+									<TregProviderLogo service={provider.service} displayName={provider.displayName} />
+									<div className="min-w-0"><h4 className="truncate text-body-sm font-medium text-fg">{provider.displayName}</h4><p className="truncate text-caption text-fg-subtle">{attached.length ? `${attached.length} connected · ${provider.summary}` : oauth ? 'Your account' : provider.tokenLabel || 'API key'}{!attached.length && provider.summary ? ` · ${provider.summary}` : !attached.length && oauth && !registryOAuthReady ? ' · Use your OAuth app' : ''}</p></div>
 								</div>
 								{attached.length ? <span className="inline-flex shrink-0 items-center gap-1 text-caption text-success"><CheckCircle2 aria-hidden="true" className="size-3.5" />Connected</span> : <Button size="xs" onClick={() => oauth ? registryOAuthReady ? void startOAuth(provider) : setOAuthSetup(provider) : setEditing(provider)} disabled={!tregReady || Boolean(pendingOAuth)} title={!tregReady ? 'Connect Treg first' : undefined}>
-									{oauth ? <><ExternalLink aria-hidden="true" className="size-3.5" />{registryOAuthReady ? 'Connect account' : 'Set up OAuth'}</> : <><KeyRound aria-hidden="true" className="size-3.5" />Connect account</>}
+									{oauth ? <><ExternalLink aria-hidden="true" className="size-3.5" />{registryOAuthReady ? 'Connect account' : 'Set up OAuth'}</> : <><KeyRound aria-hidden="true" className="size-3.5" />Add key</>}
 								</Button>}
 							</article>;
 						})}
@@ -383,7 +391,7 @@ function TregTokenDialog({ provider, onClose, onConnected }: { provider: TregPro
 		finally { setBusy(false); }
 	}
 
-	return <Dialog title={`Connect ${provider.displayName}`} description={`Treg verifies this credential with ${provider.displayName} before saving it. The key is sent to Treg and is not stored in this app.`} onClose={() => { if (!busy) onClose(); }} size="md" footer={<><Button size="sm" disabled={busy} onClick={onClose}>Cancel</Button><Button size="sm" variant="brand" type="submit" form="treg-token-form" loading={busy} disabled={!canSubmit}>Connect</Button></>}>
+	return <Dialog title={`Add key for ${provider.displayName}`} description={`Treg verifies this credential with ${provider.displayName} before saving it. The key is sent to Treg and is not stored in this app.`} onClose={() => { if (!busy) onClose(); }} size="md" footer={<><Button size="sm" disabled={busy} onClick={onClose}>Cancel</Button><Button size="sm" variant="brand" type="submit" form="treg-token-form" loading={busy} disabled={!canSubmit}>Add key</Button></>}>
 		<form id="treg-token-form" onSubmit={(event) => void save(event)} className="flex flex-col gap-3">
 			<Field label={provider.tokenLabel} required>{(id) => <Input id={id} type="password" autoComplete="off" spellCheck={false} autoFocus value={token} placeholder={provider.tokenPlaceholder} onChange={(event) => setToken(event.target.value)} />}</Field>
 			{provider.needsExtraCredential && <Field label={provider.extraCredentialLabel} required help={provider.extraCredentialNote}>{(id) => <Input id={id} type="password" autoComplete="off" spellCheck={false} value={extra} onChange={(event) => setExtra(event.target.value)} />}</Field>}
