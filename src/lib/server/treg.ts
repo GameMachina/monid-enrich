@@ -7,7 +7,7 @@ import { renderTemplate, toDomain, toUrl } from '../template';
 import type { CellMeta, CellValue, ColumnOp, DataProvider, EnrichResponse } from '../types';
 import { EnrichError, failure, httpFailure, inputError } from './enrich-failure';
 import type { ProviderAccess } from './provider-access';
-import { withDatabase } from './database';
+import { withDatabase, workspaceId } from './database';
 
 const API = 'https://treg.to';
 const IDEMPOTENCY_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -126,15 +126,44 @@ async function persistReceipt(actor: Account | undefined, receipt: TregReceipt, 
 	}
 }
 
-function responseFailure(status: number, message: string) {
+function responseFailure(status: number, message: string, data?: unknown) {
+	const root = obj(data), detail = obj(root.detail);
+	const code = str(root.error ?? root.code ?? detail.error ?? detail.code).toLowerCase();
+	if (code === 'insufficient_balance' || code === 'funds_required' || status === 402 || /insufficient balance|insufficient funds|quota/i.test(message)) {
+		const error = new EnrichError('Treg cannot complete this request because the Treg team needs available funds. Check Treg billing in Configuration.', failure('credits_exhausted', 'treg'));
+		Object.defineProperty(error, 'status', { value: status, enumerable: true });
+		return error;
+	}
+	if (code === 'platform_daily_cap_reached' || code === 'tag_spend_cap_reached') {
+		const error = new EnrichError(code === 'tag_spend_cap_reached' ? 'This workspace has reached its Treg spending limit for the current period.' : 'Treg’s platform daily spending limit has been reached. Try again later or check with the Treg team administrator.', failure('rate_limited', 'treg'));
+		Object.defineProperty(error, 'status', { value: status, enumerable: true });
+		return error;
+	}
+	if (code === 'tag_blocked') {
+		const error = new EnrichError('Treg has blocked provider calls for this workspace. Check the Treg team settings.', failure('provider_error', 'treg', false));
+		Object.defineProperty(error, 'status', { value: status, enumerable: true });
+		return error;
+	}
 	const parsed = httpFailure(status, 'treg', message);
 	const error = status === 401 || status === 403
 		? new EnrichError('Treg rejected this API key. Reconnect Treg in Configuration.', parsed)
-		: status === 402 || /insufficient balance|insufficient funds|quota/i.test(message)
-			? new EnrichError('Treg reported insufficient team balance or quota. Check the separate Treg billing state in Configuration.', failure('credits_exhausted', 'treg'))
+		: status === 429
+			? new EnrichError('Treg is rate-limiting requests. Try again later.', parsed)
 			: new EnrichError(message || `Treg request failed (${status}).`, parsed);
 	Object.defineProperty(error, 'status', { value: status, enumerable: true });
 	return error;
+}
+
+function ownTregRefusal(data: unknown, status: number) {
+	const root = obj(data), detail = obj(root.detail);
+	const code = str(root.error ?? root.code ?? detail.error ?? detail.code).toLowerCase();
+	if (code === 'insufficient_balance' || code === 'funds_required') return { message: 'Treg cannot run this request because the Treg team needs available funds. Check Treg billing in Configuration.', failure: failure('credits_exhausted', 'treg') };
+	if (code === 'platform_daily_cap_reached') return { message: 'Treg’s platform daily spending limit has been reached. Try again later or check with the Treg team administrator.', failure: failure('rate_limited', 'treg') };
+	if (code === 'tag_spend_cap_reached') return { message: 'This workspace has reached its Treg spending limit for the current period.', failure: failure('rate_limited', 'treg') };
+	if (code === 'tag_blocked') return { message: 'Treg has blocked provider calls for this workspace. Check the Treg team settings.', failure: failure('provider_error', 'treg', false) };
+	if (code === 'route_max_cost') return { message: 'Treg stopped before this request exceeded the configured maximum spend. Increase the column’s Treg spend cap or reduce the request size.', failure: failure('credits_exhausted', 'treg', false) };
+	if (status === 401 || status === 403) return { message: 'Treg rejected this API key. Reconnect Treg in Configuration.', failure: failure('credential_invalid', 'treg', false) };
+	return { message: 'Treg refused this request. Check the selected operation and the Treg connection status.', failure: failure('provider_error', 'treg', false) };
 }
 
 function parseReceipt(response: Response, operation: string, endpoint: string, body: unknown, fallbackStatus: string): TregReceipt {
@@ -172,6 +201,11 @@ async function callTreg(access: ProviderAccess, spec: CallSpec, input: unknown, 
 	const url = new URL(`/call/${spec.endpoint}`, API);
 	for (const [key, value] of Object.entries(spec.query ?? {})) url.searchParams.set(key, value);
 	const headers = new Headers({ 'X-Treg-Token': token, 'Idempotency-Key': idempotencyKey });
+	if (access.account) {
+		const workspace = workspaceId(access.account);
+		const feature = spec.operation.replace(/[^A-Za-z0-9._:-]/g, '-').slice(0, 128);
+		headers.set('X-Treg-Meta', `customer=${workspace}, workspace=${workspace}, feature=${feature}`);
+	}
 	if (spec.body) headers.set('content-type', 'application/json');
 	if (spec.maxCostUsd !== undefined) headers.set('X-Treg-Route-Max-Cost', String(spec.maxCostUsd));
 	if (spec.routeWaterfall === false) headers.set('X-Treg-Route-Waterfall', '0');
@@ -191,15 +225,16 @@ async function callTreg(access: ProviderAccess, spec: CallSpec, input: unknown, 
 	}
 	let data = await jsonResponse(response);
 	let receipt = parseReceipt(response, spec.operation, `/call/${spec.endpoint}`, data, response.ok ? 'COMPLETED' : 'FAILED');
+	if (response.headers.get('x-treg-error') === '1') {
+		const refusal = ownTregRefusal(data, response.status);
+		receipt = { ...receipt, status: 'FAILED' };
+		await persistReceipt(access.account, receipt, idempotencyKey, input, refusal.message, data);
+		throw new TregCallError(refusal.message, refusal.failure, makeMeta(receipt, data), idempotencyKey);
+	}
 	if (!response.ok && response.status !== 202) {
 		const message = str(obj(data).detail ?? obj(data).error ?? obj(data).message) || `Treg request failed (${response.status}).`;
 		await persistReceipt(access.account, receipt, idempotencyKey, input, message, data);
-		throw new TregCallError(message, responseFailure(response.status, message).failure, makeMeta(receipt, data), idempotencyKey);
-	}
-	if (response.headers.get('x-treg-error') === '1') {
-		const message = str(obj(data).detail ?? obj(data).error ?? obj(data).message) || 'Treg reported an endpoint error.';
-		await persistReceipt(access.account, { ...receipt, status: 'FAILED' }, idempotencyKey, input, message, data);
-		throw new TregCallError(message, failure('provider_error', 'treg', false), makeMeta({ ...receipt, status: 'FAILED' }, data), idempotencyKey);
+		throw new TregCallError(message, httpFailure(response.status, 'treg', message), makeMeta(receipt, data), idempotencyKey);
 	}
 	if (['failed', 'error', 'cancelled', 'canceled', 'timeout', 'timed_out'].includes(receipt.status.toLowerCase())) {
 		const message = str(obj(data).detail ?? obj(data).error ?? obj(data).message) || `Treg call ended with status ${receipt.status}.`;
@@ -365,7 +400,7 @@ export async function tregRequest(token: string, path: string, init: RequestInit
 	const body = await jsonResponse(response);
 	if (!response.ok) {
 		const message = str(obj(body).detail ?? obj(body).error ?? obj(body).message) || `Treg request failed (${response.status}).`;
-		throw responseFailure(response.status, message);
+		throw responseFailure(response.status, message, body);
 	}
 	return body;
 }
