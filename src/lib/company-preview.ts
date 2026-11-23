@@ -46,7 +46,7 @@ export function companyPreview(row: Row, column: Column, columns: Column[]) {
 		if (currentDomain && currentDomain !== domain) continue;
 		let source: string, data: unknown;
 		if (snapshot && logoDomain(snapshot.domain) === domain) {
-			source = snapshot.source === 'brand' ? 'Company profile' : 'Company & funding';
+			source = snapshot.source === 'brand' || snapshot.source === 'treg-company-enrich' ? 'Company profile' : 'Company & funding';
 			data = snapshot.data;
 		} else if (!snapshot && candidate.op?.kind === 'company' && candidate.op.field.startsWith('funding_') && currentDomain === domain) {
 			source = 'Company & funding';

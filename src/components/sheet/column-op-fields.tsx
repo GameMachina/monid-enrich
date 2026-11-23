@@ -1,6 +1,5 @@
 'use client';
 
-import Link from 'next/link';
 import { useId, useState, type ClipboardEvent, type KeyboardEvent } from 'react';
 import { GripVertical, Plus, X } from 'lucide-react';
 import { clampNumber, fromListRows, parseCommaList, parseListLines, toListRows, type ListItem, type ListRow } from '@/lib/list-input';
@@ -66,6 +65,8 @@ const PERSON_FIELDS: Array<{ value: OpOf<'person'>['field']; label: string }> = 
 	{ value: 'full_name', label: 'Full name' },
 ];
 const PROSPEO_LABELS: Record<(typeof PROSPEO_FIELDS)[number], string> = { email: 'Email', mobile: 'Mobile number', full_name: 'Full name', title: 'Title', company: 'Company', company_domain: 'Company domain', linkedin: 'LinkedIn URL', location: 'Location' };
+const TREG_PERSON_FIELDS = new Set(['full_name', 'title', 'company', 'company_domain', 'location', 'linkedin', 'email', 'mobile']);
+const TREG_SCRAPE_MODES = new Set(['highlights', 'extract', 'markdown', 'title', 'url']);
 const SCRAPE_MODES: Array<{ value: OpOf<'scrape'>['mode']; label: string }> = [
 	{ value: 'highlights', label: 'Passages relevant to a query' },
 	{ value: 'extract', label: 'Extracted fields' },
@@ -127,13 +128,15 @@ function EmailDraftFields({ op, set, columns }: FieldsProps<'email-draft'>) {
 }
 
 function AskFields({ op, set, columns, domainColumn }: FieldsProps<'ai'>) {
+	const dataProvider = op.dataProvider ?? 'monid';
 	return <>
 		<PromptField label="Question" help="Type / to insert a column, cell or range; otherwise the whole row is sent. Use $ to lock coordinates, e.g. $A$1." columns={columns} rows={3} value={op.prompt} onChange={(prompt) => set({ prompt })} placeholder="Who is the CEO of {{Company}}?" />
 		<div className="grid gap-4 sm:grid-cols-2">
 			<OutputField value={op.output} onChange={(output) => set({ output })} />
-			<Field label="Research">{(id) => <Select id={id} value={op.research} onValueChange={(value) => set({ research: value as 'none' | 'web' })}><option value="web">Search and read the web through Monid</option><option value="none">Row only, no web</option></Select>}</Field>
+			<Field label="Research">{(id) => <Select id={id} value={op.research} onValueChange={(value) => set({ research: value as 'none' | 'web' })}><option value="web">Search and read the web</option><option value="none">Row only, no web</option></Select>}</Field>
 		</div>
 		<PageField label="Read a page first" page={op.page} optional columns={columns} domainColumn={domainColumn} onChange={(page) => set({ page })} />
+		{(op.research === 'web' || op.page) && <DataProviderPicker value={dataProvider} onChange={(dataProvider) => set({ dataProvider })} />}
 	</>;
 }
 
@@ -141,6 +144,7 @@ function CheckFields({ op, set, columns, domainColumn }: FieldsProps<'check'>) {
 	return <>
 		<PromptField label="True/false question" help="Asked against the row and, when set, the page below." columns={columns} rows={2} value={op.question} onChange={(question) => set({ question })} placeholder="Does this pricing page offer a free tier?" />
 		<PageField label="Read a page first" page={op.page} optional columns={columns} domainColumn={domainColumn} onChange={(page) => set({ page })} />
+		{op.page && <DataProviderPicker value={op.dataProvider ?? 'monid'} onChange={(dataProvider) => set({ dataProvider })} />}
 		<div className="grid gap-4 sm:grid-cols-3">
 			<DeciderField value={op.decider} onChange={(decider) => set({ decider })} />
 			<NumberField label="True threshold" help="Probability at or above which the cell is true (0.05–0.95)." value={op.threshold} min={0.05} max={0.95} step={0.05} onChange={(threshold) => set({ threshold })} />
@@ -155,6 +159,7 @@ function ClassifyFields({ op, set, columns, domainColumn }: FieldsProps<'classif
 		<ListEditor label="Options" help="Each row gets exactly one option. A short description helps the model choose." item="Option" detail="Description (optional)" placeholders={['e.g. Strong fit', 'e.g. Weak fit']} detailPlaceholder="e.g. B2B SaaS with 50–500 employees" minRows={2} max={20}
 			items={op.options.map((option) => ({ label: option.label, detail: option.description }))} onChange={(items) => set({ options: items.map((item) => ({ label: item.label, description: item.detail })) })} />
 		<PageField label="Read a page first" page={op.page} optional columns={columns} domainColumn={domainColumn} onChange={(page) => set({ page })} />
+		{op.page && <DataProviderPicker value={op.dataProvider ?? 'monid'} onChange={(dataProvider) => set({ dataProvider })} />}
 		<DeciderField value={op.decider} onChange={(decider) => set({ decider })} />
 	</>;
 }
@@ -165,16 +170,19 @@ function ScoreFields({ op, set, columns, domainColumn }: FieldsProps<'score'>) {
 		<ListEditor label="Levels, lowest to highest" help="Drag to reorder. The first level is the lowest score." item="Level" placeholders={['e.g. None', 'e.g. Basic', 'e.g. Thorough']} minRows={2} max={10}
 			items={op.levels.map((label) => ({ label }))} onChange={(items) => set({ levels: items.map((item) => item.label) })} />
 		<PageField label="Read a page first" page={op.page} optional columns={columns} domainColumn={domainColumn} onChange={(page) => set({ page })} />
+		{op.page && <DataProviderPicker value={op.dataProvider ?? 'monid'} onChange={(dataProvider) => set({ dataProvider })} />}
 		<DeciderField value={op.decider} onChange={(decider) => set({ decider })} />
 	</>;
 }
 
 function ScrapeFields({ op, set, columns, domainColumn }: FieldsProps<'scrape'>) {
 	const sized = op.mode === 'highlights' || op.mode === 'markdown';
+	const modes = op.dataProvider === 'treg' ? SCRAPE_MODES.filter((mode) => TREG_SCRAPE_MODES.has(mode.value)) : SCRAPE_MODES;
 	return <>
 		<PageField label="Page" page={op.page} columns={columns} domainColumn={domainColumn} onChange={(page) => page && set({ page })} />
+		<DataProviderPicker value={op.dataProvider ?? 'monid'} onChange={(dataProvider) => set({ dataProvider })} />
 		<div className="grid gap-4 sm:grid-cols-2">
-			<Field label="Keep">{(id) => <Select id={id} value={op.mode} onValueChange={(value) => set({ mode: value as OpOf<'scrape'>['mode'] })}>{SCRAPE_MODES.map((mode) => <option key={mode.value} value={mode.value}>{mode.label}</option>)}</Select>}</Field>
+			<Field label="Keep">{(id) => <Select id={id} value={op.mode} onValueChange={(value) => set({ mode: value as OpOf<'scrape'>['mode'] })}>{!modes.some((mode) => mode.value === op.mode) && <option value={op.mode} disabled>{op.mode} · unsupported by Treg</option>}{modes.map((mode) => <option key={mode.value} value={mode.value}>{mode.label}</option>)}</Select>}</Field>
 			{sized && <NumberField label="Max characters" value={op.maxChars} min={100} max={20000} step={100} integer onChange={(maxChars) => set({ maxChars })} />}
 		</div>
 		{(op.mode === 'highlights' || op.mode === 'extract') && <PromptField label={op.mode === 'highlights' ? 'Query' : 'Instructions (optional)'} columns={columns} value={op.query ?? ''} onChange={(query) => set({ query: query || undefined })} placeholder={op.mode === 'highlights' ? 'pricing tiers and free plan' : 'Prefer the monthly price'} />}
@@ -186,6 +194,7 @@ function ScrapeFields({ op, set, columns, domainColumn }: FieldsProps<'scrape'>)
 function SearchFields({ op, set, columns }: FieldsProps<'search'>) {
 	return <>
 		<PromptField label="Search query" help="A template; {{Company}} and friends are filled per row." columns={columns} value={op.query} onChange={(query) => set({ query })} placeholder="{{Company}} crunchbase" />
+		<DataProviderPicker value={op.dataProvider ?? 'monid'} onChange={(dataProvider) => set({ dataProvider })} />
 		<div className="grid gap-4 sm:grid-cols-3">
 			<Field label="Keep">{(id) => <Select id={id} value={op.pick} onValueChange={(value) => set({ pick: value as OpOf<'search'>['pick'] })}><option value="url">First result URL</option><option value="title">First result title</option><option value="snippet">First result snippet</option><option value="list">List of result URLs</option></Select>}</Field>
 			<NumberField label="Results" value={op.numResults} min={1} max={10} step={1} integer onChange={(numResults) => set({ numResults })} />
@@ -195,13 +204,21 @@ function SearchFields({ op, set, columns }: FieldsProps<'search'>) {
 }
 
 function CompanyFields({ op, set, columns }: FieldsProps<'company'>) {
-	return <div className="grid gap-4 sm:grid-cols-2">
-		<PromptField label="Domain" help="A column reference or template." columns={columns} value={op.domain} onChange={(domain) => set({ domain })} placeholder="{{Website}}" />
-		<Field label="Field">{(id) => <Select id={id} value={op.field} onValueChange={(value) => set({ field: value as OpOf<'company'>['field'] })}>{COMPANY_FIELDS.map((field) => <option key={field.value} value={field.value}>{field.label}</option>)}</Select>}</Field>
-	</div>;
+	const dataProvider = op.dataProvider ?? 'monid';
+	const fields = COMPANY_FIELDS;
+	return <>
+		<div className="grid gap-4 sm:grid-cols-2">
+			<PromptField label="Domain" help="A column reference or template." columns={columns} value={op.domain} onChange={(domain) => set({ domain })} placeholder="{{Website}}" />
+			<Field label="Field">{(id) => <Select id={id} value={op.field} onValueChange={(value) => set({ field: value as OpOf<'company'>['field'] })}>{!fields.some((field) => field.value === op.field) && <option value={op.field} disabled>{COMPANY_FIELDS.find((field) => field.value === op.field)?.label ?? op.field} · unsupported by Treg</option>}{fields.map((field) => <option key={field.value} value={field.value}>{field.label}</option>)}</Select>}</Field>
+		</div>
+		<DataProviderPicker value={dataProvider} onChange={(dataProvider) => set({ dataProvider })} />
+		{dataProvider === 'treg' && <TregOperationNote text="Treg uses routed company data for core facts (up to $0.25 per lookup), its brand profile for details (about $0.02534), financing events for funding ($0.04 per lookup), and public-market search for tickers (Treg trial pool, 50 calls per team per day). Charges and routes appear in cell details." />}
+	</>;
 }
 
 function PersonFields({ op, set, columns }: FieldsProps<'person'>) {
+	const dataProvider = op.dataProvider ?? 'monid';
+	const fields = dataProvider === 'treg' ? PERSON_FIELDS.filter((field) => TREG_PERSON_FIELDS.has(field.value)) : PERSON_FIELDS;
 	const { settings, memberPreferences } = useSettings();
 	const allowed = settings.mobilePhoneProviders?.length ? settings.mobilePhoneProviders : DEFAULT_ALLOWED_PHONE_PROVIDERS;
 	const strategies = allowedPhoneStrategies(allowed);
@@ -209,7 +226,7 @@ function PersonFields({ op, set, columns }: FieldsProps<'person'>) {
 	const strategyAllowed = strategies.includes(phoneStrategy);
 	const text = (key: 'name' | 'company' | 'email' | 'profileUrl') => (value: string) => set({ [key]: value || undefined });
 	return <>
-		{op.field === 'mobile' && <>
+		{op.field === 'mobile' && dataProvider === 'monid' && <>
 			<p role="note" className="rounded-lg border border-line-subtle bg-surface-secondary px-3 py-2 text-caption text-fg-muted">Mobile lookups run through Monid and are billed to the workspace wallet. LeadMagic accepts a LinkedIn profile or email and bills no-match requests. Clay needs a full name, company, and LinkedIn profile; its no-match results are not billed. A waterfall advances only after a completed no-match.</p>
 			<Field label="Provider strategy" help="This column keeps the selected strategy even if your personal default changes later.">
 				{(id) => <Select id={id} value={phoneStrategy} onValueChange={(value) => set({ phoneStrategy: value as PhoneProviderStrategy })}>
@@ -225,7 +242,9 @@ function PersonFields({ op, set, columns }: FieldsProps<'person'>) {
 			<PromptField label="Email" columns={columns} value={op.email ?? ''} onChange={text('email')} placeholder="{{Email}}" />
 			<PromptField label="Profile URL" columns={columns} value={op.profileUrl ?? ''} onChange={text('profileUrl')} placeholder="{{LinkedIn}}" />
 		</div>
-		<Field label="Field">{(id) => <Select id={id} value={op.field} onValueChange={(value) => set({ field: value as OpOf<'person'>['field'] })}>{PERSON_FIELDS.map((field) => <option key={field.value} value={field.value}>{field.label}</option>)}</Select>}</Field>
+		<Field label="Field">{(id) => <Select id={id} value={op.field} onValueChange={(value) => set({ field: value as OpOf<'person'>['field'] })}>{!fields.some((field) => field.value === op.field) && <option value={op.field} disabled>{PERSON_FIELDS.find((field) => field.value === op.field)?.label ?? op.field} · unsupported by Treg</option>}{fields.map((field) => <option key={field.value} value={field.value}>{field.label}</option>)}</Select>}</Field>
+		<DataProviderPicker value={dataProvider} onChange={(dataProvider) => set({ dataProvider })} />
+		{dataProvider === 'treg' && <TregOperationNote text="Treg supports name, title, company, company domain, location, LinkedIn, email, and mobile lookups here. Schools, degrees, experience, skills, bio, and years at company are not available through this Treg operation. Only your Treg team balance is charged." />}
 	</>;
 }
 
@@ -243,7 +262,10 @@ function FindEmailFields({ op, set, columns }: FieldsProps<'email-enrichment'>) 
 			{FIND_EMAIL_INPUTS.map((input) => <PromptField key={input.key} label={input.label} columns={columns} value={op[input.key]} onChange={(value) => set({ [input.key]: value })} placeholder={input.placeholder} />)}
 		</div>
 		<DataProviderPicker value={dataProvider} onChange={(dataProvider) => set({ dataProvider })} />
-		{dataProvider === 'monid' ? <EmailWaterfallPicker value={op.providers} onChange={(providers) => set({ providers })} /> : <TregOperationNote text="Treg routes this lookup through its own data network. Misses are free; successful results vary in cost (up to about $0.15). This column uses your Treg team balance only; it will not call Monid." />}
+		{dataProvider === 'monid' ? <EmailWaterfallPicker value={op.providers} onChange={(providers) => set({ providers })} /> : <>
+			<TregRouteControls enabled={op.tregRouteWaterfall !== false} maxCostUsd={op.tregRouteMaxCostUsd ?? 0.15} onChange={(patch) => set(patch)} />
+			<TregOperationNote text="Treg chooses among its email providers, preferring connected provider keys and then route cost. A completed miss can advance to another provider; Treg reports the provider attempts and actual charge in cell details. Only your Treg team balance or its connected provider account is used." />
+		</>}
 	</>;
 }
 
@@ -258,7 +280,10 @@ function FindPhoneFields({ op, set, columns }: FieldsProps<'phone-enrichment'>) 
 			<PromptField label="Work email (optional)" columns={columns} value={op.email} onChange={(email) => set({ email })} placeholder="{{Work email}}" />
 		</div>
 		<DataProviderPicker value={dataProvider} onChange={(dataProvider) => set({ dataProvider })} />
-		{dataProvider === 'monid' ? <PhoneWaterfallPicker value={op.providers} onChange={(providers) => set({ providers })} /> : <TregOperationNote text="Treg routes phone lookup through its own data network. Some unsuccessful provider attempts may still be billable; each request is capped at $0.10. This column will not call Monid." />}
+		{dataProvider === 'monid' ? <PhoneWaterfallPicker value={op.providers} onChange={(providers) => set({ providers })} /> : <>
+			<TregRouteControls enabled={op.tregRouteWaterfall !== false} maxCostUsd={op.tregRouteMaxCostUsd ?? 0.9} onChange={(patch) => set(patch)} />
+			<TregOperationNote text="Treg chooses among its phone providers, preferring connected provider keys and then route cost. A miss can advance to another provider and may be billable; Treg reports attempts and actual charge in cell details. Only your Treg team balance or its connected provider account is used." />
+		</>}
 	</>;
 }
 
@@ -274,8 +299,26 @@ function FindSocialFields({ op, set, columns }: FieldsProps<'social-enrichment'>
 			<PromptField label="Profile URL (optional)" columns={columns} value={op.profileUrl} onChange={(profileUrl) => set({ profileUrl })} placeholder="{{Profile URL}}" />
 		</div>
 		<DataProviderPicker value={dataProvider} onChange={(dataProvider) => set({ dataProvider })} />
-		{dataProvider === 'monid' ? <SocialWaterfallPicker platform={op.platform} value={op.providers} onChange={(providers) => set({ providers })} /> : <TregOperationNote text={op.platform === 'linkedin' ? 'Treg searches LinkedIn profiles ($0.004 per request). Only Treg will be charged.' : op.platform === 'instagram' || op.platform === 'tiktok' ? `Treg searches ${op.platform === 'instagram' ? 'Instagram' : 'TikTok'} through its own provider network, capped at $0.10 per request. Only Treg will be charged.` : `Treg does not support ${op.platform === 'x' ? 'X' : op.platform} profile search yet. Switch this column to Monid or choose LinkedIn, Instagram, or TikTok. No provider will run while this selection is unsupported.`} />}
+		{dataProvider === 'monid' ? <SocialWaterfallPicker platform={op.platform} value={op.providers} onChange={(providers) => set({ providers })} /> : <>
+			<TregRouteControls enabled={op.tregRouteWaterfall !== false} maxCostUsd={op.tregRouteMaxCostUsd ?? 0.16} onChange={(patch) => set(patch)} />
+			<TregOperationNote text={`Treg searches the public web for ${op.platform === 'x' ? 'X / Twitter' : op.platform} profiles. Its route can try multiple providers; each attempt may cost money. Treg reports the providers tried and actual charge in cell details. Only your Treg team balance or its connected provider account is used.`} />
+		</>}
 	</>;
+}
+
+function TregRouteControls({ enabled, maxCostUsd, onChange }: { enabled: boolean; maxCostUsd: number; onChange: (patch: { tregRouteWaterfall?: boolean; tregRouteMaxCostUsd?: number }) => void }) {
+	return <div className="flex flex-col gap-3 rounded-lg border border-line-subtle bg-surface-secondary px-3 py-3">
+		<div className="flex items-center justify-between gap-3">
+			<span className="min-w-0"><span className="block text-body-sm text-fg">Provider waterfall</span><span className="block text-caption text-fg-subtle">Treg picks and orders its own providers; this setting controls whether it continues after a miss.</span></span>
+			<Switch checked={enabled} label="Use Treg provider waterfall on misses" onChange={(tregRouteWaterfall) => onChange({ tregRouteWaterfall })} />
+		</div>
+		<Field label="Maximum Treg route spend (USD)" help="Treg stops before another provider call would exceed this cap. The actual charge can be lower.">
+			{(id) => <Input id={id} type="number" inputMode="decimal" min="0.001" max="1" step="0.01" value={maxCostUsd} onChange={(event) => {
+				const value = Number(event.target.value);
+				if (Number.isFinite(value) && value >= 0.001 && value <= 1) onChange({ tregRouteMaxCostUsd: value });
+			}} />}
+		</Field>
+	</div>;
 }
 
 function DataProviderPicker({ value, onChange }: { value: DataProvider; onChange: (value: DataProvider) => void }) {
@@ -296,13 +339,9 @@ function TregOperationNote({ text }: { text: string }) {
 	return <p role="note" className="rounded-lg border border-line-subtle bg-surface-secondary px-3 py-2 text-caption text-fg-muted">{text}</p>;
 }
 
-function ProviderNote({ feature }: { feature: 'email lookup' | 'person details' }) {
-	return <p className="text-caption text-fg-subtle">Uses the Monid {feature} operation. Connect Monid in <Link href="/app/settings" target="_blank" className="text-brand underline-offset-4 hover:underline">Configuration → Connections</Link>. Type / to insert a column.</p>;
-}
-
 function HunterFields({ op, set, columns }: FieldsProps<'hunter'>) {
 	return <>
-		<ProviderNote feature="email lookup" />
+		<DataProviderPicker value={op.dataProvider ?? 'monid'} onChange={(dataProvider) => set({ dataProvider })} />
 		{/* Finding is covered by the Work email waterfall; older columns that find with Hunter keep the choice. */}
 		{op.action === 'find' && <Field label="Action">{(id) => <Select id={id} value={op.action} onValueChange={(value) => set({ action: value as 'find' | 'verify' })}><option value="find">Find work email</option><option value="verify">Verify email (returns status)</option></Select>}</Field>}
 		{op.action === 'find' ? <div className="grid gap-4 sm:grid-cols-2">
@@ -313,13 +352,14 @@ function HunterFields({ op, set, columns }: FieldsProps<'hunter'>) {
 }
 
 function ProspeoFields({ op, set, columns }: FieldsProps<'prospeo'>) {
+	const dataProvider = op.dataProvider ?? 'monid';
 	const { settings, memberPreferences } = useSettings();
 	const allowed = settings.mobilePhoneProviders?.length ? settings.mobilePhoneProviders : DEFAULT_ALLOWED_PHONE_PROVIDERS;
 	const strategies = allowedPhoneStrategies(allowed);
 	const phoneStrategy = op.phoneStrategy ?? memberPreferences.defaultPhoneStrategy;
 	const strategyAllowed = strategies.includes(phoneStrategy);
 	return <>
-		<ProviderNote feature="person details" />
+		<DataProviderPicker value={dataProvider} onChange={(dataProvider) => set({ dataProvider })} />
 		<Field label="Look up">{(id) => <Select id={id} value={op.field} onValueChange={(value) => set({ field: value as OpOf<'prospeo'>['field'] })}>{PROSPEO_FIELDS.map((field) => <option key={field} value={field}>{PROSPEO_LABELS[field]}</option>)}</Select>}</Field>
 		<div className="grid gap-4 sm:grid-cols-2">
 			<PromptField label="Full name" columns={columns} value={op.name ?? ''} onChange={(name) => set({ name })} placeholder="{{Name}}" />
@@ -328,7 +368,7 @@ function ProspeoFields({ op, set, columns }: FieldsProps<'prospeo'>) {
 			<PromptField label="LinkedIn URL" help="Provide a LinkedIn URL, an email, or a full name and company domain." columns={columns} value={op.profileUrl ?? ''} onChange={(profileUrl) => set({ profileUrl })} placeholder="{{LinkedIn}}" />
 		</div>
 		{op.field === 'email' && <div className="flex items-center justify-between gap-3"><span className="text-body-sm">Only return verified email addresses</span><Switch checked={op.onlyVerifiedEmail} onChange={(onlyVerifiedEmail) => set({ onlyVerifiedEmail })} label="Only verified email" /></div>}
-		{op.field === 'mobile' && <>
+		{op.field === 'mobile' && dataProvider === 'monid' && <>
 			<p role="note" className="rounded-lg border border-line-subtle bg-surface-secondary px-3 py-2 text-caption text-fg-muted">Mobile lookups run through Monid and are billed to the workspace wallet. LeadMagic accepts a LinkedIn profile or email and bills no-match requests. Clay needs a full name, company, and LinkedIn profile; its no-match results are not billed. A waterfall advances only after a completed no-match.</p>
 			<Field label="Provider strategy" help="This column keeps the selected strategy even if your personal default changes later.">
 				{(id) => <Select id={id} value={phoneStrategy} onValueChange={(value) => set({ phoneStrategy: value as PhoneProviderStrategy })}>
@@ -338,12 +378,14 @@ function ProspeoFields({ op, set, columns }: FieldsProps<'prospeo'>) {
 			</Field>
 			{!strategyAllowed && <p role="alert" className="text-caption text-danger">The workspace disabled a provider in this strategy. Choose an enabled strategy before saving or running this column.</p>}
 		</>}
+		{dataProvider === 'treg' && <TregOperationNote text="Treg routes this contact lookup through its own data network. The selected Treg team balance pays for it; there is no Monid fallback." />}
 	</>;
 }
 
 function ResearchFields({ op, set, columns }: FieldsProps<'answer'>) {
 	return <>
-		<PromptField label="Research task" help="OpenAI reasons over live web research from Monid and returns a sourced answer." columns={columns} rows={3} value={op.task} onChange={(task) => set({ task })} placeholder="What is {{Company}}'s most recent funding round, amount and lead investor?" />
+		<PromptField label="Research task" help="OpenAI reasons over live web research from the selected data provider and returns a sourced answer." columns={columns} rows={3} value={op.task} onChange={(task) => set({ task })} placeholder="What is {{Company}}'s most recent funding round, amount and lead investor?" />
+		<DataProviderPicker value={op.dataProvider ?? 'monid'} onChange={(dataProvider) => set({ dataProvider })} />
 		<div className="grid gap-4 sm:grid-cols-2">
 			<OutputField value={op.output} onChange={(output) => set({ output })} />
 			<Field label="Depth" help="Monid bills according to the endpoint and returned results; actual usage is shown with the cell result.">{(id) => <Select id={id} value={op.mode} onValueChange={(value) => set({ mode: value as 'fast' | 'ultra' })}><option value="fast">Fast</option><option value="ultra">Ultra · deeper research</option></Select>}</Field>

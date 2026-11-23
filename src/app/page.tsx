@@ -3,7 +3,7 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { ArrowRight } from 'lucide-react';
 import { GithubIcon, Logo } from '@/components/ui/logo';
-import { DOCS_URL, GITHUB_URL, MONID_URL, PRODUCT_NAME, SITE_DESCRIPTION, SITE_LEDE, SITE_TITLE } from '@/lib/constants';
+import { DOCS_URL, GITHUB_URL, PRODUCT_NAME, SITE_DESCRIPTION, SITE_LEDE, SITE_TITLE } from '@/lib/constants';
 import { siteUrl } from '@/lib/server/deployment';
 
 export const metadata: Metadata = {
@@ -16,10 +16,10 @@ export const metadata: Metadata = {
 };
 
 const FEATURES = [
-	{ title: 'Build lead lists from a prompt', body: 'Ask for “every Series A fintech in Europe” or “VPs of Sales at US logistics companies”. Monid-powered results stream into the sheet, deduplicated by domain.' },
+	{ title: 'Build lead lists from a prompt', body: 'Ask for “every Series A fintech in Europe” or “VPs of Sales at US logistics companies”. Choose Monid or Treg and stream company or people results into the sheet.' },
 	{ title: 'Research every row', body: 'Add a column with a question like “Who is the CEO?” or “Does the pricing page offer a free tier?”. Research results include source links so you can check the answer.' },
 	{ title: 'Qualify and score accounts', body: 'True or false checks, categories and scores on levels you define. Each call comes with a probability or confidence, so you can filter on how sure it is.' },
-	{ title: 'Find work emails', body: 'Use Monid to find or verify work email addresses from a person name and company domain.' },
+	{ title: 'Find work emails', body: 'Choose Monid or Treg to find or verify work email addresses from a person name and company domain.' },
 	{ title: 'Draft outreach and documents', body: 'Write a personalized email or a branded PDF for every row, using the research already in the sheet.' },
 	{ title: 'Use real spreadsheet formulas', body: 'SUM, IF, VLOOKUP and hundreds more run in your browser through IronCalc, with no API calls and no keys.' },
 	{ title: 'Export anywhere', body: 'Download CSV, Excel or JSON, with or without confidence scores and sources.' },
@@ -28,15 +28,15 @@ const FEATURES = [
 
 const STEPS = [
 	{ title: 'Find rows', body: 'Describe the companies or people you want, import a CSV, or start from a blank sheet.' },
-	{ title: 'Add research columns', body: 'Write a question and reference other columns, like {{Website}}. Monid supplies web research and company or people data. Add your OpenAI key for reasoning features.' },
+	{ title: 'Add research columns', body: 'Write a question and reference other columns, like {{Website}}. Choose Monid or Treg for supported web research and company or people data. Add your OpenAI key for reasoning features.' },
 	{ title: 'Review and export', body: 'Open any cell to see its sources and confidence. Rerun or edit it, filter the rows that pass, and export.' },
 ];
 
 const FAQ = [
 	{ q: `What is ${PRODUCT_NAME}?`, a: `${PRODUCT_NAME} is a spreadsheet for company and people research. Find rows, enrich each row, review the evidence, and export the result.` },
-	{ q: 'Where does the data come from?', a: 'All external research and enrichment requests go through Monid. OpenAI is optional and only used when you connect your own key for reasoning features.' },
-	{ q: 'Can I use the app without an OpenAI key?', a: 'Yes. Spreadsheet editing, formulas, imports, exports, and supported Monid searches and enrichments remain available. AI reasoning and classification features explain when they need an OpenAI key.' },
-	{ q: 'Can I self-host it?', a: 'Yes. Run it locally with Node.js and connect a Monid API key. Add your own OpenAI key only if you want reasoning features. See the repository README for setup.' },
+	{ q: 'Where does the data come from?', a: 'Choose Monid or Treg for each supported research and enrichment operation. They have separate connections and billing, with no automatic fallback. OpenAI is optional and only used when you connect your own key for reasoning features.' },
+	{ q: 'Can I use the app without an OpenAI key?', a: 'Yes. Spreadsheet editing, formulas, imports, exports, and supported Monid or Treg searches and enrichments remain available. AI reasoning and classification features explain when they need an OpenAI key.' },
+	{ q: 'Can I self-host it?', a: 'Yes. Run it locally with Node.js and connect either Monid or Treg. Add your own OpenAI key only if you want reasoning features. See the repository README for setup.' },
 	{ q: 'Can AI agents use it?', a: 'The app includes an MCP server so compatible clients can work with sheets and enrichment operations.' },
 ];
 
@@ -106,14 +106,14 @@ export default function Landing() {
 				<div className="flex flex-col items-center justify-center gap-1.5 px-5 pb-7 text-body-sm text-fg-subtle sm:flex-row sm:gap-3.5 md:pb-8 short:pb-3">
 					<span>Free and open source (MIT)</span>
 					<span aria-hidden className="hidden h-3.5 w-px bg-line-strong sm:block" />
-					<PoweredByMonid />
+					<PoweredByProviders />
 				</div>
 			</div>
 
 			<Section id="what-is-enrichable" title={`What is ${PRODUCT_NAME}?`}>
 				<div className="space-y-4 text-[1.0625rem] leading-relaxed text-fg-muted">
 					<p>
-						<strong className="font-medium text-fg">{PRODUCT_NAME} is an open-source spreadsheet for data enrichment.</strong> Describe a list, such as “solar companies in the US with 50+ employees”, and Monid-powered company or people results appear in the sheet.
+						<strong className="font-medium text-fg">{PRODUCT_NAME} is an open-source spreadsheet for data enrichment.</strong> Describe a list, such as “solar companies in the US with 50+ employees”, and use Monid or Treg to find company or people results.
 					</p>
 					<p>Add columns for research, classification, scoring, or contact data. Results retain their sources, status, and confidence where available. Add your own OpenAI key for reasoning-dependent columns.</p>
 				</div>
@@ -144,10 +144,10 @@ export default function Landing() {
 				</ol>
 			</Section>
 
-			<Section id="open-source" title="Open source, powered by Monid">
+			<Section id="open-source" title="Open source, provider choice">
 				<div className="space-y-4 text-[1.0625rem] leading-relaxed text-fg-muted">
 					<p>
-						{PRODUCT_NAME} is an independent open-source product. Every external research or enrichment request is routed through <a href={MONID_URL} target="_blank" rel="noopener" className={inlineLink}>Monid</a>. OpenAI is optional and only uses a key supplied by the workspace owner.
+						{PRODUCT_NAME} is an independent open-source product. Each supported research or enrichment operation explicitly selects Monid or Treg, with separate credentials and billing. OpenAI is optional and only uses a key supplied by the workspace owner.
 					</p>
 					<p>
 						Run it locally or self-host from the <a href={GITHUB_URL} target="_blank" rel="noopener noreferrer" className={inlineLink}>public repository</a>. Your spreadsheet data stays in the configured workspace storage.
@@ -192,7 +192,7 @@ export default function Landing() {
 						<a href={GITHUB_URL} target="_blank" rel="noopener noreferrer" className="hover:text-fg">GitHub</a>
 						<a href={DOCS_URL} target="_blank" rel="noopener noreferrer" className="hover:text-fg">Docs</a>
 						<a href={`${GITHUB_URL}/blob/main/docs/mcp.md`} target="_blank" rel="noopener noreferrer" className="hover:text-fg">MCP</a>
-						<PoweredByMonid />
+						<PoweredByProviders />
 					</div>
 				</div>
 			</footer>
@@ -211,11 +211,12 @@ function Section({ id, title, children }: { id: string; title: string; children:
 	);
 }
 
-function PoweredByMonid() {
+function PoweredByProviders() {
 	return (
-		<a href={MONID_URL} target="_blank" rel="noopener" className="inline-flex items-center gap-[7px] rounded-md hover:text-fg">
-			Powered by <Image src="/providers/monid.svg" alt="" width={18} height={18} unoptimized /> <span className="font-semibold tracking-[-0.01em] text-fg">Monid</span>
-		</a>
+		<span className="inline-flex items-center gap-[7px] rounded-md">
+			Choose <Image src="/providers/monid.svg" alt="" width={18} height={18} unoptimized /> <span className="font-semibold tracking-[-0.01em] text-fg">Monid</span>
+			<span aria-hidden>or</span><Image src="/providers/treg.svg" alt="" width={18} height={18} unoptimized /> <span className="font-semibold tracking-[-0.01em] text-fg">Treg</span>
+		</span>
 	);
 }
 

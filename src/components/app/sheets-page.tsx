@@ -96,7 +96,7 @@ export function SheetsPage() {
 		router.push(`/app/sheets/${sheet.id}?find=1&entity=${request.entity}`);
 	}
 
-	const starts = { onFind: findRows, needsKeys: !providerReady('monid'), onNeedKeys: () => openKeys('monid'), onImport: () => setDialog('import'), onBlank: () => { setDialog(null); void createBlank(); } };
+	const starts = { onFind: findRows, providerReady, onNeedKeys: (provider: 'monid' | 'treg') => openKeys(provider), onImport: () => setDialog('import'), onBlank: () => { setDialog(null); void createBlank(); } };
 
 	return (
 		<PageColumn>
@@ -186,27 +186,29 @@ export function SheetsPage() {
 }
 
 /** A rejected Monid key found before a sheet exists for the search. A check that can't run never blocks. */
-async function requiredKeyIssue(): Promise<{ error: string; issue: ConnectionIssue } | null> {
+async function requiredKeyIssue(provider: 'monid' | 'treg'): Promise<{ error: string; issue: ConnectionIssue } | null> {
 	try {
-		const { monid } = await verifyKeys({ only: ['monid'] });
-		if (monid && !monid.ok && monid.issue) return { error: monid.message ?? 'Monid rejected the API key.', issue: { reason: monid.issue === 'key' ? 'credential_invalid' : 'credits_exhausted', provider: 'monid' } };
+		const result = await verifyKeys({ only: [provider] });
+		const checked = result[provider];
+		if (checked && !checked.ok && checked.issue) return { error: checked.message ?? `${provider === 'treg' ? 'Treg' : 'Monid'} rejected the API key.`, issue: { reason: checked.issue === 'key' ? 'credential_invalid' : checked.issue === 'balance' ? 'credits_exhausted' : 'provider_error', provider } };
 	} catch { /* The search reports the same problem with its fix. */ }
 	return null;
 }
 
 /** Find rows into a new sheet, or start from a CSV or a blank sheet. */
-function NewSheet({ onFind, needsKeys, onNeedKeys, onImport, onBlank, onClose, autoFocus }: { onFind: (request: PopulateRequest) => Promise<void>; needsKeys: boolean; onNeedKeys: () => void; onImport: () => void; onBlank: () => void; onClose?: () => void; autoFocus?: boolean }) {
-	const [draft, setDraft] = useState<FindRowsDraft>({ entity: 'companies', query: '', countries: [] });
+function NewSheet({ onFind, providerReady, onNeedKeys, onImport, onBlank, onClose, autoFocus }: { onFind: (request: PopulateRequest) => Promise<void>; providerReady: (provider: 'monid' | 'treg') => boolean; onNeedKeys: (provider: 'monid' | 'treg') => void; onImport: () => void; onBlank: () => void; onClose?: () => void; autoFocus?: boolean }) {
+	const [draft, setDraft] = useState<FindRowsDraft>({ entity: 'companies', query: '', countries: [], dataProvider: 'monid' });
 	const [state, setState] = useState<{ status: 'idle' | 'creating' } | { status: 'failed'; error: string; issue?: ConnectionIssue }>({ status: 'idle' });
 	// One sheet per submit, even if Cmd+Enter and a click land before the busy state renders.
 	const inFlight = useRef(false);
 	async function submit(request: PopulateRequest) {
 		if (inFlight.current) return;
-		if (needsKeys) { onNeedKeys(); return; }
+		const provider = request.dataProvider ?? 'monid';
+		if (!providerReady(provider)) { onNeedKeys(provider); return; }
 		inFlight.current = true;
 		setState({ status: 'creating' });
 		try {
-			const problem = await requiredKeyIssue();
+			const problem = await requiredKeyIssue(provider);
 			if (problem) { setState({ status: 'failed', ...problem }); inFlight.current = false; return; }
 			await onFind(request);
 		} catch (error) { setState({ status: 'failed', error: message(error, 'Could not create the sheet. Try again.') }); inFlight.current = false; }

@@ -7,7 +7,7 @@ export const DATA_PROVIDER_IDS = ['monid', 'treg'] as const satisfies readonly P
 
 export const PROVIDER_INFO: Record<Provider, { name: string; logo: string; description: string; link: string; placeholder: string; verifiable: boolean }> = {
 	monid: { name: 'Monid', logo: '/providers/monid.svg', description: 'Web research, company and people data, and enrichment', link: 'https://app.monid.ai/access/api-keys', placeholder: 'monid_live_…', verifiable: true },
-	treg: { name: 'Treg', logo: '/providers/treg.svg', description: 'Pay-per-use email, phone, and social lookups with separate billing', link: 'https://treg.to', placeholder: 'treg_…', verifiable: true },
+	treg: { name: 'Treg', logo: '/providers/treg.svg', description: 'Web research, company and people data, and pay-per-use enrichment with separate billing', link: 'https://treg.to', placeholder: 'treg_…', verifiable: true },
 	context: { name: 'Monid', logo: '/providers/monid.svg', description: 'Web research, company and people data, and enrichment', link: 'https://app.monid.ai/access/api-keys', placeholder: 'monid_live_…', verifiable: true },
 	openai: { name: 'OpenAI', logo: '/providers/openai.svg', description: 'Optional reasoning, classification, and scoring', link: 'https://platform.openai.com/api-keys', placeholder: 'sk-…', verifiable: true },
 	typesafe: { name: 'OpenAI', logo: '/providers/openai.svg', description: 'AI reasoning', link: 'https://platform.openai.com/api-keys', placeholder: 'sk-…', verifiable: false },

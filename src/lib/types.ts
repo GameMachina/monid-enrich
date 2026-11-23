@@ -57,6 +57,8 @@ export const ColumnOpSchema = z.discriminatedUnion('kind', [
   domain: z.string().trim().max(500).default(''),
   profileUrl: z.string().max(500).default(''),
   providers: z.array(z.enum(STORED_EMAIL_PROVIDERS)).min(1).max(5).default([...EMAIL_PROVIDERS]).refine(items => new Set(items).size === items.length, 'Each provider can appear only once.'),
+  tregRouteWaterfall: z.boolean().optional(),
+  tregRouteMaxCostUsd: z.number().finite().min(0.001).max(1).optional(),
  }),
  z.object({
   kind: z.literal('phone-enrichment'),
@@ -67,6 +69,8 @@ export const ColumnOpSchema = z.discriminatedUnion('kind', [
   profileUrl: z.string().max(500).default(''),
   email: z.string().max(320).default(''),
   providers: z.array(PhoneLookupProviderSchema).min(1).max(5).default(['ai_ark', 'reversecontact']).refine(items => new Set(items).size === items.length, 'Each provider can appear only once.'),
+  tregRouteWaterfall: z.boolean().optional(),
+  tregRouteMaxCostUsd: z.number().finite().min(0.001).max(1).optional(),
  }),
  z.object({
   kind: z.literal('social-enrichment'),
@@ -78,6 +82,8 @@ export const ColumnOpSchema = z.discriminatedUnion('kind', [
   email: z.string().max(320).default(''),
   platform: SocialPlatformSchema.default('linkedin'),
   providers: z.array(SocialProviderSchema).min(1).max(5).default(['people_enrich', 'web_search']).refine(items => new Set(items).size === items.length, 'Each provider can appear only once.'),
+  tregRouteWaterfall: z.boolean().optional(),
+  tregRouteMaxCostUsd: z.number().finite().min(0.001).max(1).optional(),
  }),
  z.object({
   kind: z.literal('email-draft'),
@@ -89,9 +95,10 @@ export const ColumnOpSchema = z.discriminatedUnion('kind', [
   subject: z.string().max(2000).default(''),
   body: z.string().max(20000).default(''),
  }),
-	/** OpenAI answers a question about the row; optionally researching the web with Context.dev first. */
+	/** OpenAI answers a question about the row; optionally researching the web with the selected data provider first. */
 	z.object({
 		kind: z.literal('ai'),
+		dataProvider: DataProviderSchema.default('monid'),
 		prompt: z.string().min(1).max(4000),
 		output: z.enum(OUTPUT_TYPES).default('text'),
 		research: z.enum(['none', 'web']).default('web'),
@@ -100,6 +107,7 @@ export const ColumnOpSchema = z.discriminatedUnion('kind', [
 	/** A true/false question decided by TypeSafe Jev (calibrated probability) or OpenAI, optionally after reading a page. */
 	z.object({
 		kind: z.literal('check'),
+		dataProvider: DataProviderSchema.default('monid'),
 		question: z.string().min(1).max(2000),
 		page: pageField,
 		decider: deciderField,
@@ -111,6 +119,7 @@ export const ColumnOpSchema = z.discriminatedUnion('kind', [
 	/** Pick one option from a list (Jev choice). */
 	z.object({
 		kind: z.literal('classify'),
+		dataProvider: DataProviderSchema.default('monid'),
 		question: z.string().min(1).max(2000),
 		options: z.array(z.object({ label: z.string().min(1).max(80), description: z.string().max(300).optional() })).min(2).max(20),
 		page: pageField,
@@ -119,37 +128,42 @@ export const ColumnOpSchema = z.discriminatedUnion('kind', [
 	/** Rate on an ordered rubric (Jev score). */
 	z.object({
 		kind: z.literal('score'),
+		dataProvider: DataProviderSchema.default('monid'),
 		question: z.string().min(1).max(2000),
 		levels: z.array(z.string().min(1).max(120)).min(2).max(10),
 		page: pageField,
 		decider: deciderField,
 	}),
-	/** Read a page with Context.dev and keep its text, relevant passages, or extracted fields. */
+	/** Read a page with the selected data provider and keep its text, relevant passages, or extracted fields. */
 	z.object({
 		kind: z.literal('scrape'),
+		dataProvider: DataProviderSchema.default('monid'),
 		page: PageSourceSchema,
 		mode: z.enum(['markdown', 'highlights', 'extract', 'title', 'url', 'links', 'map', 'html', 'images', 'emails', 'phone-numbers']).default('highlights'),
 		query: z.string().max(500).optional(),
 		fields: z.array(z.object({ name: z.string().min(1).max(60), description: z.string().max(300).optional() })).max(20).optional(),
 		maxChars: z.number().int().min(100).max(20000).default(2000),
 	}),
-	/** Context.dev web search; keep the first URL, title, snippet or a list. */
+	/** Web search through the selected data provider; keep the first URL, title, snippet or a list. */
 	z.object({
 		kind: z.literal('search'),
+		dataProvider: DataProviderSchema.default('monid'),
 		query: z.string().min(1).max(500),
 		pick: z.enum(['url', 'title', 'snippet', 'list']).default('url'),
 		numResults: z.number().int().min(1).max(10).default(3),
 		includeDomains: z.array(z.string()).max(20).optional(),
 	}),
-	/** Company facts from Context.dev brand retrieval. */
+	/** Company facts from the selected data provider. */
 	z.object({
 		kind: z.literal('company'),
+		dataProvider: DataProviderSchema.default('monid'),
 		domain: z.string().min(1).max(500),
 		field: z.enum(['description', 'title', 'slogan', 'industry', 'employees', 'city', 'country', 'address', 'email', 'phone', 'ticker', 'linkedin', 'twitter', 'pricing_url', 'careers_url', 'blog_url', 'contact_url', 'logo_url', 'primary_color', 'language', 'funding_total', 'funding_stage', 'funding_latest_round', 'funding_latest_date', 'funding_latest_amount', 'funding_round_count']),
 	}),
-	/** Person facts from Context.dev people enrichment. */
+	/** Person facts from the selected data provider. */
 	z.object({
 		kind: z.literal('person'),
+		dataProvider: DataProviderSchema.default('monid'),
 		name: z.string().max(300).optional(),
 		company: z.string().max(300).optional(),
 		email: z.string().max(300).optional(),
@@ -160,6 +174,7 @@ export const ColumnOpSchema = z.discriminatedUnion('kind', [
 	}),
 	z.object({
 		kind: z.literal('hunter'),
+		dataProvider: DataProviderSchema.default('monid'),
 		action: z.enum(['find', 'verify']),
 		name: z.string().max(300).optional(),
 		domain: z.string().max(500).optional(),
@@ -167,6 +182,7 @@ export const ColumnOpSchema = z.discriminatedUnion('kind', [
 	}).refine((op) => op.action === 'find' ? Boolean(op.name?.trim() && op.domain?.trim()) : Boolean(op.email?.trim()), { message: 'Provide a name and domain to find an email, or an email to verify.' }),
 	z.object({
 		kind: z.literal('prospeo'),
+		dataProvider: DataProviderSchema.default('monid'),
 		name: z.string().max(300).optional(),
 		domain: z.string().max(500).optional(),
 		email: z.string().max(300).optional(),
@@ -176,9 +192,10 @@ export const ColumnOpSchema = z.discriminatedUnion('kind', [
 		phoneStrategy: PhoneProviderStrategySchema.optional(),
 		onlyVerifiedEmail: z.boolean().default(true),
 	}).refine((op) => Boolean(op.email?.trim() || op.profileUrl?.trim() || op.name?.trim() && op.domain?.trim()), { message: 'Provide an email, LinkedIn URL, or name and company domain.' }),
-	/** Deep research with Context.dev web answers. */
+	/** Deep research with web answers from the selected data provider. */
 	z.object({
 		kind: z.literal('answer'),
+		dataProvider: DataProviderSchema.default('monid'),
 		task: z.string().min(1).max(4000),
 		output: z.enum(OUTPUT_TYPES).default('text'),
 		mode: z.enum(['fast', 'ultra']).default('fast'),
@@ -187,7 +204,7 @@ export const ColumnOpSchema = z.discriminatedUnion('kind', [
 	z.object({ kind: z.literal('template'), template: z.string().min(1).max(2000) }),
 ]);
 type ParsedColumnOp = z.infer<typeof ColumnOpSchema>;
-type OptionalDataProvider<T> = T extends { kind: 'email-enrichment' | 'phone-enrichment' | 'social-enrichment'; dataProvider: DataProvider }
+type OptionalDataProvider<T> = T extends { dataProvider: DataProvider }
 	? Omit<T, 'dataProvider'> & { dataProvider?: DataProvider }
 	: T;
 export type ColumnOp = OptionalDataProvider<ParsedColumnOp>;
@@ -228,7 +245,7 @@ export interface CellMeta {
 	/** Photo returned for this exact person name by enrichment. */
 	person?: { name: string; avatarUrl: string | null };
 	/** Full result retained from an already completed company lookup. Previewing never refetches it. */
-	companyIntel?: { domain: string; input?: string; source: 'brand' | 'company-search'; data: Record<string, unknown> };
+	companyIntel?: { domain: string; input?: string; source: 'brand' | 'company-search' | 'treg-company-enrich' | 'treg-funding'; data: Record<string, unknown> };
 	/** Explicit company selected while editing; kept with its name to prevent stale logos. */
 	organization?: { name: string; domain: string };
 	sources?: string[];
@@ -239,7 +256,7 @@ export interface CellMeta {
 	reasoning?: string;
 	model?: string;
 	credits?: number;
-	/** Provider-specific usage; kept separate from Context.dev credits. */
+	/** Provider-specific usage; Monid and Treg records are kept separate. */
 	provider?: EmailProvider | PhoneLookupProvider;
 	/** Explicit data provider selected for this operation; separate from any waterfall's internal source. */
 	dataProvider?: DataProvider;
@@ -250,7 +267,7 @@ export interface CellMeta {
 	monidRuns?: Array<{ runId?: string; provider: string; endpoint: string; status: string; costUsd?: number; billedUnits?: number; price?: { type?: string; amount?: number; currency?: string }; resultCount?: number; completedAt?: string }>;
 	monidCostUsd?: number;
 	/** Treg call receipts and spend, kept separate from Monid workspace runs and wallet totals. */
-	tregRuns?: Array<{ callId?: string; operation: string; endpoint: string; status: string; costUsd?: number; costMicroUsd?: number; servedVia?: string; completedAt?: string }>;
+	tregRuns?: Array<{ callId?: string; operation: string; endpoint: string; status: string; costUsd?: number; costMicroUsd?: number; servedVia?: string; servedBy?: string; tried?: Array<{ provider: string; status?: string; costUsd?: number }>; completedAt?: string }>;
 	tregCostUsd?: number;
 	/** Reused only for an explicit retry of an uncertain Treg request, within Treg's idempotency window. */
 	tregIdempotencyKey?: string;
@@ -319,14 +336,27 @@ export type EntityKind = (typeof ENTITY_KINDS)[number];
 export const PopulateRequestSchema = z.object({
 	query: z.string().min(3).max(2000),
 	entity: z.enum(ENTITY_KINDS),
-	target: z.number().int().min(1).max(1000, 'A single Find rows request can return up to 1,000 rows.').default(20),
+	dataProvider: DataProviderSchema.default('monid'),
+	/** For Treg people searches, retrieve education, skills and work history from the selected LinkedIn full-profile route. */
+	enrichFullProfiles: z.boolean().default(false),
+	/** Stable only for retries of this Find rows submission. */
+	idempotencyKey: z.string().min(8).max(128).optional(),
+	// Persisted sheets may contain a request created before the temporary test cap was lowered.
+	target: z.number().int().min(1).max(1000).default(5),
 	countries: z.array(z.string().length(2)).max(20).optional(),
 	/** Remaining sheet capacity. Explicit people lists use this rather than the discovery target. */
 	availableRows: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
 	/** Keys (domains, profile URLs, URLs) already in the sheet, so results are appended without duplicates. */
 	existingKeys: z.array(z.string()).max(20000).optional(),
 });
-export type PopulateRequest = z.infer<typeof PopulateRequestSchema>;
+/** The temporary per-request limit applies only when starting a new Find rows search. */
+export const FindRowsRequestSchema = PopulateRequestSchema.extend({
+	target: z.number().int().min(1).max(5, 'A single Find rows request can return up to 5 rows while testing.').default(5),
+});
+export type PopulateRequest = Omit<z.infer<typeof PopulateRequestSchema>, 'dataProvider' | 'enrichFullProfiles'> & {
+	dataProvider?: DataProvider;
+	enrichFullProfiles?: boolean;
+};
 
 /** One row found by the populate agent: field name → value; `found-rows.ts` places it in a sheet. */
 export type FoundRow = Record<string, CellValue>;
@@ -334,7 +364,7 @@ export type FoundRow = Record<string, CellValue>;
 export type PopulateEvent =
 	| { type: 'status'; message: string }
 	/** `key` is only read by tabs loaded before the found-rows Module; drop it after one release. */
-	| { type: 'rows'; rows: FoundRow[]; key?: string; meta?: CellMeta }
+	| { type: 'rows'; rows: FoundRow[]; key?: string; meta?: CellMeta; updateExisting?: boolean }
 	| { type: 'done'; total: number; message?: string }
 	| { type: 'error'; message: string; failure?: EnrichFailure };
 
@@ -402,13 +432,14 @@ export interface EnrichResponse {
 
 export const ComposeColumnRequestSchema = z.object({
 	ask: z.string().min(1).max(2000),
+	dataProvider: DataProviderSchema.default('monid'),
 	columns: z.array(z.object({ name: z.string(), type: z.enum(['source', 'enriched']), sample: z.string().optional() })).max(100),
 	entity: z.enum(ENTITY_KINDS).optional(),
 	hasJev: z.boolean().optional(),
 	excludeFormula: z.boolean().optional(),
 	model: z.string().max(100).optional(),
 });
-export type ComposeColumnRequest = z.infer<typeof ComposeColumnRequestSchema>;
+export type ComposeColumnRequest = z.input<typeof ComposeColumnRequestSchema>;
 
 export type FormulaSuggestion = { kind: 'formula'; request: string };
 

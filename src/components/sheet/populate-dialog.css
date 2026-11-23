@@ -9,6 +9,13 @@
 .populate-summary { min-width: 0; color: var(--color-fg-muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .populate-cap { color: var(--color-fg-subtle); }
 .populate-actions { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.populate-provider-note { margin: 8px 12px 0; color: var(--color-fg-subtle); font-size: 11px; line-height: 1.45; }
+.populate-profile-option { display: flex; align-items: flex-start; gap: 9px; margin: 8px 12px 0; color: var(--color-fg-muted); font-size: 12px; line-height: 1.4; cursor: pointer; }
+.populate-profile-option input { flex: 0 0 auto; width: 15px; height: 15px; margin: 1px 0 0; accent-color: var(--color-brand); }
+.populate-profile-option span { display: grid; gap: 2px; }
+.populate-profile-option strong { color: var(--color-fg); font-weight: 500; }
+.populate-profile-option small { color: var(--color-fg-subtle); font-size: 11px; }
+.populate-actions [role="combobox"] { max-width: 190px; height: 32px; padding-inline: 10px 28px; border-color: transparent; border-radius: 999px; background-color: var(--color-neutral-5); font-size: 12px; }
 .populate-country { min-width: 0; }
 .populate-country button[aria-haspopup] { height: 32px; max-width: 200px; padding-inline: 12px 10px; border-color: transparent; border-radius: 999px; background: var(--color-neutral-5); color: var(--color-fg-muted); font-size: 12px; }
 .populate-country button[aria-haspopup]:hover:not(:disabled) { border-color: transparent; background: var(--color-neutral-10); color: var(--color-fg); }
@@ -51,6 +58,7 @@
 	.populate-bottom { padding-left: 8px; }
 	.populate-cap { display: none; }
 	.populate-country button[aria-haspopup] { max-width: 130px; }
+	.populate-actions [role="combobox"] { max-width: 128px; padding-inline: 8px 24px; }
 }
 @media (pointer: coarse) {
 	.populate-composer { --populate-close-size: 44px; }

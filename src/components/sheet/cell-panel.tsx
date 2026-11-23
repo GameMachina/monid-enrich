@@ -278,7 +278,7 @@ function UsageSection({ cell }: { cell: Cell | undefined }) {
 			{meta.dataProvider && <span>Selected data provider: {meta.dataProvider === 'treg' ? 'Treg · Treg team balance' : 'Monid · workspace Monid wallet'}</span>}
 			{meta.credits !== undefined && <span>{meta.credits} Monid credit{plural(meta.credits)}</span>}
 			{meta.monidRuns?.map((run) => <span key={run.runId ?? `${run.provider}:${run.endpoint}`} title={run.runId ? `Monid run ${run.runId}` : undefined}>{monidRunLabel(run.endpoint)} · {run.status}{run.costUsd !== undefined ? ` · $${run.costUsd.toFixed(4)}` : ''}{run.billedUnits !== undefined ? ` · ${run.billedUnits} units` : ''}</span>)}
-			{meta.tregRuns?.map((run) => <span key={run.callId ?? `${run.operation}:${run.endpoint}`} title={run.callId ? `Treg call ${run.callId}` : undefined}>Treg · {run.operation} · {run.status}{run.costUsd !== undefined ? ` · $${run.costUsd.toFixed(4)}` : ''}{run.servedVia ? ` · via ${run.servedVia}` : ''}</span>)}
+			{meta.tregRuns?.map((run) => <span key={run.callId ?? `${run.operation}:${run.endpoint}`} title={run.callId ? `Treg call ${run.callId}` : undefined}>Treg · {run.operation} · {run.status}{run.costUsd !== undefined ? ` · $${run.costUsd.toFixed(4)}` : ''}{run.servedBy ? ` · provider ${run.servedBy}` : ''}{run.servedVia ? ` · via ${run.servedVia}` : ''}{run.tried?.length ? ` · tried ${run.tried.map((attempt) => attempt.provider).join(' → ')}` : ''}</span>)}
 			{meta.enrichment && <span>Monid workspace spent: ${meta.enrichment.costUsd.toFixed(4)}</span>}
 			{meta.provider && !meta.enrichment && <span>{PROVIDER_NAMES[meta.provider]}{providerUsage(meta)}</span>}
 			{meta.durationMs !== undefined && <span>{(meta.durationMs / 1000).toFixed(1)} s</span>}

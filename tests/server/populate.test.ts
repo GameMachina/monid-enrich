@@ -25,6 +25,29 @@ test('Monid-only discovery sends a clean search description while preserving the
 	assert.equal(events.at(-1)?.type, 'done');
 });
 
+test('Treg company discovery uses only the selected Treg route and saves its run receipt with the rows', async (t) => {
+	let requestBody: Record<string, unknown> | undefined;
+	t.mock.method(globalThis, 'fetch', async (input: string | URL | Request, options?: RequestInit) => {
+		assert.equal(String(input), 'https://treg.to/call/treg.companies.search');
+		const headers = new Headers(options?.headers);
+		assert.equal(headers.get('x-treg-token'), 'test-treg');
+		assert.equal(headers.get('x-monid-key'), null);
+		assert.equal(headers.get('x-treg-route-max-cost'), '1');
+		assert.ok(headers.get('idempotency-key'));
+		requestBody = JSON.parse(String(options?.body)) as Record<string, unknown>;
+		return Response.json({ output: { companies: [{ name: 'Solar Co', domain: 'solar.example', description: 'Residential solar', industry: 'Energy', employee_count: 25 }] }, _treg: { status: 'COMPLETED', cost_usd: 0.03, call_id: 'company-call-1' } });
+	});
+	const events: PopulateEvent[] = (await new Response(populateStream(testAccess({ keys: { treg: 'test-treg', monid: 'must-not-be-used' } }), { query: 'Find residential solar installers', entity: 'companies', dataProvider: 'treg', target: 1, idempotencyKey: 'find-treg-company-1' })).text()).trim().split('\n').map((line) => JSON.parse(line));
+	assert.deepEqual(requestBody, { q: 'residential solar installers', limit: 1 });
+	const rows = events.flatMap((event) => event.type === 'rows' ? event.rows : []);
+	assert.equal(rows.length, 1);
+	assert.equal(rows[0]?.Domain, 'solar.example');
+	const rowEvent = events.find((event) => event.type === 'rows');
+	assert.equal(rowEvent?.type === 'rows' ? rowEvent.meta?.dataProvider : undefined, 'treg');
+	assert.equal(rowEvent?.type === 'rows' ? rowEvent.meta?.tregRuns?.[0]?.callId : undefined, 'company-call-1');
+	assert.deepEqual(events.filter((event) => event.type === 'error'), []);
+});
+
 test('company discovery skips companies the sheet lists and maps funding rounds to persistable Stage cells', async (t) => {
 	t.mock.method(globalThis, 'fetch', async (input: string | URL | Request, options?: RequestInit) => {
 		const request = new Request(input, options);

@@ -4,7 +4,7 @@ For installation, see the [README](../README.md#self-host-in-5-minutes).
 
 ## How a sheet works
 
-1. **Find rows.** "Every residential solar installer in the United States." Pick companies, people or websites and a target count. An OpenAI agent plans the queries, pages through Context.dev company/people/web search, and streams de-duplicated rows into the sheet. The model only sees counts and cursors, never the records, so a 1,000-row list costs a few thousand tokens of orchestration.
+1. **Find rows.** "Every residential solar installer in the United States." Pick companies, people or websites and a target count. An OpenAI agent plans the queries, pages through the selected data provider's search, and streams de-duplicated rows into the sheet. The model only sees counts and cursors, never the records. Find rows is capped at five per request while testing; run another batch to add more.
 2. **Add an AI column.** Type what you want to know. Enrichable composes the right operation (or configure it by hand). Reference other columns as `{{Website}}`.
 3. **Run.** Cells run in parallel with a configurable concurrency, retry on rate limits, and wait for the columns they reference. Every cell keeps its sources, probability or confidence, reasoning, credits and timing. Click a cell to see them, edit the value, or re-run it.
 4. **Filter, sort, export.** Filters per column (contains, is true, greater than, is empty, has an error…), sorting, search, row selection, CSV (with or without confidence and sources), Excel and JSON. Filters and sort are yours: they are kept in this browser for your account and never change what teammates see or export. Exports follow your current view.
@@ -21,17 +21,17 @@ While typing in an editor, the shortcuts undo text edits. Background enrichment 
 
 ### Column operations
 
-**Add → AI column** opens one composer: describe what you want and Monid Enrich picks the operation, or choose one yourself. The Add column menu also has dedicated contact lookup columns.
+**Add → AI column** opens one composer: choose a data provider, describe what you want, and Monid Enrich picks the operation, or choose one yourself. The Add column menu also has dedicated contact lookup columns.
 
 | Group | Operations | Services |
 | --- | --- | --- |
-| AI answer | **Ask AI** answers a question about each row, researching the web when it needs to. **Deep research** returns a sourced answer from many pages. **Email draft** writes a personalized email, or fills a template from columns. | OpenAI + Monid |
-| Classify | **True / false** returns a yes/no with a calibrated probability (it can read a page first). **Category** picks one of your options. **Score** rates rows on levels you define. | TypeSafe (or OpenAI) + Monid |
-| Web page | **Read a page** keeps page text, relevant passages, links or extracted fields. **Web search** keeps the top URL, title or snippet. | Monid |
-| Company & person | Firmographics, funding, links and socials for a company; title, employer, education and profiles for a person. | Monid |
-| Find email | **Work email** tries the selected Monid providers top to bottom and keeps the first work email found. | Monid workspace wallet |
-| Find phone number | Tries the selected Monid phone providers in order and keeps the first number found. | Monid workspace wallet |
-| Find social | Select LinkedIn, Instagram, Facebook, X, TikTok, or YouTube; search for a matching public profile with selected Monid providers. | Monid workspace wallet |
+| AI answer | **Ask AI** answers a question about each row, researching the web when it needs to. **Deep research** returns a sourced answer from many pages. **Email draft** writes a personalized email, or fills a template from columns. | User's OpenAI key for reasoning; explicit Monid/Treg choice for data |
+| Classify | **True / false** returns a yes/no with a calibrated probability (it can read a page first). **Category** picks one of your options. **Score** rates rows on levels you define. | User's OpenAI key; explicit Monid/Treg choice when reading a page |
+| Web page | **Read a page** keeps page text, relevant passages, links or extracted fields. **Web search** keeps the top URL, title or snippet. | Explicit Monid/Treg choice |
+| Company & person | Firmographics, funding, links and socials for a company; title, employer and profiles for a person. | Explicit Monid/Treg choice |
+| Find email | **Work email** uses the selected provider; Monid offers its ordered provider waterfall. | Monid workspace wallet or separate Treg team balance |
+| Find phone number | Uses the selected provider; Monid offers its ordered phone waterfall. | Monid workspace wallet or separate Treg team balance |
+| Find social | Select LinkedIn, Instagram, Facebook, X, TikTok, or YouTube; search for a matching public profile through the selected provider. | Monid workspace wallet or separate Treg team balance |
 | Formula | **Formula** calculates locally with a 10-row preview. **Text template** combines columns. No API calls. | None |
 
 Runs of more than 50 cells, or roughly 100+ credits, ask for confirmation with a cost estimate first.
@@ -83,16 +83,18 @@ as comma-separated references, suitable for functions such as SUM and AVERAGE.
 
 For self-hosting, enter your optional Logo Link public client ID in Configuration → Connections → Context.dev. Automatic Logo Link connection through Context.dev sign-in is available only on the official hosted service.
 
-## Monid enrichment
+## Data providers and enrichment
 
-Connect a Monid API key in Configuration → Connections. Enrichment runs use the workspace Monid wallet; vendor credentials are not entered into Monid Enrich. Each column stores its provider order, and a waterfall advances only when a provider completes without a match. Errors and uncertain timeouts stop the chain to avoid submitting additional paid requests.
+Connect Monid, Treg, or both in Configuration → Connections. Select the provider on each supported column before running it. Monid charges the workspace Monid wallet; Treg charges the connected Treg team's balance. Credentials, usage, receipts, and billing remain separate, and a selected provider never falls back to the other.
+
+The Monid contact columns keep their provider waterfalls, and advance only when a provider completes without a match. Errors and uncertain timeouts stop a waterfall to avoid submitting additional paid requests.
 
 - **Find email** offers QuickEnrich, Hunter, Apollo, Prospeo, and ContactOut through Monid. Add a person name and company domain; LinkedIn is optional for routes that support it.
 - **Find phone number** offers LeadMagic, Clay, AI Ark, Reverse Contact, and Prospeo through Monid. The provider list shows starting prices; actual run cost and Monid run IDs appear in cell details.
 - **Find social** supports LinkedIn, Instagram, Facebook, X, TikTok, and YouTube. Available Monid routes vary by network. Search results are checked against the requested profile host and person name before a URL is saved.
 
-Unsupported networks such as Threads and Bluesky are not offered until a suitable Monid route is inspected and added. OpenAI reasoning remains a separate optional user key and is not used for these provider lookups.
+Treg can also power company/people discovery, company/person data, company funding-event lookups, web search and page reading, email verification, and social-profile search. Its current unsupported fields and modes are listed in [Treg provider support](treg-provider.md). OpenAI reasoning remains a separate optional user key and is not used for these provider lookups.
 
 ### Treg lookups
 
-Email, phone, and LinkedIn/Instagram/TikTok lookup columns can select Treg instead. The editor shows the selected provider's billing note before a run. Treg calls use the connected Treg team's own balance, run history, and receipts; they never use Monid credentials or wallet funds. Treg company search, general web research, verification, other social networks, publishing, and advertising are not wired yet. See [Treg provider support](treg-provider.md) for exact routes and limitations.
+All supported data columns expose an explicit provider choice. The editor shows the selected provider's billing note before a run. Treg calls use the connected Treg team's own balance, run history, and receipts; they never use Monid credentials or wallet funds. See [Treg provider support](treg-provider.md) for exact routes and limitations.

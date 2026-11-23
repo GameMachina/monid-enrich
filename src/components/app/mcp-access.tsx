@@ -88,6 +88,6 @@ function AgentKeyActions({ agentKey, busy, visible, onCopy, onToggle, onRotate }
 
 function AgentConnectionNote({ selfHosted, context }: { selfHosted: boolean; context: Connection }) {
 	if (selfHosted) return <p className="text-caption text-fg-subtle"><span className="font-medium text-fg-muted">Required:</span> agents send <code className="font-mono">x-monid-key</code>, and add <code className="font-mono">x-openai-key</code> only for reasoning features. Keys saved in this browser are not shared with agents.</p>;
-	if (context.source === 'signin' && context.expiresAt) return <p className="text-caption text-fg-subtle">Agents use your workspace’s Monid connection, which {formatExpiry(context.expiresAt)}. Add a Monid API key in Connections for ongoing access.</p>;
+	if (context.source === 'signin' && context.expiresAt) return <p className="text-caption text-fg-subtle">Agents use your workspace’s provider connections, which {formatExpiry(context.expiresAt)}. Add the required provider keys in Connections for ongoing access.</p>;
 	return <p className="text-caption text-fg-subtle">Agents use your workspace’s connections and defaults.</p>;
 }

@@ -1,18 +1,19 @@
 'use client';
 
-import type { EnrichFailure, EntityKind, PopulateRequest, Sheet } from '@/lib/types';
+import type { DataProvider, EnrichFailure, EntityKind, PopulateRequest, Sheet } from '@/lib/types';
 import { columnsEntity } from '@/lib/column-roles';
 import { deleteSheet } from '@/lib/db';
 import { foundRowColumns } from '@/lib/found-rows';
 import { DEFAULT_POPULATE_LIMIT, MAX_POPULATE_LIMIT, populateLimitError, promptEntity, promptResultCount } from '@/lib/populate-limit';
 import { populateRunner, type PopulateState } from '@/lib/populate-runner';
 import { Dialog } from '@/components/ui/dialog';
-import { Segmented } from '@/components/ui/field';
+import { Segmented, Select } from '@/components/ui/field';
 import { AutoTextarea } from '@/components/ui/auto-textarea';
 import { CountryPicker } from '@/components/ui/country-picker';
 import { useToast } from '@/components/ui/toast';
 import { isImeComposing } from '@/components/ui/keyboard';
 import { trackEvent } from '@/lib/analytics';
+import { useSettings } from '@/components/app/settings-context';
 import { ArrowRight, Info, TriangleAlert, X } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { FailureFix } from './halted-banner';
@@ -35,7 +36,7 @@ function sheetEntity(sheet: Sheet): EntityKind {
 }
 
 /** Until `picked` (a click in the picker), the prompt chooses what to find: "heads of growth at …" finds people. */
-export interface FindRowsDraft { entity: EntityKind; query: string; countries: string[]; picked?: boolean }
+export interface FindRowsDraft { entity: EntityKind; query: string; countries: string[]; dataProvider?: DataProvider; enrichFullProfiles?: boolean; picked?: boolean }
 
 /** "Adds Website, Description columns · skips rows already in the sheet": what Find rows changes in a sheet that has rows or columns. */
 function sheetChanges(sheet: Sheet, entity: EntityKind, rowCount: number) {
@@ -51,15 +52,20 @@ function sheetChanges(sheet: Sheet, entity: EntityKind, rowCount: number) {
  */
 export function FindRowsComposer({ draft, onDraftChange, onSubmit, busy = false, error, errorAction, notice, fallbackEntity = 'companies', onClose, autoFocus, children }: { draft: FindRowsDraft; onDraftChange: (draft: FindRowsDraft) => void; onSubmit: (request: PopulateRequest) => void; busy?: boolean; error?: string | null; errorAction?: ReactNode; notice?: string | null; fallbackEntity?: EntityKind; onClose?: () => void; autoFocus?: boolean; children?: ReactNode }) {
 	const countryId = useId();
+	const providerId = useId();
 	const messageId = useId();
 	const { entity, query, countries } = draft;
+	const dataProvider = draft.dataProvider ?? 'monid';
+	const fullProfileDetails = dataProvider === 'treg' && entity === 'people' && (draft.enrichFullProfiles ?? true);
+	const { connections } = useSettings();
 	const target = promptResultCount(query) ?? DEFAULT_POPULATE_LIMIT;
 	const limitError = populateLimitError(target);
 	const message = limitError ?? error;
-	const ready = query.trim().length >= 3 && !limitError && !busy;
+	const tregWebsiteCountryGap = dataProvider === 'treg' && entity === 'websites' && countries.length > 0;
+	const ready = query.trim().length >= 3 && !limitError && !busy && !tregWebsiteCountryGap;
 	const submit = (event?: FormEvent) => {
 		event?.preventDefault();
-		if (ready) onSubmit({ query: query.trim(), entity, target, countries });
+		if (ready) onSubmit({ query: query.trim(), entity, target, countries, dataProvider, enrichFullProfiles: fullProfileDetails, idempotencyKey: crypto.randomUUID() });
 	};
 	return (
 		<form className="populate-composer" onSubmit={submit} noValidate>
@@ -83,6 +89,11 @@ export function FindRowsComposer({ draft, onDraftChange, onSubmit, busy = false,
 					<div className="populate-bottom">
 						<span className="populate-summary">{limitError ? '—' : entityCount(entity, target)}<span className="populate-cap"> · up to {MAX_POPULATE_LIMIT}</span></span>
 						<span className="populate-actions">
+							<label htmlFor={providerId} className="sr-only">Data provider</label>
+							<Select id={providerId} value={dataProvider} onValueChange={(value) => onDraftChange({ ...draft, dataProvider: value as DataProvider })}>
+								<option value="monid">Monid · workspace wallet</option>
+								<option value="treg">Treg · team balance</option>
+							</Select>
 							<span className="populate-country">
 								<label htmlFor={countryId} className="sr-only">Countries</label>
 								<CountryPicker id={countryId} value={countries} onChange={(next) => onDraftChange({ ...draft, countries: next })} disabled={busy} />
@@ -92,6 +103,14 @@ export function FindRowsComposer({ draft, onDraftChange, onSubmit, busy = false,
 					</div>
 				</fieldset>
 			</div>
+			{connections[dataProvider].state === 'missing' || connections[dataProvider].state === 'expired'
+				? <p role="status" className="populate-provider-note">Connect {dataProvider === 'treg' ? 'Treg' : 'Monid'} in Configuration before searching. This search will not use the other provider.</p>
+				: <p className="populate-provider-note">Selected: {dataProvider === 'treg' ? 'Treg · billed to your Treg team balance' : 'Monid · billed to your workspace Monid wallet'}.</p>}
+			{dataProvider === 'treg' && entity === 'people' && <label className="populate-profile-option">
+				<input type="checkbox" checked={fullProfileDetails} onChange={(event) => onDraftChange({ ...draft, enrichFullProfiles: event.target.checked })} />
+				<span><strong>Get full LinkedIn profile details</strong><small>Schools, skills, about and experience years. Matching profiles already in this sheet are refreshed too; only blank cells are filled. Up to $0.0342/profile (about ${(target * 0.0342).toFixed(3)} for ${target}), including a company-domain lookup when needed. Treg search is billed separately; misses may still be billed.</small></span>
+			</label>}
+			{tregWebsiteCountryGap && <p role="note" className="populate-provider-note">Treg website search does not support country filters. Remove the selected countries or switch to Monid to continue.</p>}
 			{children}
 		</form>
 	);
@@ -104,7 +123,7 @@ export function PopulateDialog({ sheet, rowCount, initialEntity, onClose, onGene
 	const { toast } = useToast();
 	const router = useRouter();
 	// A sheet with rows keeps its kind; an empty one follows the prompt until the user picks.
-	const [draft, setDraft] = useState<FindRowsDraft>(() => ({ entity: initialEntity ?? sheetEntity(sheet), query: sheet.populate?.query ?? '', countries: sheet.populate?.countries ?? [], picked: Boolean(initialEntity) || rowCount > 0 }));
+	const [draft, setDraft] = useState<FindRowsDraft>(() => ({ entity: initialEntity ?? sheetEntity(sheet), query: sheet.populate?.query ?? '', countries: sheet.populate?.countries ?? [], dataProvider: sheet.populate?.dataProvider ?? 'monid', picked: Boolean(initialEntity) || rowCount > 0 }));
 	// A search handed off from the Sheets page is already streaming: stay collapsed until it settles.
 	const [view, setView] = useState<View>(() => { const run = populateRunner.getSnapshot(sheet.id); return run.handoff && run.running ? 'hidden' : 'form'; });
 	// The Sheets page created this sheet for its search; if nothing came of it, closing removes the empty sheet.
@@ -115,9 +134,14 @@ export function PopulateDialog({ sheet, rowCount, initialEntity, onClose, onGene
 	function present(result: PopulateState) {
 		const entity = result.request?.entity ?? draft.entity;
 		if (result.phase === 'stopped' || result.phase === 'idle') { onClose(); return; }
-		if (result.phase === 'finished' && result.added > 0) { toast(`Added ${entityCount(entity, result.added)}`, 'success'); onClose(); return; }
+		if (result.phase === 'finished' && (result.added > 0 || result.updated > 0)) {
+			const profileSummary = result.request?.dataProvider === 'treg' && result.request.enrichFullProfiles ? result.completionMessage : null;
+			toast(profileSummary ?? `Added ${entityCount(entity, result.added)}${result.updated ? ` · updated ${result.updated} existing rows` : ''}`, 'success');
+			onClose();
+			return;
+		}
 		setView('form');
-		if (result.phase === 'finished') setNotice(`Search finished: no ${NOUNS[entity][1]} matched. Try a broader description${result.request?.countries?.length ? ' or remove country filters' : ''}.`);
+		if (result.phase === 'finished') setNotice(result.completionMessage ?? `Search finished: no ${NOUNS[entity][1]} matched. Try a broader description${result.request?.countries?.length ? ' or remove country filters' : ''}.`);
 		else setError({ message: result.error ?? 'Could not find rows. Try again.', failure: result.failure });
 	}
 	const presentHandoff = useEffectEvent((result: PopulateState, late: boolean) => {

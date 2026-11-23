@@ -19,7 +19,10 @@ export interface PopulateState {
 	running: boolean;
 	status: string;
 	added: number;
+	updated: number;
 	error: string | null;
+	/** Provider-supplied explanation for a completed search with no rows. */
+	completionMessage: string | null;
 	/** Why a failed search failed, when the server says: a missing or rejected key offers its fix. */
 	failure?: EnrichFailure;
 	request?: PopulateRequest;
@@ -29,7 +32,7 @@ export interface PopulateState {
 	hidden: ReadonlySet<string>;
 	revealAt: ReadonlyMap<string, number>;
 }
-const idle: PopulateState = { phase: 'idle', running: false, status: '', added: 0, error: null, handoff: false, hidden: new Set(), revealAt: new Map() };
+const idle: PopulateState = { phase: 'idle', running: false, status: '', added: 0, updated: 0, error: null, completionMessage: null, handoff: false, hidden: new Set(), revealAt: new Map() };
 
 class PopulateRunner {
 	private states = new Map<string, PopulateState>();
@@ -122,7 +125,7 @@ class PopulateRunner {
 			const added = this.getSnapshot(sheet.id).added;
 			this.patch(sheet.id, stopped
 				? { phase: 'stopped', running: false, status: 'Stopped', error: null }
-				: { ...outcome, running: false, status: outcome.phase === 'finished' ? `${added.toLocaleString()} rows added` : 'Could not finish finding rows' });
+			: { ...outcome, running: false, status: outcome.phase === 'finished' ? `${added.toLocaleString()} rows added${this.getSnapshot(sheet.id).updated ? ` · ${this.getSnapshot(sheet.id).updated.toLocaleString()} updated` : ''}` : 'Could not finish finding rows' });
 		}
 		return this.getSnapshot(sheet.id);
 	}
@@ -148,13 +151,16 @@ class PopulateRunner {
 		const request = { ...input, target, availableRows: capacity, existingKeys: key ? rows.map((row) => foundRowKey(row.cells[key.id]?.v)).filter(Boolean).slice(0, 20000) : [] };
 		const { completed } = await streamPopulate(request, async (event) => {
 			if (event.type === 'status') this.patch(sheet.id, { status: event.message });
+			if (event.type === 'done') this.patch(sheet.id, { completionMessage: event.message ?? null });
 			if (event.type === 'rows') {
 				const remaining = Math.max(0, (input.entity === 'people' ? capacity : target) - this.getSnapshot(sheet.id).added);
 				if (remaining) {
 					const current = await db.sheets.get(sheet.id);
 					if (!current) { this.stop(sheet.id); return; }
 					const { records, cellMeta, dedupeOn } = foundRecords(input.entity, event.rows.slice(0, remaining), current.columns, event.meta);
-					await appendRows(sheet.id, records, { source: 'find-rows', cellMeta, createColumns: true, dedupeOn, history: false, onAdded: (added) => this.queue(sheet.id, added) });
+					await appendRows(sheet.id, records, { source: 'find-rows', cellMeta, createColumns: true, dedupeOn, mergeExisting: event.updateExisting, history: false, onAdded: (added) => this.queue(sheet.id, added), onUpdated: (count) => {
+						if (count) this.patch(sheet.id, { updated: this.getSnapshot(sheet.id).updated + count });
+					} });
 				}
 			}
 		}, signal);

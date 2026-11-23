@@ -6,17 +6,19 @@ import { COMPANY_SEARCH_DELAY_MS, COMPANY_SEARCH_MIN_LENGTH, type CompanySuggest
 import { contextRequest } from '@/lib/context-credits';
 import { keyHeaders } from '@/lib/keys';
 import { logoLinkUrl } from '@/lib/organization-logo';
+import type { DataProvider } from '@/lib/types';
 import { Building2 } from 'lucide-react';
 import { type KeyboardEvent, type RefObject, useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
 import { LogoLinkImage } from './logolink-image';
+import { isReady } from '../app/providers';
 
 function CompanyPreview({ domain, clientId }: { domain: string; clientId: string }) {
 	return <LogoLinkImage src={clientId ? logoLinkUrl(clientId, domain) : null} size={28} className="rounded-md" fallback={<Building2 className="size-4 text-fg-subtle" strokeWidth={1.5} />} />;
 }
 
 type Position = { left: number; top: number; width: number; maxHeight: number };
-type Search = { query: string; companies: CompanySuggestion[]; error?: string };
+type Search = { query: string; dataProvider: DataProvider; companies: CompanySuggestion[]; error?: string };
 
 const VARIANTS = {
 	inline: { wrapper: 'absolute inset-0 z-10', input: 'h-full w-full bg-surface px-3 text-body-sm text-fg shadow-[inset_0_0_0_1.5px_var(--color-brand)] outline-none' },
@@ -37,7 +39,7 @@ export function CompanyEditor({ value, onChange, onSelect, onCommit, onCancel, o
 	selectInitial?: boolean;
 	inline?: boolean;
 }) {
-	const { settings, server } = useSettings();
+	const { settings, server, connections } = useSettings();
 	const input = useRef<HTMLInputElement>(null);
 	const popup = useRef<HTMLDivElement>(null);
 	const listId = useId();
@@ -45,11 +47,13 @@ export function CompanyEditor({ value, onChange, onSelect, onCommit, onCancel, o
 	const [typed, setTyped] = useState(false);
 	const [dismissed, setDismissed] = useState(false);
 	const [active, setActive] = useState(-1);
+	const [dataProvider, setDataProvider] = useState<DataProvider>('monid');
 	const query = value.trim();
-	const canSearch = Boolean(settings.monidKey || server?.monid);
+	const connection = connections[dataProvider];
+	const canSearch = isReady(connection) || Boolean(dataProvider === 'monid' ? settings.monidKey || server?.monid : settings.tregKey || server?.treg);
 	const open = focused && !dismissed && !query.startsWith('=');
 	const eligible = open && typed && canSearch && searchable(query);
-	const current = useCompanySearch(query, eligible);
+	const current = useCompanySearch(query, eligible, dataProvider);
 	const companies = eligible ? current?.companies ?? [] : [];
 	const position = useAnchoredPosition(open, input, popup, current, companies.length);
 
@@ -90,24 +94,28 @@ export function CompanyEditor({ value, onChange, onSelect, onCommit, onCancel, o
 		<input ref={input} role="combobox" aria-label="Company" aria-autocomplete="list" aria-expanded={open} aria-controls={open ? listId : undefined} aria-activedescendant={optionId(listId, active, companies)} autoComplete="off" spellCheck={false} value={value}
 			onFocus={() => { setFocused(true); setDismissed(false); }}
 			onChange={(event) => { setTyped(true); setDismissed(false); setActive(-1); onChange(event.target.value); }}
-			onBlur={() => { setFocused(false); onBlur?.(); }}
+			onBlur={(event) => {
+				const next = event.relatedTarget;
+				if (next instanceof Node && popup.current?.contains(next)) return;
+				setFocused(false); onBlur?.();
+			}}
 			onKeyDown={onKeyDown}
 			className={variant.input} />
-		{open && <CompanySuggestions ref={popup} id={listId} busy={eligible && !current} position={position} companies={companies} active={active} onActive={setActive} onChoose={choose} message={searchMessage(canSearch, typed, query, current)} />}
+		{open && <CompanySuggestions ref={popup} id={listId} provider={dataProvider} onProviderChange={(value) => { setDataProvider(value); setActive(-1); }} busy={eligible && !current} position={position} companies={companies} active={active} onActive={setActive} onChoose={choose} message={searchMessage(dataProvider, canSearch, typed, query, current)} />}
 	</div>;
 }
 
 const optionId = (listId: string, active: number, companies: CompanySuggestion[]) => active >= 0 && companies[active] ? `${listId}-${active}` : undefined;
 
-function searchMessage(canSearch: boolean, typed: boolean, query: string, current: Search | null) {
-	if (!canSearch) return 'Connect Monid in Configuration to search companies.';
+function searchMessage(provider: DataProvider, canSearch: boolean, typed: boolean, query: string, current: Search | null) {
+	if (!canSearch) return `Connect ${provider === 'treg' ? 'Treg' : 'Monid'} in Configuration to search companies.`;
 	if (!typed || query.length < 3) return 'Type at least 3 characters to search companies.';
 	if (query.length > 200) return 'Use up to 200 characters to search.';
 	return current?.error ?? (!current ? 'Searching…' : 'No companies found. You can enter a name manually.');
 }
 
-/** Debounced, cached Monid company search for `query` while `eligible`; null until results for it arrive. */
-function useCompanySearch(query: string, eligible: boolean) {
+/** Debounced, cached company search through the explicitly selected provider. */
+function useCompanySearch(query: string, eligible: boolean, dataProvider: DataProvider) {
 	const { settings, connections } = useSettings();
 	const [search, setSearch] = useState<Search | null>(null);
 	const cache = useRef(new Map<string, CompanySuggestion[]>());
@@ -115,10 +123,10 @@ function useCompanySearch(query: string, eligible: boolean) {
 		if (!eligible) return;
 		const controller = new AbortController();
 		const timer = setTimeout(() => {
-			const cacheKey = JSON.stringify([query.toLowerCase(), connections.monid.state]);
+			const cacheKey = JSON.stringify([query.toLowerCase(), dataProvider, connections[dataProvider].state]);
 			const cached = cache.current.get(cacheKey);
-			if (cached) { setSearch({ query, companies: cached }); return; }
-			void contextRequest('/api/companies/search', { method: 'POST', headers: keyHeaders(settings), body: JSON.stringify({ query }), signal: controller.signal })
+			if (cached) { setSearch({ query, dataProvider, companies: cached }); return; }
+			void contextRequest('/api/companies/search', { method: 'POST', headers: keyHeaders(settings), body: JSON.stringify({ query, dataProvider }), signal: controller.signal })
 				.then(async (response) => {
 					const data = await response.json() as { companies?: CompanySuggestion[]; error?: string };
 					if (!response.ok) throw new Error(data.error ?? 'Company search is unavailable. You can still enter a company manually.');
@@ -126,15 +134,15 @@ function useCompanySearch(query: string, eligible: boolean) {
 					const results = data.companies ?? [];
 					if (cache.current.size >= 20) cache.current.delete(cache.current.keys().next().value!);
 					cache.current.set(cacheKey, results);
-					setSearch({ query, companies: results });
+					setSearch({ query, dataProvider, companies: results });
 				})
 				.catch((error: unknown) => {
-					if (!controller.signal.aborted) setSearch({ query, companies: [], error: error instanceof Error ? error.message : 'Company search is unavailable. You can still enter a company manually.' });
+					if (!controller.signal.aborted) setSearch({ query, dataProvider, companies: [], error: error instanceof Error ? error.message : 'Company search is unavailable. You can still enter a company manually.' });
 				});
 		}, COMPANY_SEARCH_DELAY_MS);
 		return () => { clearTimeout(timer); controller.abort(); };
-	}, [connections.monid.state, eligible, query, settings]);
-	return search?.query === query ? search : null;
+	}, [connections, dataProvider, eligible, query, settings]);
+	return search?.query === query && search.dataProvider === dataProvider ? search : null;
 }
 
 /** Fixed position for the suggestions under the input, flipping above it when there is more room there. Re-placed as results arrive. */
@@ -163,15 +171,24 @@ function useAnchoredPosition(open: boolean, anchor: RefObject<HTMLElement | null
 
 const popupStyle = (position: Position | null) => ({ left: position?.left ?? -9999, top: position?.top ?? -9999, width: position?.width ?? 280, maxHeight: position?.maxHeight ?? 320 });
 
-function CompanySuggestions({ ref, id, busy, position, companies, active, onActive, onChoose, message }: { ref: RefObject<HTMLDivElement | null>; id: string; busy: boolean; position: Position | null; companies: CompanySuggestion[]; active: number; onActive: (index: number) => void; onChoose: (company: CompanySuggestion) => void; message: string }) {
+function CompanySuggestions({ ref, id, provider, onProviderChange, busy, position, companies, active, onActive, onChoose, message }: { ref: RefObject<HTMLDivElement | null>; id: string; provider: DataProvider; onProviderChange: (value: DataProvider) => void; busy: boolean; position: Position | null; companies: CompanySuggestion[]; active: number; onActive: (index: number) => void; onChoose: (company: CompanySuggestion) => void; message: string }) {
 	const { settings } = useSettings();
 	// No <body> during a server render; the list only opens on the client.
 	const portal = useSyncExternalStore(subscribeNothing, () => document.body, () => null);
 	if (!portal) return null;
-	return createPortal(<div ref={ref} id={id} role="listbox" aria-label="Company suggestions" aria-busy={busy} className="fixed z-[80] overflow-y-auto rounded-xl border border-line bg-surface p-1 shadow-lg" style={popupStyle(position)} onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); }} onClick={(event) => event.stopPropagation()}>
-		{companies.length ? companies.map((company, index) => <div key={company.domain} id={`${id}-${index}`} role="option" aria-selected={active === index} onMouseEnter={() => onActive(index)} onClick={() => onChoose(company)} className={`flex cursor-pointer items-center gap-2 rounded-lg px-2 py-2 ${active === index ? 'bg-blue-10' : 'hover:bg-neutral-5'}`}>
+	return createPortal(<div ref={ref} className="fixed z-[80] overflow-hidden rounded-xl border border-line bg-surface p-1 shadow-lg" style={popupStyle(position)} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}>
+		<div className="flex items-center justify-between gap-3 border-b border-line-subtle px-2 py-1.5 text-caption text-fg-muted">
+			<span>Search company suggestions with</span>
+			<select aria-label="Company search provider" value={provider} onChange={(event) => onProviderChange(event.target.value as DataProvider)} className="rounded-md border border-line bg-surface px-2 py-1 text-caption text-fg outline-none focus:border-brand">
+				<option value="monid">Monid</option>
+				<option value="treg">Treg</option>
+			</select>
+		</div>
+		<div id={id} role="listbox" aria-label="Company suggestions" aria-busy={busy} className="max-h-[280px] overflow-y-auto">
+		{companies.length ? companies.map((company, index) => <div key={company.domain} id={`${id}-${index}`} role="option" aria-selected={active === index} onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); }} onMouseEnter={() => onActive(index)} onClick={() => onChoose(company)} className={`flex cursor-pointer items-center gap-2 rounded-lg px-2 py-2 ${active === index ? 'bg-blue-10' : 'hover:bg-neutral-5'}`}>
 			<CompanyPreview key={`${company.domain}:${settings.logolinkKey}`} domain={company.domain} clientId={settings.logolinkKey} />
 			<span className="flex min-w-0 flex-col"><span className="truncate text-body-sm text-fg">{company.name}</span><span className="truncate text-caption text-fg-subtle">{company.domain}</span></span>
 		</div>) : <div role="status" className="px-2 py-2 text-caption text-fg-muted">{message}</div>}
+		</div>
 	</div>, portal);
 }

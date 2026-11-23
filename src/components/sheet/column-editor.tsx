@@ -10,7 +10,7 @@ import { formatValue } from '@/lib/template';
 import { ColumnOpInputSchema, columnNameFromQuestion, OPERATIONS } from '@/lib/operations';
 import { danglingReferences, nameTaken, uniqueName } from '@/lib/references';
 import type { RunPlan, SheetCommands } from '@/lib/sheet-commands';
-import type { Column, ColumnOp, Row, Sheet } from '@/lib/types';
+import type { Column, ColumnOp, DataProvider, Row, Sheet } from '@/lib/types';
 import { useSettings } from '@/components/app/settings-context';
 import { Button } from '@/components/ui/button';
 import { Dialog } from '@/components/ui/dialog';
@@ -72,6 +72,7 @@ function withPhoneStrategy(op: ColumnOp, fallback: PhoneProviderStrategy): Colum
 function useColumnComposer({ sheet, column, initialOp, initialName, sampleRow, jevAvailable, columnOptions, formulaColumns, formulaColumn, onReplace, setError }: ComposerInput) {
 	const [step, setStep] = useState<Step>(column || initialOp ? { step: 'setup', rationale: null } : { step: 'ask' });
 	const [ask, setAsk] = useState('');
+	const [dataProvider, setDataProvider] = useState<DataProvider>('monid');
 	const [op, setOp] = useState<EditorOp>(column?.op ? legacyPhoneStrategy(column.op) : initialOp ?? defaultOp('ai', sheet.columns, jevAvailable));
 	const [name, setName] = useState(column?.name ?? initialName ?? '');
 	const nameEdited = useRef(Boolean(column || initialName));
@@ -95,7 +96,7 @@ function useColumnComposer({ sheet, column, initialOp, initialName, sampleRow, j
 		setStep({ step: 'composing', from });
 		setError(null);
 		try {
-			const result = await requestComposition({ ask: requestAsk, excludeFormula, sheet, columns: columnOptions, sampleRow, jevAvailable, formulaColumns, formulaColumn });
+			const result = await requestComposition({ ask: requestAsk, dataProvider, excludeFormula, sheet, columns: columnOptions, sampleRow, jevAvailable, formulaColumns, formulaColumn });
 			if (!current()) return;
 			if (result === 'formula-failed') { await compose(true, requestAsk, from); return; }
 			setComposed((previous) => ({ version: previous.version + 1, formula: result.formula ?? '=', formulaAsk: requestAsk, autoFormula: result.formula !== undefined }));
@@ -125,7 +126,7 @@ function useColumnComposer({ sheet, column, initialOp, initialName, sampleRow, j
 	};
 	/** Back to the prompt alone; the operation set up so far stays for Configure manually. */
 	const describe = () => setStep({ step: 'ask' });
-	return { step, ask, setAsk, op, replaceOp, name, editName, composed, compose, switchKind, openSetup, describe };
+	return { step, ask, setAsk, dataProvider, setDataProvider, op, replaceOp, name, editName, composed, compose, switchKind, openSetup, describe };
 }
 
 /** Whether the op parses, its {{references}} resolve, and the name is set and unique. */
@@ -235,7 +236,7 @@ export function ColumnEditorDialog({ sheet, column, sampleRow, rows, insertAt, i
 		>
 			<div className="flex flex-col gap-5">
 				<InlineWarning message={error} />
-				{composerOnly && <Composer ask={draft.ask} onAsk={draft.setAsk} columns={columnOptions} composing={composing} disabled={composing || saving} onCompose={composeAsk} onSetup={draft.openSetup} onClose={onClose} />}
+				{composerOnly && <Composer ask={draft.ask} onAsk={draft.setAsk} dataProvider={draft.dataProvider} onDataProvider={draft.setDataProvider} columns={columnOptions} composing={composing} disabled={composing || saving} onCompose={composeAsk} onSetup={draft.openSetup} onClose={onClose} />}
 				{!composerOnly && <>
 					{!dedicatedKind && <SetupHeader step={draft.step} ask={draft.ask} editing={Boolean(column)} busy={composing || saving} kind={op.kind} onKind={draft.switchKind} onDescribe={draft.describe} canTemplate={column?.op?.kind === 'template'} />}
 					{op.kind === 'formula'
@@ -266,9 +267,10 @@ function sampleRowNumber(rows: Row[], sampleRow: Row | undefined) {
 interface Composition { op: EditorOp; name: string; rationale: string | null; formula?: string }
 
 /** Ask AI for an operation. A formula is written and returned with its draft; if writing fails, the caller retries without formulas. */
-async function requestComposition({ ask, excludeFormula, sheet, columns, sampleRow, jevAvailable, formulaColumns, formulaColumn }: { ask: string; excludeFormula: boolean; sheet: Sheet; columns: Column[]; sampleRow?: Row; jevAvailable: boolean; formulaColumns: Column[]; formulaColumn: Column }): Promise<Composition | 'formula-failed'> {
+async function requestComposition({ ask, dataProvider, excludeFormula, sheet, columns, sampleRow, jevAvailable, formulaColumns, formulaColumn }: { ask: string; dataProvider: DataProvider; excludeFormula: boolean; sheet: Sheet; columns: Column[]; sampleRow?: Row; jevAvailable: boolean; formulaColumns: Column[]; formulaColumn: Column }): Promise<Composition | 'formula-failed'> {
 	const result = await composeColumn({
 		ask,
+		dataProvider,
 		entity: guessEntity(sheet),
 		hasJev: jevAvailable,
 		excludeFormula,
@@ -327,7 +329,7 @@ function editorFooter({ submit, valid, editing, hint, run, onBack, onSave }: { s
 }
 
 /** A new column starts here: describe it and AI sets it up, or configure it by hand. */
-function Composer({ ask, onAsk, columns, composing, disabled, onCompose, onSetup, onClose }: { ask: string; onAsk: (ask: string) => void; columns: Column[]; composing: boolean; disabled: boolean; onCompose: () => void; onSetup: () => void; onClose: () => void }) {
+function Composer({ ask, onAsk, dataProvider, onDataProvider, columns, composing, disabled, onCompose, onSetup, onClose }: { ask: string; onAsk: (ask: string) => void; dataProvider: DataProvider; onDataProvider: (provider: DataProvider) => void; columns: Column[]; composing: boolean; disabled: boolean; onCompose: () => void; onSetup: () => void; onClose: () => void }) {
 	const promptId = useId();
 	const empty = !ask.trim();
 	return <div className="populate-composer column-composer">
@@ -340,7 +342,7 @@ function Composer({ ask, onAsk, columns, composing, disabled, onCompose, onSetup
 					<ColumnPrompt id={promptId} rows={2} autoFocus disabled={disabled} value={ask} onChange={onAsk} columns={columns} onSubmit={onCompose} placeholder="e.g. Research each company, write a proposal, or draft an email" />
 				</div>
 				<div className="populate-bottom">
-					<div className="column-composer-hint"><span className="populate-summary">Type / to reference a column</span><ColumnPromptHelp /></div>
+					<div className="column-composer-hint"><label className="inline-flex items-center gap-1.5 text-caption text-fg-muted">Provider <select aria-label="Data provider for this AI column" value={dataProvider} disabled={disabled} onChange={(event) => onDataProvider(event.target.value as DataProvider)} className="rounded-md border border-line-subtle bg-surface px-1.5 py-1 text-caption text-fg outline-none focus:border-brand"><option value="monid">Monid</option><option value="treg">Treg</option></select></label><ColumnPromptHelp /></div>
 					<button type="button" aria-busy={composing} disabled={empty || disabled} onClick={onCompose} className="column-composer-create">Create column{composing ? <LoaderCircle aria-hidden size={16} className="animate-spin" /> : <ArrowRight aria-hidden size={16} />}</button>
 				</div>
 			</div>

@@ -73,7 +73,7 @@
     "tsx": "^4.23.15",
     "typescript": "^5"
   },
-  "description": "Standalone spreadsheet for company and people research, enrichment, and review, powered by Monid.",
+  "description": "Standalone spreadsheet for company and people research, enrichment, and review, with Monid and Treg provider choices.",
   "license": "MIT",
   "engines": {
     "node": ">=22.23.4 <23"

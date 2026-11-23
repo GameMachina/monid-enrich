@@ -4,5 +4,5 @@ export const MONID_URL = 'https://app.monid.ai';
 
 export const PRODUCT_NAME = 'Monid Enrich';
 export const SITE_TITLE = `${PRODUCT_NAME}: spreadsheet research and enrichment`;
-export const SITE_LEDE = 'Describe the companies or people you need. Find rows, enrich each one with Monid, and review every answer in a spreadsheet.';
-export const SITE_DESCRIPTION = 'A standalone spreadsheet for company and people research, enrichment, and review, powered by Monid.';
+export const SITE_LEDE = 'Describe the companies or people you need. Choose Monid or Treg to find rows, enrich each one, and review every answer in a spreadsheet.';
+export const SITE_DESCRIPTION = 'A standalone spreadsheet for company and people research, enrichment, and review, with explicit Monid and Treg provider choices.';

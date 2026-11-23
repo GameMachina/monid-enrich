@@ -21,11 +21,14 @@ for (const width of [1360, 390]) {
    await route.fulfill({ json: new URL(route.request().url()).pathname === '/api/sheets' ? [{ sheet, rowCount: rows.length }] : { sheet, rows, next: null } });
   });
   let composed = '';
+  let composedProvider = '';
   let attempts = 0;
   await page.route('**/api/compose-column', async route => {
-   composed = route.request().postDataJSON().ask;
+   const request = route.request().postDataJSON();
+   composed = request.ask;
+   composedProvider = request.dataProvider;
    if (++attempts === 1) return route.fulfill({ status: 502, json: { error: 'Could not compose. Please retry.' } });
-   const op: ColumnOp = { kind: 'ai', prompt: composed, output: 'document', research: 'web' };
+   const op: ColumnOp = { kind: 'ai', dataProvider: request.dataProvider, prompt: composed, output: 'document', research: 'web' };
    await route.fulfill({ json: { name: 'Proposal', op, rationale: 'Write a proposal using the company research in each row.' } });
   });
   await page.goto('/app/sheets/composer');
@@ -34,6 +37,7 @@ for (const width of [1360, 390]) {
   const dialog = page.getByRole('dialog', { name: 'Add AI column', exact: true });
   const prompt = dialog.getByRole('textbox', { name: 'Describe the column', exact: true });
   const compose = dialog.getByRole('button', { name: 'Create column', exact: true });
+  await dialog.getByRole('combobox', { name: 'Data provider for this AI column' }).selectOption('treg');
   await expect(compose).toBeDisabled();
   await prompt.fill('Write a personalized proposal for /company');
   await page.getByRole('option').filter({ hasText: 'Company' }).click();
@@ -63,6 +67,8 @@ for (const width of [1360, 390]) {
   expect(composed).toBe('Write a personalized proposal for {{Company}}');
   await expect(dialog.getByRole('textbox', { name: 'Question', exact: true }).locator('.column-prompt-pill')).toHaveText('Company');
   await expect(dialog.getByRole('combobox', { name: 'Answer type', exact: true })).toContainText('Document');
+  expect(composedProvider).toBe('treg');
+  await expect(dialog.getByRole('combobox', { name: 'Data provider', exact: true })).toHaveValue('treg');
   await dialog.getByLabel('Column name', { exact: true }).fill('Company');
   await expect(dialog.getByText('Another column already has this name', { exact: true })).toBeVisible();
   await expect(dialog.getByRole('button', { name: 'Add without running', exact: true })).toBeDisabled();

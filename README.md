@@ -19,12 +19,12 @@ The embedded store uses PGlite rather than SQLite because the workspace schema a
 
 ## Provider boundaries
 
-- Monid and Treg are distinct, explicit data providers. Contact columns choose Monid or Treg before they run; unsupported Treg operations stop with a clear message and never fall back to Monid.
+- Monid and Treg are distinct, explicit data providers. Supported data columns choose Monid or Treg before they run; unsupported Treg operations stop with a clear message and never fall back to Monid.
 - OpenAI is only used when a workspace member supplies an OpenAI key. It supports reasoning, classification, scoring, and natural-language row discovery. The app does not fall back to a different model provider.
 - Provider keys are encrypted in the server-side workspace vault. The browser receives connection status and masked metadata, never the saved key.
 - Monid and Treg keep separate connection, billing, usage, and run receipts. Cell provenance records the selected provider, run status, sources, and returned cost/usage where available. Uncertain Treg submissions reuse their saved idempotency key; they are never submitted as a new call automatically.
 - Mobile phone enrichment supports LeadMagic and Clay through Monid, with workspace route access, each member's default strategy, and per-column overrides. Workspace Monid credentials bill the workspace wallet; actual costs are attached to the cell.
-- Treg currently supports its inspected email, phone, LinkedIn, Instagram, and TikTok lookup operations. Company search, general web research, email verification, Facebook/X/YouTube profile search, social actions, and advertising operations remain unsupported through Treg.
+- Treg supports company and people discovery, company/person data, company funding events, web search and page reading, email and phone lookup, email verification, and public profile search across LinkedIn, Instagram, Facebook, X, TikTok, and YouTube. Some person fields, certain scrape modes, website country filters, and social actions are not supported; these gaps are reported without provider fallback.
 - See [docs/treg-provider.md](docs/treg-provider.md) for Treg endpoint behavior, separate billing, and the current gap list.
 
 ## Spreadsheet features

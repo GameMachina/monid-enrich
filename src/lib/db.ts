@@ -295,11 +295,12 @@ export function importTargets(columns: readonly Column[], headers: readonly stri
 
 /** Append rows given as column-name → value maps. Creates missing source columns. Returns the number added.
     A value its column cannot hold never fails the append; `source` decides what is kept (see cell-admission). */
-export async function appendRows(sheetId: string, input: Record<string, CellValue>[], options: { source?: Extract<CellSource, 'import' | 'find-rows'>; cellMeta?: Record<string, CellMeta>[]; createColumns?: boolean; dedupeOn?: string; history?: boolean; afterRowId?: string; onAdded?: (rows: Row[]) => void } = {}): Promise<number> {
+export async function appendRows(sheetId: string, input: Record<string, CellValue>[], options: { source?: Extract<CellSource, 'import' | 'find-rows'>; cellMeta?: Record<string, CellMeta>[]; createColumns?: boolean; dedupeOn?: string; mergeExisting?: boolean; history?: boolean; afterRowId?: string; onAdded?: (rows: Row[]) => void; onUpdated?: (count: number) => void } = {}): Promise<number> {
 	if (input.length === 0) return 0;
 	const source = options.source ?? 'import';
 	let added = 0;
 	let addedRows: Row[] = [];
+	let updatedRows = 0;
 	await changeGrid(sheetId, (sheet, existingRows) => {
 		// Find rows already places its fields (found-rows.ts); imported headers are matched here.
 		const targets = source === 'import' ? importTargets(sheet.columns, [...new Set(input.flatMap(Object.keys))]) : new Map<string, string>();
@@ -314,18 +315,41 @@ export async function appendRows(sheetId: string, input: Record<string, CellValu
 		columns.push(...[...created.values()].map((column) => fitGuessedFormat(column, records.map((record) => recordEntry(record, column.name)?.[1]))));
 		const byName = new Map(columns.map((c) => [c.name.toLowerCase(), c]));
 		const columnsChanged = created.size > 0;
-		let existingKeys = new Set<string>();
+		const existingKeys = new Set<string>();
+		const existingByKey = new Map<string, Row>();
 		const dedupeColumn = options.dedupeOn ? byName.get(options.dedupeOn.toLowerCase()) : undefined;
 		if (dedupeColumn) {
-			const existing = existingRows;
-			existingKeys = new Set(existing.map((row) => foundRowKey(row.cells[dedupeColumn.id]?.v)).filter(Boolean));
+			for (const row of existingRows) {
+				const key = foundRowKey(row.cells[dedupeColumn.id]?.v);
+				if (!key) continue;
+				existingKeys.add(key);
+				existingByKey.set(key, row);
+			}
 		}
 		let order = existingRows.reduce((max, row) => Math.max(max, row.order), -1) + 1;
 		const rows: Row[] = [];
+		const changedExisting = new Set<string>();
 		for (const [recordIndex, record] of records.entries()) {
 			if (dedupeColumn) {
 				const key = foundRowKey(record[dedupeColumn.name]);
-				if (key && existingKeys.has(key)) continue;
+				if (key && existingKeys.has(key)) {
+					const existing = existingByKey.get(key);
+					if (options.mergeExisting && existing && !changedExisting.has(existing.id)) {
+						let changed = false;
+						for (const [field, value] of Object.entries(record)) {
+							if (value === null || value === '' || typeof value === 'string' && !value.trim()) continue;
+							const column = byName.get(field.toLowerCase());
+							if (!column || column.type !== 'source') continue;
+							const current = existing.cells[column.id] ?? emptyCell();
+							if (current.f || current.v !== null && current.v !== '') continue;
+							const meta = options.cellMeta?.[recordIndex]?.[field];
+							existing.cells[column.id] = admittedCell(column, { ...sourceCell(value), ...(meta ? { m: meta } : {}) }, 'find-rows');
+							changed = true;
+						}
+						if (changed) changedExisting.add(existing.id);
+					}
+					continue;
+				}
 				if (key) existingKeys.add(key);
 			}
 			const cells: Record<string, Cell> = {};
@@ -336,10 +360,12 @@ export async function appendRows(sheetId: string, input: Record<string, CellValu
 			rows.push({ id: id(), sheetId, order: order++, cells, createdAt: Date.now() });
 		}
 		added = rows.length;
+		updatedRows = changedExisting.size;
 		addedRows = rows;
 		return { sheet: { ...sheet, ...(columnsChanged ? { columns } : {}), updatedAt: Date.now() }, rows: placeRows(existingRows, rows, options.afterRowId) };
 	}, { ...options, source });
 	options.onAdded?.(addedRows);
+	options.onUpdated?.(updatedRows);
 	return added;
 }
 

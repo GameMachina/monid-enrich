@@ -4,7 +4,7 @@ import { contextRequest } from './context-credits';
 import { notifyTrialLimit } from './ai-trial';
 import { keyHeaders, loadSettings, type Settings } from './keys';
 import type { Provider } from './organization-settings';
-import { FAILURE_REASONS, type ColumnOp, type ComposeColumnResponse, type EnrichFailure, type EnrichResponse, type FailureProvider, type KeyVerification, type CellValue, type EntityKind } from './types';
+import { FAILURE_REASONS, type ColumnOp, type ComposeColumnResponse, type DataProvider, type EnrichFailure, type EnrichResponse, type FailureProvider, type KeyVerification, type CellValue, type EntityKind } from './types';
 
 export const ENRICHMENT_REQUEST_MS = 330_000;
 
@@ -64,7 +64,7 @@ export async function enrichCell(op: ColumnOp, row: Record<string, CellValue>, s
 	} finally { clearTimeout(timer); }
 }
 
-export async function composeColumn(input: { ask: string; columns: Array<{ name: string; type: 'source' | 'enriched'; sample?: string }>; entity?: EntityKind; hasJev: boolean; excludeFormula?: boolean }): Promise<ComposeColumnResponse> {
+export async function composeColumn(input: { ask: string; dataProvider: DataProvider; columns: Array<{ name: string; type: 'source' | 'enriched'; sample?: string }>; entity?: EntityKind; hasJev: boolean; excludeFormula?: boolean }): Promise<ComposeColumnResponse> {
 	const response = await fetch('/api/compose-column', { method: 'POST', headers: keyHeaders(), body: JSON.stringify(input) });
 	if (!response.ok) throw await readError(response);
 	return (await response.json()) as ComposeColumnResponse;
