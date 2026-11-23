@@ -157,7 +157,7 @@ export function TregConnectionsPage() {
 		const popup = window.open('about:blank', '_blank', 'popup,width=720,height=760');
 		popupRef.current = popup;
 		try {
-			const response = await fetch('/api/treg/connections/oauth', { method: 'POST', headers: { ...accountHeaders(), 'content-type': 'application/json' }, body: JSON.stringify({ service: provider.service, ...(provider.capability ? { capability: provider.capability } : {}), name: provider.displayName, ...(credentials ?? {}) }) });
+			const response = await fetch('/api/treg/connections/oauth', { method: 'POST', headers: { ...accountHeaders(), 'content-type': 'application/json' }, body: JSON.stringify({ service: provider.service, ...(provider.capability ? { capability: provider.capability } : {}), ...(credentials ?? {}) }) });
 			const data = await readJson<{ authorizationUrl: string; state: string }>(response, `Could not start ${provider.displayName} authorization.`);
 			if (popup) popup.location.assign(data.authorizationUrl);
 			setPendingOAuth({ state: data.state, service: provider.service, url: data.authorizationUrl, popupOpened: Boolean(popup) });
@@ -273,13 +273,12 @@ export function TregConnectionsPage() {
 							// Treg can report enabled=false while its hosted OAuth app is configured.
 							// Use configured to decide whether the registry OAuth flow is available.
 							const registryOAuthReady = provider.configured !== false;
-							const unavailable = !oauth && provider.enabled === false;
 							return <article key={provider.service} className="flex min-w-0 flex-col justify-between gap-3 rounded-xl border border-line-subtle bg-surface px-3.5 py-3 shadow-[0_2px_3px_-2px_rgb(0_0_0/0.06)] sm:flex-row sm:items-center">
 								<div className="flex min-w-0 items-center gap-3">
 									<span className="grid size-9 shrink-0 place-items-center rounded-lg border border-line-subtle bg-surface-secondary text-[12px] font-semibold text-fg-muted">{provider.displayName.slice(0, 1).toUpperCase()}</span>
 									<div className="min-w-0"><h4 className="truncate text-body-sm font-medium text-fg">{provider.displayName}</h4><p className="truncate text-caption text-fg-subtle">{attached.length ? `${attached.length} connected · ${provider.summary}` : oauth ? 'Your account' : 'API key'}{!attached.length && provider.summary ? ` · ${provider.summary}` : !attached.length && oauth && !registryOAuthReady ? ' · Use your OAuth app' : ''}</p></div>
 								</div>
-								{attached.length ? <span className="inline-flex shrink-0 items-center gap-1 text-caption text-success"><CheckCircle2 aria-hidden="true" className="size-3.5" />Connected</span> : unavailable ? <span className="max-w-40 text-right text-caption text-fg-subtle">Unavailable in Treg</span> : <Button size="xs" onClick={() => oauth ? registryOAuthReady ? void startOAuth(provider) : setOAuthSetup(provider) : setEditing(provider)} disabled={!tregReady || Boolean(pendingOAuth)} title={!tregReady ? 'Connect Treg first' : undefined}>
+								{attached.length ? <span className="inline-flex shrink-0 items-center gap-1 text-caption text-success"><CheckCircle2 aria-hidden="true" className="size-3.5" />Connected</span> : <Button size="xs" onClick={() => oauth ? registryOAuthReady ? void startOAuth(provider) : setOAuthSetup(provider) : setEditing(provider)} disabled={!tregReady || Boolean(pendingOAuth)} title={!tregReady ? 'Connect Treg first' : undefined}>
 									{oauth ? <><ExternalLink aria-hidden="true" className="size-3.5" />{registryOAuthReady ? 'Connect account' : 'Set up OAuth'}</> : <><KeyRound aria-hidden="true" className="size-3.5" />Connect account</>}
 								</Button>}
 							</article>;

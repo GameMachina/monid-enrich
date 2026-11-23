@@ -12,7 +12,6 @@ const httpsUrl = z.string().trim().url().refine((value) => {
 const startInput = z.object({
 	service: z.string().trim().toLowerCase().regex(/^[a-z0-9][a-z0-9-]{0,79}$/),
 	capability: z.string().trim().max(160).optional(),
-	name: z.string().trim().max(100).optional(),
 	clientId: z.string().trim().max(2000).optional(),
 	clientSecret: z.string().max(12000).optional(),
 	authUri: httpsUrl.optional(),
@@ -37,7 +36,7 @@ export async function POST(request: Request) {
 		const value = await tregConnectionRequest(access.requireKey('treg'), '/oauth/start', { method: 'POST', body: JSON.stringify({
 			provider: parsed.data.service,
 			...(parsed.data.capability ? { capability: parsed.data.capability } : {}),
-			...(parsed.data.name ? { name: parsed.data.name } : {}),
+			name: parsed.data.service,
 			...(parsed.data.clientId ? {
 				client_id: parsed.data.clientId,
 				client_secret: parsed.data.clientSecret,
