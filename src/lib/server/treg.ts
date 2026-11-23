@@ -370,17 +370,6 @@ export async function tregRequest(token: string, path: string, init: RequestInit
 	return body;
 }
 
-/** Public provider directory; contains connection metadata, never credentials. */
-export async function tregProviderDirectory() {
-	const response = await fetch(`${API}/oauth/providers`, { cache: 'no-store', signal: AbortSignal.timeout(20_000) });
-	const body = await jsonResponse(response);
-	if (!response.ok) {
-		const message = str(obj(body).detail ?? obj(body).error ?? obj(body).message) || `Treg provider directory failed (${response.status}).`;
-		throw responseFailure(response.status, message);
-	}
-	return body;
-}
-
 export function tregBalanceUsd(data: unknown): number | undefined {
 	const root = obj(data), billing = obj(root.billing), balance = obj(root.balance), organization = obj(root.organization), wallet = obj(root.wallet);
 	for (const value of [root.balance_usd, root.balanceUsd, billing.balance_usd, billing.balanceUsd, organization.balance_usd, organization.balanceUsd, wallet.balance_usd, wallet.balanceUsd, balance.usd, balance.value, root.balance, billing.balance]) {

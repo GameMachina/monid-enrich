@@ -49,6 +49,8 @@ export function TregConnectionsPage() {
 	const [providers, setProviders] = useState<TregProvider[]>([]);
 	const [connections, setConnections] = useState<TregConnection[]>([]);
 	const [loadingDirectory, setLoadingDirectory] = useState(true);
+	const [directoryError, setDirectoryError] = useState('');
+	const [directoryRetry, setDirectoryRetry] = useState(0);
 	const [loadingConnections, setLoadingConnections] = useState(true);
 	const [search, setSearch] = useState('');
 	const [tab, setTab] = useState<DirectoryTab>('all');
@@ -76,12 +78,12 @@ export function TregConnectionsPage() {
 	useEffect(() => {
 		let cancelled = false;
 		void fetch('/api/treg/connections/providers', { headers: accountHeaders(), cache: 'no-store' }).then((response) => readJson<{ providers: TregProvider[] }>(response, 'Could not load Treg providers.')).then((data) => {
-			if (!cancelled) { setProviders(data.providers); setError(''); }
+			if (!cancelled) { setProviders(data.providers); setDirectoryError(''); }
 		}).catch((cause: unknown) => {
-			if (!cancelled) setError(cause instanceof Error ? cause.message : 'Could not load Treg providers.');
+			if (!cancelled) setDirectoryError(cause instanceof Error ? cause.message : 'Could not load Treg providers.');
 		}).finally(() => { if (!cancelled) setLoadingDirectory(false); });
 		return () => { cancelled = true; };
-	}, []);
+	}, [directoryRetry]);
 
 	useEffect(() => {
 		if (!tregReady) return;
@@ -256,7 +258,7 @@ export function TregConnectionsPage() {
 					</div>
 				</div>
 
-				{loadingDirectory ? <div className="grid gap-3 sm:grid-cols-2"><div className="skeleton h-20 rounded-xl" /><div className="skeleton h-20 rounded-xl" /></div> : Object.keys(grouped).length === 0 ? <p className="rounded-xl border border-line-subtle bg-surface px-4 py-8 text-center text-body-sm text-fg-subtle">No providers match this search.</p> : Object.entries(grouped).sort(([a], [b]) => a.localeCompare(b)).map(([category, items]) => <section key={category} aria-label={category} className="flex flex-col gap-3">
+				{loadingDirectory ? <div className="grid gap-3 sm:grid-cols-2"><div className="skeleton h-20 rounded-xl" /><div className="skeleton h-20 rounded-xl" /></div> : directoryError ? <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-danger/20 bg-danger-soft px-4 py-4"><p className="min-w-0 flex-1 text-body-sm text-danger">Could not load Treg’s provider directory. {directoryError}</p><Button size="xs" onClick={() => { setLoadingDirectory(true); setDirectoryError(''); setDirectoryRetry((attempt) => attempt + 1); }}>Retry</Button></div> : providers.length === 0 ? <p className="rounded-xl border border-line-subtle bg-surface px-4 py-8 text-center text-body-sm text-fg-subtle">Treg returned no providers in its directory.</p> : Object.keys(grouped).length === 0 ? <p className="rounded-xl border border-line-subtle bg-surface px-4 py-8 text-center text-body-sm text-fg-subtle">No providers match this search.</p> : Object.entries(grouped).sort(([a], [b]) => a.localeCompare(b)).map(([category, items]) => <section key={category} aria-label={category} className="flex flex-col gap-3">
 					<h3 className="text-body-sm font-medium text-fg-muted">{category} <span className="ml-1 text-caption text-fg-subtle">{items.length}</span></h3>
 					<div className="grid gap-3 lg:grid-cols-3">
 						{items.map((provider) => {
