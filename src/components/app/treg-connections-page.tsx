@@ -270,7 +270,10 @@ export function TregConnectionsPage() {
 						{items.map((provider) => {
 							const oauth = usesOAuth(provider);
 							const attached = connectedByService[provider.service] ?? [];
-							const registryOAuthReady = provider.enabled !== false && provider.configured !== false;
+							// Treg exposes configured as the OAuth-app readiness flag. Its enabled flag is
+							// used for other catalog availability and can be false even when its hosted
+							// OAuth consent flow is ready (for example, Google and LinkedIn).
+							const registryOAuthReady = provider.configured !== false;
 							const unavailable = !oauth && provider.enabled === false;
 							return <article key={provider.service} className="flex min-w-0 flex-col justify-between gap-3 rounded-xl border border-line-subtle bg-surface px-3.5 py-3 shadow-[0_2px_3px_-2px_rgb(0_0_0/0.06)] sm:flex-row sm:items-center">
 								<div className="flex min-w-0 items-center gap-3">
