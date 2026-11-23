@@ -97,7 +97,9 @@ export function normalizeTregConnections(value: unknown) {
 
 export function normalizeTregOAuthStart(value: unknown) {
 	const root = record(value);
-	const authorizationUrl = safeHttpsUrl(root.authorization_url ?? root.authorize_url ?? root.auth_url ?? root.url);
+	// Treg's POST /oauth/start contract calls the provider consent link `consent_url`.
+	// Keep the older aliases for compatible deployments, but prefer the documented field.
+	const authorizationUrl = safeHttpsUrl(root.consent_url ?? root.authorization_url ?? root.authorize_url ?? root.auth_url ?? root.url);
 	const state = text(root.state, root.oauth_state);
 	if (!authorizationUrl || !state) throw new Error('Treg did not return a valid authorization URL and state.');
 	return { authorizationUrl, state };
