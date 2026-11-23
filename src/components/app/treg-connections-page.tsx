@@ -110,9 +110,13 @@ export function TregConnectionsPage() {
 		if (!pendingOAuth || !tregReady) return;
 		let cancelled = false;
 		let attempts = 0;
+		let timer: number | undefined;
+		const maxAttempts = 150;
+		const pollIntervalMs = 2000;
 		const check = async () => {
+			if (cancelled) return;
 			attempts += 1;
-			if (attempts > 96) {
+			if (attempts > maxAttempts) {
 				if (!cancelled) { setPendingOAuth(null); setError('Treg authorization timed out. You can try connecting the account again.'); }
 				return;
 			}
@@ -122,17 +126,20 @@ export function TregConnectionsPage() {
 				if (status.connected) {
 					popupRef.current?.close(); popupRef.current = null;
 					if (!cancelled) { setPendingOAuth(null); setError(''); await refreshConnections(); toast(`${providers.find((provider) => provider.service === pendingOAuth.service)?.displayName ?? 'Account'} connected to Treg.`, 'success'); }
+					return;
 				} else if (['failed', 'error', 'denied', 'cancelled'].includes(status.status)) {
 					popupRef.current?.close(); popupRef.current = null;
 					if (!cancelled) { setPendingOAuth(null); setError(status.message || 'Treg account authorization did not complete.'); }
+					return;
 				}
-			} catch (cause) {
-				if (!cancelled) { setPendingOAuth(null); setError(cause instanceof Error ? cause.message : 'Could not check Treg authorization.'); }
+			} catch {
+				// Treg's own Connections page keeps polling through temporary status errors.
+				// A brief API/network failure should not abandon an OAuth flow already in progress.
 			}
+			if (!cancelled) timer = window.setTimeout(() => { void check(); }, pollIntervalMs);
 		};
-		const timer = window.setInterval(() => { void check(); }, 2500);
 		void check();
-		return () => { cancelled = true; window.clearInterval(timer); };
+		return () => { cancelled = true; if (timer !== undefined) window.clearTimeout(timer); };
 	}, [pendingOAuth, providers, refreshConnections, toast, tregReady]);
 
 	const connectedByService = useMemo(() => connections.reduce<Record<string, TregConnection[]>>((result, connection) => {
