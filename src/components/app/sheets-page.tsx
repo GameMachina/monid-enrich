@@ -82,6 +82,33 @@ export function SheetsPage() {
 		} catch (error) { toast(message(error, 'Could not create a sheet.'), 'error'); }
 	}
 
+	/** A free onboarding sheet. Every company and URL is explicitly fictional and uses the reserved .example domain. */
+	async function createSample() {
+		try {
+			const values = [
+				['Aster Loop (fictional)', 'https://aster-loop.example', '20–50', 'Recently raised a seed round'],
+				['Cedarline Systems (fictional)', 'https://cedarline-systems.example', '51–100', 'Hiring a first sales leader'],
+				['Northstar Fieldworks (fictional)', 'https://northstar-fieldworks.example', '11–20', 'Uses HubSpot'],
+				['Morrow Peak Labs (fictional)', 'https://morrow-peak.example', '101–200', 'Expanding into the US'],
+				['Juniper Bridge Software (fictional)', 'https://juniper-bridge.example', '20–50', 'Recently launched a new product'],
+			];
+			const columns = [
+				newColumn({ name: 'Company · fictional', type: 'source' }),
+				newColumn({ name: 'Website · example', type: 'source', format: 'url' }),
+				newColumn({ name: 'Employee range', type: 'source' }),
+				newColumn({ name: 'Example signal', type: 'source' }),
+			];
+			const sheetId = id();
+			const rows: Row[] = values.map((rowValues, order) => ({
+				id: id(), sheetId, order, createdAt: Date.now(),
+				cells: Object.fromEntries(columns.map((column, index) => [column.id, { ...emptyCell(), v: rowValues[index] }])) as Row['cells'],
+			}));
+			const sheet = await createSheet('Sample · fictional companies', columns, { id: sheetId, rows });
+			trackEvent('sheet_created', { source: 'sample' });
+			router.push(`/app/sheets/${sheet.id}`);
+		} catch (error) { toast(message(error, 'Could not create the sample sheet.'), 'error'); }
+	}
+
 	/** The sheet exists only once the user asks for rows. Discovery keeps streaming into it after navigation. */
 	async function findRows(request: PopulateRequest) {
 		const taken = new Set(sheets?.map((sheet) => sheet.name.toLowerCase()));
@@ -96,7 +123,7 @@ export function SheetsPage() {
 		router.push(`/app/sheets/${sheet.id}?find=1&entity=${request.entity}`);
 	}
 
-	const starts = { onFind: findRows, providerReady, onNeedKeys: (provider: 'monid' | 'treg') => openKeys(provider), onImport: () => setDialog('import'), onBlank: () => { setDialog(null); void createBlank(); } };
+	const starts = { onFind: findRows, providerReady, onNeedKeys: (provider: 'monid' | 'treg') => openKeys(provider), onImport: () => setDialog('import'), onBlank: () => { setDialog(null); void createBlank(); }, onSample: () => { setDialog(null); void createSample(); } };
 
 	return (
 		<PageColumn>
@@ -196,7 +223,7 @@ async function requiredKeyIssue(provider: 'monid' | 'treg'): Promise<{ error: st
 }
 
 /** Find rows into a new sheet, or start from a CSV or a blank sheet. */
-function NewSheet({ onFind, providerReady, onNeedKeys, onImport, onBlank, onClose, autoFocus }: { onFind: (request: PopulateRequest) => Promise<void>; providerReady: (provider: 'monid' | 'treg') => boolean; onNeedKeys: (provider: 'monid' | 'treg') => void; onImport: () => void; onBlank: () => void; onClose?: () => void; autoFocus?: boolean }) {
+function NewSheet({ onFind, providerReady, onNeedKeys, onImport, onBlank, onSample, onClose, autoFocus }: { onFind: (request: PopulateRequest) => Promise<void>; providerReady: (provider: 'monid' | 'treg') => boolean; onNeedKeys: (provider: 'monid' | 'treg') => void; onImport: () => void; onBlank: () => void; onSample: () => void; onClose?: () => void; autoFocus?: boolean }) {
 	const [draft, setDraft] = useState<FindRowsDraft>({ entity: 'companies', query: '', countries: [], dataProvider: 'monid' });
 	const [state, setState] = useState<{ status: 'idle' | 'creating' } | { status: 'failed'; error: string; issue?: ConnectionIssue }>({ status: 'idle' });
 	// One sheet per submit, even if Cmd+Enter and a click land before the busy state renders.
@@ -217,6 +244,8 @@ function NewSheet({ onFind, providerReady, onNeedKeys, onImport, onBlank, onClos
 		<FindRowsComposer draft={draft} onDraftChange={(next) => { setDraft(next); if (state.status === 'failed') setState({ status: 'idle' }); }} onSubmit={(request) => void submit(request)} busy={state.status === 'creating'} error={state.status === 'failed' ? state.error : null} errorAction={state.status === 'failed' && state.issue && <FailureFix issue={state.issue} />} onClose={onClose} autoFocus={autoFocus}>
 			<p className="populate-shelf">
 				<span>or</span>
+				<button type="button" onClick={onSample}>Open fictional sample</button>
+				<span aria-hidden>·</span>
 				<button type="button" onClick={onImport}>Import CSV</button>
 				<span aria-hidden>·</span>
 				<button type="button" onClick={onBlank}>Blank sheet</button>

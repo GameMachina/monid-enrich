@@ -124,7 +124,7 @@ Remaining: reconcile app receipts against each provider's billing data; clarify 
 
 ### P1.4 Onboarding and activation
 
-**Status: Open.**
+**Status: Partial.** The empty-workspace flow now offers a five-row fictional sample sheet using reserved `.example` domains, so users can inspect the grid without connecting a provider or incurring a data-provider charge. A guided workspace/provider setup checklist, expected-cost preview, safe five-row live trial, and support handoff remain open.
 
 Build a first-run path for workspace creation, imports, a sample sheet, provider connection, a safe five-row trial run, and expected-cost preview. Provide actionable connection and provider error guidance and a route to support. Make the free/sample experience usable without entering an OpenAI key.
 
