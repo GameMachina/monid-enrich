@@ -20,6 +20,7 @@ Set these project variables in each relevant Vercel environment. `.env.example` 
 ENRICHABLE_AUTH_MODE=clerk
 NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_…
 CLERK_SECRET_KEY=sk_…
+CLERK_WEBHOOK_SIGNING_SECRET=whsec_…
 DATABASE_URL=postgresql://…
 ENRICHABLE_MCP_ENCRYPTION_SECRET=<stable random secret, 32+ characters>
 ENRICHABLE_APP_URL=https://your-production-host
@@ -40,8 +41,9 @@ Do not put a platform Monid or Treg key into the deployment environment for cust
 1. Create a dedicated Clerk application for staging and another for production.
 2. Enable Organizations and configure organization membership roles. Set invitation, verification, password recovery, and session policies for the target users.
 3. Add the exact production and staging origins to the Clerk application. Configure sign-in at `/sign-in` and sign-up at `/sign-up`.
-4. Set the environment-specific Clerk keys in Vercel. Confirm the Team page can create/select an organization and manage test members.
-5. Test that a removed member loses access to existing tabs and every API route, and that a personal workspace cannot see an organization workspace.
+4. Create a Clerk webhook endpoint at `https://your-host/api/clerk/webhook`. Subscribe to `organization_membership.created`, `organization_membership.updated`, `organization_membership.deleted`, `organization_invitation.created`, `organization_invitation.accepted`, and `organization_invitation.revoked`. Save the endpoint signing secret as `CLERK_WEBHOOK_SIGNING_SECRET` in that Vercel environment.
+5. Set the environment-specific Clerk keys and webhook signing secret in Vercel. Confirm the Team page can create/select an organization and manage test members.
+6. Test that a removed member loses access to existing tabs and every API route, that invitation and role events appear in **Configuration → Workspace activity**, and that a personal workspace cannot see an organization workspace.
 
 ## Stripe setup
 
@@ -64,7 +66,7 @@ Neon backups/PITR, access roles, retention, and restore are configured in the Ne
 Before a staged release:
 
 1. Confirm `/api/health/live` returns `200`.
-2. Confirm `/api/health/ready` returns `200` and all checks are true. In managed production this includes Postgres, vault encryption, Clerk, Stripe billing, the durable-job migration, provider-usage attribution schema, and the worker secret.
+2. Confirm `/api/health/ready` returns `200` and all checks are true. In managed production this includes Postgres, vault encryption, Clerk, the Clerk webhook secret, Stripe billing, the durable-job migration, provider-usage attribution, workspace audit schema, and the worker secret.
 3. Create a test organization, invite a second test member, and verify admin/member route behavior.
 4. Run a synthetic one-row Monid and Treg operation separately; check provider, run ID, status, cost, and source metadata in the sheet. Do not treat successful UI display as billing reconciliation.
 5. Start a cell run, close the tab, and verify the result is saved by the worker. Queue cancellation only works before a provider request starts.
@@ -72,7 +74,7 @@ Before a staged release:
 7. Export a synthetic workspace and close a disposable workspace; inspect the export and retention behavior.
 8. Confirm backup restore, rollback, alerts, and incident ownership before inviting real customers.
 
-Workspace owners and admins can review provider receipts in **Configuration → Provider usage**. The report keeps Monid and Treg charges separate, supports provider/status/date/member/sheet filters, and exports up to 10,000 matching rows. New cell runs include member and cell IDs; receipts from before migration `021_provider_usage_attribution.sql` are shown without attribution. Costs are only what a provider reported to the app; reconcile against each provider's billing records before treating them as settled totals. **Configuration → Workspace activity** shows the latest 100 recorded exports, closure, shared-settings, and MCP-key changes; Clerk membership and billing/provider lifecycle events are not yet mirrored there.
+Workspace owners and admins can review provider receipts in **Configuration → Provider usage**. The report keeps Monid and Treg charges separate, supports provider/status/date/member/sheet filters, and exports up to 10,000 matching rows. New cell runs include member and cell IDs; receipts from before migration `021_provider_usage_attribution.sql` are shown without attribution. Costs are only what a provider reported to the app; reconcile against each provider's billing records before treating them as settled totals. **Configuration → Workspace activity** shows the latest 100 recorded exports, closure, shared-settings, MCP-key, Clerk membership, and invitation changes. Billing and provider-connection lifecycle events are not yet mirrored there.
 
 Health endpoints intentionally omit detailed infrastructure errors. Use Vercel, Neon, Stripe, and Clerk operator logs to investigate. See the [authorization review](authorization-review.md) for route boundaries and the [operations runbook](operations-runbook.md) for safe recovery guidance.
 
@@ -81,7 +83,7 @@ Health endpoints intentionally omit detailed infrastructure errors. Use Vercel, 
 - Find rows is still request/browser coordinated; only individual enrichment cells use the durable job table.
 - Request-rate limits do not enforce hard dollar spend caps, concurrent spend reservations, or budget alerts.
 - Provider usage reporting does not reconcile receipts with Monid/Treg billing ledgers or distinguish provider-specific estimated and settled cost states beyond the receipt status.
-- Workspace activity does not yet include Clerk membership changes or billing/provider connection lifecycle events.
+- Workspace activity does not yet include billing or provider-connection lifecycle events.
 - There is no production backup/restore drill, centralized error monitoring, service SLO, status page, or staffed support process yet.
 - Workspace export excludes credentials and is capped at 50 MB. Workspace closure retains provider usage receipts and Stripe reconciliation records. Personal AgentWeb credentials do not belong to workspace deletion.
 - Privacy terms, customer terms, subprocessors/DPA, retention schedule, and legal hold policy must be reviewed and published by the operator.

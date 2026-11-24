@@ -27,7 +27,7 @@ Self-hosted mode has different risks: provider keys can be held in browser stora
 
 ## Export and deletion behavior
 
-Workspace admins can download a JSON workspace export from Configuration. It includes sheets, safe workspace settings, shared company reference data, and up to 10,000 recent receipts per data provider. It deliberately excludes raw credentials, personal member settings, and MCP keys, is limited to 50 MB, and is audited. The workspace activity log records administrative actions and field names only; it does not include secret values or spreadsheet row contents.
+Workspace admins can download a JSON workspace export from Configuration. It includes sheets, safe workspace settings, shared company reference data, and up to 10,000 recent receipts per data provider. It deliberately excludes raw credentials, personal member settings, and MCP keys, is limited to 50 MB, and is audited. The workspace activity log records administrative actions, field names, and relevant Clerk member/invitation IDs and roles; it does not include secret values, invitation email addresses, or spreadsheet row contents.
 
 Workspace admins can also filter provider receipts by provider, status, time, member, sheet, or search text and download up to 10,000 matching records as CSV. Provider cost is shown only when a receipt reports it. This report is not provider-side billing reconciliation.
 

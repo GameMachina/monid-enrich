@@ -9,7 +9,13 @@ export type WorkspaceAuditAction =
 	| 'workspace.settings.update'
 	| 'workspace.settings.import'
 	| 'workspace.mcp_key.create'
-	| 'workspace.mcp_key.rotate';
+	| 'workspace.mcp_key.rotate'
+	| 'workspace.member.added'
+	| 'workspace.member.updated'
+	| 'workspace.member.removed'
+	| 'workspace.invitation.created'
+	| 'workspace.invitation.accepted'
+	| 'workspace.invitation.revoked';
 
 export type WorkspaceAuditDetails = Record<string, string | number | boolean | null>;
 

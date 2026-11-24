@@ -106,7 +106,7 @@ Expand the current CI baseline with production-like staging checks for signup/au
 
 ### P1.1 Team administration and auditability
 
-**Status: Partial.** Clerk OrganizationProfile supplies member management. Workspace export/closure, shared-settings changes, and MCP-key create/rotation are recorded as metadata-only events and workspace admins can review the latest 100 in Configuration. Clerk membership changes and billing/provider connection lifecycle events are still outside this local audit stream.
+**Status: Partial.** Clerk OrganizationProfile supplies member management. Workspace export/closure, shared-settings changes, MCP-key create/rotation, and signed/deduplicated Clerk membership and invitation lifecycle webhooks are recorded as metadata-only events; workspace admins can review the latest 100 in Configuration. Billing/provider connection lifecycle events remain outside this local audit stream, and Clerk webhook endpoint configuration and event-delivery verification remain staging gates.
 
 Add workspace member/role management, invitation expiry/revocation, credential change history, and audit events for membership, billing, provider connections, exports, and destructive actions. Keep audit payloads free of raw secrets and unnecessary prospect data.
 

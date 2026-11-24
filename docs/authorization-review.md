@@ -30,6 +30,7 @@ Sheet reads/writes, row enrichment, job status/cancellation, member preferences,
 | --- | --- |
 | `/api/health/live`, `/api/health/ready` | Public; expose only readiness booleans, never infrastructure secrets |
 | `/api/stripe/webhook` | Stripe webhook signature; bounded request body; event IDs deduplicated in storage |
+| `/api/clerk/webhook` | Clerk/Svix signature via Clerk `verifyWebhook`; bounded payload; delivery IDs deduplicated in storage; only organization membership/invitation events are retained |
 | `/api/internal/jobs/run` | `CRON_SECRET` bearer token |
 | `/mcp` | Workspace MCP key; tool calls load the key's workspace identity and do not accept caller-supplied provider secrets |
 | `/api/auth/**` | Signed flow state, provider callback validation, and session-cookie rules appropriate to the flow |

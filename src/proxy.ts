@@ -7,7 +7,7 @@ import { CREDIT_REPORT_PATH, creditReportAuthorized } from '@/lib/server/credit-
 
 const clerkProxy = clerkMiddleware(async (auth, request) => {
 	const path = request.nextUrl.pathname;
-	if (['/api/health/live', '/api/health/ready', '/api/stripe/webhook', '/api/internal/jobs/run'].includes(path)) return NextResponse.next();
+	if (['/api/health/live', '/api/health/ready', '/api/stripe/webhook', '/api/clerk/webhook', '/api/internal/jobs/run'].includes(path)) return NextResponse.next();
 	const session = await auth();
 	const api = path.startsWith('/api/');
 	if (!session.userId) {
@@ -27,7 +27,7 @@ const clerkProxy = clerkMiddleware(async (auth, request) => {
 });
 
 function standaloneProxy(request: NextRequest) {
-	if (['/api/health/live', '/api/health/ready', '/api/stripe/webhook', '/api/internal/jobs/run'].includes(request.nextUrl.pathname)) return NextResponse.next();
+	if (['/api/health/live', '/api/health/ready', '/api/stripe/webhook', '/api/clerk/webhook', '/api/internal/jobs/run'].includes(request.nextUrl.pathname)) return NextResponse.next();
 	const selfHosted = selfHostedEnabled();
 	if (contextSignInEnabled() && process.env.NODE_ENV === 'production' && request.nextUrl.origin !== sessionConfig().origin) {
 		return NextResponse.redirect(new URL(request.nextUrl.pathname + request.nextUrl.search, sessionConfig().origin), 308);
