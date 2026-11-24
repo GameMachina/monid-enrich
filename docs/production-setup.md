@@ -8,7 +8,7 @@ Use separate Clerk, Neon, Stripe, and Vercel environments for staging and produc
 
 | Service | Configure | Notes |
 | --- | --- | --- |
-| Vercel | Node.js 22.23.4; project variables listed below | `vercel.json` runs migrations before each build and schedules `/api/internal/jobs/run` once a minute. Per-minute Vercel Cron schedules require a plan that supports them; Hobby schedules have daily frequency. |
+| Vercel | Node.js 22.23.4; project variables listed below | `vercel.json` runs migrations before each build and schedules `/api/internal/jobs/run` once a minute. This worker schedule requires Vercel Pro or Enterprise; Hobby supports only daily Cron schedules. See [Vercel Cron limits](https://vercel.com/docs/cron-jobs/usage-and-pricing). |
 | Neon/Postgres | Pooled `DATABASE_URL` for runtime; migration access available during build | Keep production, staging, and preview on separate branches/databases. Apply and review migrations on staging first. |
 | Clerk | Publishable and secret keys; enable Organizations and configure sign-in/up | The Team screen uses Clerk's organization management UI. Verify invite, role, removal, recovery, and session behavior with test users. |
 | Stripe | Secret key, webhook signing secret, one recurring Price ID, public app URL | Start in test mode. Configure the customer portal and the webhook events below. App subscriptions are separate from Monid/Treg wallet charges. |
