@@ -1,7 +1,7 @@
 'use client';
 
 import { createContext, useContext, type ReactNode } from 'react';
-import { SELF_HOSTED_ISSUER, type Account } from '@/lib/auth-identity';
+import { CLERK_ISSUER, SELF_HOSTED_ISSUER, type Account } from '@/lib/auth-identity';
 import { setStorageAccount } from '@/lib/account-storage';
 import { connectWorkspace, openAccountDatabase, refreshWorkspace } from '@/lib/db';
 import { cloudSheets } from '@/lib/sheet-cloud';
@@ -40,6 +40,7 @@ function watchSession(account: Account & { sessionId: string }, dispatch: (event
 			catch (error) { send({ type: 'transient', source: 'session', message: (error as Error).message }); return; }
 			if (!live()) return;
 			if (status === 'signed-out') {
+				if (account.issuer === CLERK_ISSUER) { window.location.reload(); return; }
 				send({ type: 'signed-out' });
 				// A hosted session that ends mid-work holds its queue behind the sign-in prompt instead of navigating away.
 				if (loaded && account.issuer !== SELF_HOSTED_ISSUER) runner.hold(true);

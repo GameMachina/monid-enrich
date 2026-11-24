@@ -5,7 +5,7 @@ import { ActionColumnSchema, type ActionChannel } from '@/lib/action-column';
 import { newColumn } from '@/lib/db';
 import { danglingActionReferences, findColumn, nameTaken, substituteReferences, uniqueName } from '@/lib/references';
 import { formatValue } from '@/lib/template';
-import type { Column, Row, Sheet } from '@/lib/types';
+import type { Row, Sheet } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Dialog } from '@/components/ui/dialog';
 import { Field, Input, Select, Segmented } from '@/components/ui/field';
@@ -73,7 +73,6 @@ export function ActionColumnDialog({ sheet, rows, state, commands, onClose }: { 
 	const insertInstruction = useRef<((columnName: string) => void) | null>(null);
 	const columns = sheet.columns.filter((column) => column.id !== state.column?.id);
 	const actionOptions = ACTIONS[channel] ?? [];
-	const description = actionOptions.find((item) => item.id === action)?.description;
 	const previewRow = rows[0];
 	const preview = previewRow ? substituteReferences(instructions, (reference) => {
 		const column = findColumn(sheet.columns, reference);

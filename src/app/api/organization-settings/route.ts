@@ -1,4 +1,4 @@
-import { apiRoute, readJson } from '@/lib/server/api-route';
+import { apiRoute, readJson, requireWorkspaceAdmin } from '@/lib/server/api-route';
 import { OrganizationStore, organizationPersistenceEnabled } from '@/lib/server/organization-store';
 import { organizationPreferencesSchema } from '@/lib/organization-settings';
 import { z } from 'zod';
@@ -12,6 +12,7 @@ export const GET = apiRoute('organization-settings.get', async ({ account, datab
 });
 
 const write = apiRoute('organization-settings.save', async ({ account, database, request }) => {
+	requireWorkspaceAdmin(account);
 	const store = new OrganizationStore(database);
 	if (organizationPersistenceEnabled(account)) return store.patch(account, await readJson(request));
 	const input = localPreferencesPatch.safeParse(await readJson(request));

@@ -43,15 +43,15 @@ function ShellAlerts() {
 	);
 }
 
-export function AppShell({ children, account, contextSignIn = false }: { children: ReactNode; account: Account & { sessionId: string }; contextSignIn?: boolean }) {
+export function AppShell({ children, account, contextSignIn = false, managedAuth = false }: { children: ReactNode; account: Account & { sessionId: string }; contextSignIn?: boolean; managedAuth?: boolean }) {
 	return (
 		<AccountBoundary account={account}>
-			<SettingsProvider logolinkPublicId={account.organization.logolink_public_id} selfHosted={account.issuer === SELF_HOSTED_ISSUER} contextSignIn={contextSignIn} workspaceName={account.organization.name}>
+			<SettingsProvider logolinkPublicId={account.organization.logolink_public_id} selfHosted={account.issuer === SELF_HOSTED_ISSUER} workspaceAdmin={account.role === 'owner' || account.role === 'admin'} contextSignIn={contextSignIn} workspaceName={account.organization.name}>
 				<ToastProvider>
 					<NavigationProvider>
 					<div className="flex h-dvh overflow-clip bg-canvas pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)]">
 						<Suspense fallback={<aside className="hidden h-full w-[212px] shrink-0 md:block" />}>
-							<Sidebar account={account} />
+						<Sidebar account={account} managedAuth={managedAuth} />
 						</Suspense>
 						<main className="relative flex min-w-0 flex-1 flex-col overflow-clip">
 							<ShellAlerts />

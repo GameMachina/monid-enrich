@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { NO_STORE_HEADERS, jsonError } from '@/lib/server/credentials';
 import { routeAccess } from '@/lib/server/provider-access';
 import { tregConnectionRequest } from '@/lib/server/treg-connections';
+import { workspaceAdminResponse } from '@/lib/server/request-admin';
 
 export const maxDuration = 30;
 type RouteContext = { params: Promise<{ secretId: string }> };
@@ -12,6 +13,8 @@ const idFrom = async (context: RouteContext) => {
 };
 
 export async function DELETE(request: Request, context: RouteContext) {
+	const denied = await workspaceAdminResponse();
+	if (denied) return denied;
 	const access = await routeAccess(request);
 	if (access instanceof Response) return access;
 	const id = await idFrom(context);
@@ -27,6 +30,8 @@ export async function DELETE(request: Request, context: RouteContext) {
 
 const renameInput = z.object({ name: z.string().trim().min(1).max(100) }).strict();
 export async function PATCH(request: Request, context: RouteContext) {
+	const denied = await workspaceAdminResponse();
+	if (denied) return denied;
 	const access = await routeAccess(request);
 	if (access instanceof Response) return access;
 	const id = await idFrom(context);

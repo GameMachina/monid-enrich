@@ -4,19 +4,19 @@
 
 ## Status at a glance
 
-The app has a substantial product and technical foundation: a Vercel/Neon deployment path, serialized migrations, workspace-scoped persistence, encrypted hosted credentials, signed hosted sessions, revision-aware sheet writes, provider receipts, and CI with lint, type checks, unit/server tests, a build, secret scanning, and limited browser smoke coverage. See [deployment](deploy.md), [hosted operations](hosted.md), and [development](development.md).
+This document started as an audit; the implementation below has since closed some of the first-release gaps. It is still a launch backlog, not a claim that the service is production-ready. Current implementation status is recorded under each item. Operational setup and known limits are in [production setup](production-setup.md), [data handling](data-handling.md), and the [operations runbook](operations-runbook.md).
 
 The article is a useful SaaS feature checklist: frontend and backend, customer identity and organizations, subscriptions, payment webhooks, and a Vercel deployment flow. Its example uses Encore, Next.js, Clerk, and Stripe. This repository already uses Next.js API routes and Vercel/Neon, so adopting Encore or Clerk is not itself a requirement; the required outcome is reliable tenancy, billing, and operations. The article does not replace the security, privacy, recovery, support, or load-readiness work below.
 
-### Verified gaps and constraints
+### Current constraints
 
-- Hosted sign-in is a custom Context.dev OAuth integration restricted to `enrichable.io` and `www.enrichable.io`; self-hosted mode uses a browser workspace cookie and does not provide customer accounts or cross-device recovery. It is not a general-purpose signup and organization lifecycle for this fork.
-- There is no Monid Enrich subscription checkout, plan catalog, entitlement system, or application billing webhook. Monid and Treg provider balances/top-ups are separate from a future app subscription.
-- Enrichment execution is coordinated by a browser runner and bounded API requests. The development guide explicitly says there is **no durable enrichment worker**. A closed tab or serverless timeout must not be the reliability boundary for customer bulk work.
-- A self-hosted browser workspace keeps manually entered provider keys in browser local storage. The hosted organization credential vault is encrypted server-side; production customer credentials must use the hosted/server-side path.
-- Treg connections, supported operations, and billing are distinct from Monid. Treg's team-level spend caps and usage-by-tag invoicing are not configured by this app today; see [Treg gaps](treg-provider.md).
-- There is no documented production backup/restore drill, customer data retention/deletion program, service SLO/alert policy, or launch support/on-call process.
-- CI is a good baseline, but the browser smoke job is deliberately narrow and uses mocked endpoints. It is not a production integration, load, restore, or security test.
+- Hosted customer sign-in now uses Clerk Organizations. The code is implemented, but Clerk application setup, organization settings, email recovery, role revocation, and signup flow still need a staging verification before public onboarding.
+- Stripe subscription checkout, portal, idempotent webhook recording, and active-subscription gating are implemented for one configured price. Product plans, taxes, invoices/support workflows, and end-to-end billing verification remain open.
+- Per-cell enrichment jobs persist in Postgres and a Vercel Cron route drains them. The natural-language Find rows workflow is not durable yet; bulk concurrency and queue capacity need measured staging/load work.
+- Per-minute request limits are implemented. They do not enforce a hard monetary workspace budget or safely reserve unknown provider charges; spend caps and reconciliation remain open.
+- Workspace export and closure are implemented. Export excludes credentials and caps at 50 MB; closure retains usage receipts and Stripe reconciliation data, and personal AgentWeb credentials are outside the workspace deletion path. Retention, backup expiry, and legal holds are not implemented.
+- Treg and Monid retain separate connections, charges, and usage records. OAuth availability and supported capabilities depend on each provider's live catalog; see [Treg gaps](treg-provider.md).
+- CI checks are not a substitute for staging auth/billing/provider tests, a security review, a measured restore, or load testing. No production deployment or live paid integration test has been performed as part of this work.
 
 ## P0 — required before onboarding paying customers
 
@@ -26,11 +26,15 @@ Each item should have an owner and target release before work begins. “Done wh
 
 Implement customer-facing identity for this product rather than assuming the official Enrichable OAuth domain. Define account creation, organization/workspace creation, member invitations, sign-in recovery, session revocation, and the relationship between a person, workspace, and billing owner. Choose a maintained identity service or document and security-review a first-party flow.
 
+**Status: Partial.** Clerk sign-in/up, personal/team workspace mapping, server-side roles, and the team management surface are implemented. Set up a Clerk app with Organizations and verify invitations, role changes, sign-out, account recovery, session revocation, and stale-tab behavior on staging before launch. See [production setup](production-setup.md).
+
 **Done when:** a new customer can register, create a workspace, invite a teammate, leave/revoke access, recover access, and sign out; expired/revoked membership stops working across existing tabs and API calls. Hosted and self-hosted auth modes have explicit tests and setup docs.
 
 ### P0.2 Finish tenant authorization and credential ownership rules
 
 Audit every page, API route, MCP tool, realtime subscription, connection-management endpoint, and usage report for workspace scoping. Define which credentials are personal, workspace-shared, or operator-owned. Enforce role checks for billing, member management, secret changes, and destructive operations. Add explicit CSRF/origin protections for cookie-authenticated mutations and abuse limits for unauthenticated or expensive entry points. Review server-side URL fetching for SSRF protections.
+
+**Status: Partial.** Admin checks now protect billing, workspace export/closure, shared settings, Treg billing/connections, and MCP key management. Existing workspace-scoped stores remain the authorization boundary; a request limiter protects provider-backed routes. Complete a route-by-route authorization and SSRF review and add cross-workspace and hostile-origin tests before launch.
 
 **Done when:** automated cross-workspace tests prove one workspace cannot read, edit, enrich, export, or spend from another workspace; every privileged action checks role on the server; cookie-authenticated writes reject hostile origins; provider secrets and raw upstream payloads never reach browser responses or logs.
 
@@ -38,11 +42,15 @@ Audit every page, API route, MCP tool, realtime subscription, connection-managem
 
 Add an application billing model if this will be a paid hosted SaaS: plans, trial/cancel/past-due states, checkout, customer portal, invoices, and server-enforced entitlements. Verify webhook signatures, persist and deduplicate event IDs, handle event reordering/retries, and reconcile provider state. Show the product subscription separately from Monid, Treg, and user-supplied OpenAI charges; do not combine balances.
 
+**Status: Partial.** One-price Checkout, customer portal, signed/deduplicated webhooks, and server-side subscription gating are implemented. Configure Stripe test mode and verify purchase, cancellation, webhook retry/reorder, portal, and access changes before production; multi-plan entitlements and tax/invoice support remain open.
+
 **Done when:** a test customer can subscribe, upgrade/downgrade, cancel, recover from failed payment, and see correct access after webhook retries; API and UI enforce the same plan limits; no app feature trusts a client-reported plan or payment status. If the product will remain free/self-hosted only, record that decision and remove this item from the launch gate.
 
 ### P0.4 Move long and bulk enrichment to durable jobs
 
 Create persisted jobs for Find rows, bulk cell runs, and other long work. Use a durable queue/worker with transactional enqueue, leases, progress, cancellation, bounded concurrency, retries, and dead-letter/reconciliation paths. Keep the sheet as the visible trust surface, but make persisted job state authoritative across tab closure, deploys, and function timeouts. Reuse operation fingerprints and provider idempotency keys; never create a new paid call just because a poll or save failed.
+
+**Status: Partial.** Transactional per-cell enqueue, fingerprints, idempotency keys, leases, stale-lease recovery, status polling, safe queued cancellation, and a bounded Vercel worker are implemented. Find rows and some multi-step workflows still run through request/browser paths; queue capacity and recovery need staging tests.
 
 **Done when:** closing a browser, restarting a worker, or deploying during a run does not lose results or duplicate a billed call; users can resume/cancel and see per-row status; stale leases recover safely; terminal failures and uncertain charges are inspectable and reconcilable.
 
@@ -50,11 +58,15 @@ Create persisted jobs for Find rows, bulk cell runs, and other long work. Use a 
 
 Define workspace/member request limits, per-operation maximum cost, active-run limits, and daily/monthly spend caps. Apply server-side preflight checks before provider calls, reserve and settle known usage, retain uncertain charges for reconciliation, and add circuit breakers for exhausted balance, repeated provider failures, and abnormal spend. Keep Monid, Treg, OpenAI, and any future app-funded allowance ledgers separate. Decide whether Treg is user/workspace-owned or platform-funded before enabling a shared platform Treg key.
 
+**Status: Partial.** Atomic per-minute member/workspace request limits are implemented. They are abuse limits, not spend limits: no hard-dollar reservation/settlement or operator-budget alert exists. Keep platform-funded provider keys disabled until those controls are added.
+
 **Done when:** concurrent requests cannot overspend a cap; every run records its selected provider, workspace, operation, cost/usage, status, and provider run ID where available; users can see a clear estimate/cap before execution and understand who is billed; alerts fire before an operator-funded budget is exhausted.
 
 ### P0.6 Establish production database and recovery procedures
 
 Keep production on managed Postgres; do not use embedded PGlite for a multi-user or multi-instance hosted service. Separate production, staging, and preview databases/branches and credentials. Confirm connection pooling and serverless connection behavior under load. Define backup/PITR retention, restore access, migration ownership, and a tested recovery point/time objective. Review the current “migrate during Vercel build” workflow for preview and concurrent production builds; use a controlled release migration step if build-time migration cannot meet the required deployment safety.
+
+**Status: Open.** Code and runbook describe the required isolation, but the Neon/Vercel account, backup policy, restore exercise, and RPO/RTO are external operator setup. Do not onboard paying customers until a restore has been measured.
 
 **Done when:** a restore to an isolated database has been demonstrated and timed; backup retention and RPO/RTO are documented; migrations are backward-compatible across rolling deployments and fail closed; previews cannot read or mutate production data; deployment rollback steps are documented.
 
@@ -62,11 +74,15 @@ Keep production on managed Postgres; do not use embedded PGlite for a multi-user
 
 Threat-model auth, workspace isolation, spreadsheet imports/formulas, OAuth callbacks, provider adapters, file/URL retrieval, MCP, and billing. Verify dependency and container/build provenance controls, security headers/CSP, cookie flags, input/output limits, and rate limits. Define credential encryption-key rotation and recovery: the current hosted vault depends on a stable shared encryption root, and changing it without re-encryption makes saved credentials unreadable. Add a process for rotating/revoking user and operator keys without downtime.
 
+**Status: Partial.** Clerk, encrypted shared credential storage, security headers, bounded inputs, redacted error paths, private GitHub vulnerability reporting, Gitleaks history scanning, CodeQL, Dependabot, and request limits are in place. CSP remains report-only; review scanner findings, complete an independent security review, and rehearse encryption-root rotation before launch.
+
 **Done when:** a documented security review has no unresolved critical/high findings; a credential/key rotation has been rehearsed on staging; secrets are absent from Git history, browser bundles, logs, traces, and error responses; vulnerability reports have a working private contact and response target.
 
 ### P0.8 Publish privacy terms and implement customer data lifecycle
 
 Document what row data and prompts go to each provider, what the app stores, subprocessors, retention, and customer responsibilities. Add customer-visible data export and workspace/account deletion with clear treatment of backups, provider-side retention, usage ledgers, and legal holds. Publish Privacy Policy, Terms, and, if required for target customers, a DPA and subprocessors list. Confirm lawful use and retention for prospect/contact data and social profile results.
+
+**Status: Partial.** Admin export and workspace closure are implemented and documented. Legal terms/privacy/DPA, retention windows, backup deletion behavior, and personal AgentWeb credential handling still need explicit product policy and implementation.
 
 **Done when:** customers can export and request deletion without manual SQL; deletion is tenant-safe and completed within a stated period; provider/data handling is disclosed at connection and product level; legal documents match actual processing and billing behavior.
 
@@ -74,11 +90,15 @@ Document what row data and prompts go to each provider, what the app stores, sub
 
 The app already returns request IDs and redacts unexpected server errors. Add centralized structured logs, exception reporting, latency/error dashboards, database and queue health, provider status/error/cost metrics, and alerts with customer/workspace-safe identifiers. Establish service SLOs, an incident owner/on-call path, status communication, and runbooks for database failure, stuck jobs, provider outage, key exposure, and billing mismatch.
 
+**Status: Partial.** Liveness/readiness routes, request IDs, redacted errors, and an operator runbook are implemented. Centralized exception collection, dashboards, SLOs, alert delivery, and an incident owner/status channel require service/account configuration.
+
 **Done when:** an operator can find a failed run from its request/run ID without seeing secrets or raw sensitive rows; alerts detect elevated errors, queue age, DB saturation, and budget anomalies; a simulated incident has an owner, mitigation steps, and customer communication path.
 
 ### P0.10 Define a release and customer-support gate
 
 Expand the current CI baseline with production-like staging checks for signup/auth, tenant isolation, paid workflow limits, migrations, provider failures, long jobs, and customer data export/deletion. Add dependency/security scanning and a release checklist. Create a support channel, issue severity definitions, response expectations, and customer-facing setup/troubleshooting docs before enabling public signup.
+
+**Status: Partial.** CI covers lint, types, tests, build, secret-history scanning, CodeQL, dependency update PRs, and a narrow browser smoke. Staging deployment checks, security review, support ownership, and rollback exercise remain launch gates.
 
 **Done when:** every release passes staging smoke and migration checks; no test uses production data or paid customer credentials; a support request can be routed and tracked; a rollback and incident owner are named for each release.
 
@@ -86,29 +106,43 @@ Expand the current CI baseline with production-like staging checks for signup/au
 
 ### P1.1 Team administration and auditability
 
+**Status: Partial.** Clerk OrganizationProfile supplies member management. Export and closure are audited; billing, membership, and provider connection audit coverage is not complete.
+
 Add workspace member/role management, invitation expiry/revocation, credential change history, and audit events for membership, billing, provider connections, exports, and destructive actions. Keep audit payloads free of raw secrets and unnecessary prospect data.
 
 ### P1.2 Provider capability and connection reliability
+
+**Status: Partial.** Monid and Treg are explicit and separately billed; Treg catalog-based capability notes exist. Add automated live-catalog drift checks and staging OAuth/API-key lifecycle verification.
 
 Maintain a capability matrix derived from current Monid/Treg catalogs and OAuth/API-key support. Make unsupported operations clear before a column is run; test OAuth start/callback, state/PKCE, callback allowlists, secret save/revoke, provider-directory changes, and upstream 401/403/429/5xx behavior. For each provider, document billing owner, usage visibility, idempotency semantics, and recovery from uncertain runs.
 
 ### P1.3 Usage and cost reporting
 
+**Status: Partial.** Per-provider receipts are retained and included in workspace export; searchable admin usage reports and reconciliation are still needed.
+
 Give workspace admins searchable, exportable usage records by provider, operation, member, sheet, time, status, and cost where available. Explain estimates versus settled and uncertain cost. Add reconciliation for provider usage that differs from app receipts. Do not show Treg balance as Monid balance or app subscription as provider credits.
 
 ### P1.4 Onboarding and activation
+
+**Status: Open.**
 
 Build a first-run path for workspace creation, imports, a sample sheet, provider connection, a safe five-row trial run, and expected-cost preview. Provide actionable connection and provider error guidance and a route to support. Make the free/sample experience usable without entering an OpenAI key.
 
 ### P1.5 Scale and data-integrity verification
 
+**Status: Open.**
+
 Set supported sheet, row, column, import, and export sizes based on measured performance rather than copied reference limits. Load-test concurrent edits, revision conflicts, bulk runs, realtime subscriptions, export generation, and database pool behavior. Test IndexedDB cache recovery and multi-tab synchronization with large sheets and offline/reconnect transitions.
 
 ### P1.6 Accessibility, browser support, and responsive behavior
 
+**Status: Open.**
+
 Run keyboard-only and screen-reader reviews for the grid, menus, dialogs, connection/OAuth flows, and status details. Check contrast and reduced-motion behavior. Publish supported browser/device versions and verify the core workflow on mobile/tablet if those are in scope.
 
 ### P1.7 Service and customer documentation
+
+**Status: Partial.** Operator deployment, data handling, and incident notes are now documented. Customer-facing privacy/legal/support materials and verified support limits remain external launch work.
 
 Document account setup, provider billing boundaries, supported operations, import/export formats, data retention, limitations, known provider gaps, status page, and support escalation. Keep docs aligned with the capability catalog and deployment configuration.
 
@@ -122,18 +156,19 @@ Document account setup, provider billing boundaries, supported operations, impor
 
 ## Recommended critical path
 
-1. Choose managed SaaS versus self-hosted scope and define the tenant, identity, and billing model.
-2. Close tenant authorization, spend safety, and credential handling gaps.
-3. Build durable job execution and run reconciliation.
-4. Add product billing/entitlements if customers will pay for the app.
-5. Prove database backup/restore and safe releases.
-6. Add observability, privacy/data lifecycle, support, and security review.
-7. Run staging, failure, load, and recovery exercises; then invite a controlled beta cohort.
+1. Configure isolated staging Clerk, Neon, Stripe, and Vercel environments; verify sign-up, org roles, subscription events, and protected routes.
+2. Finish hard-spend limits and budget alerts; decide whether each provider is customer/workspace-paid before enabling any platform-funded credential.
+3. Extend durable execution to Find rows and MCP bulk work; verify retry, cancellation, run reconciliation, and queue capacity.
+4. Complete security review, CSP decision, encryption-key rotation rehearsal, and dependency/history scans.
+5. Prove database backup/restore, migration rollback, monitoring, incident ownership, and customer-support handling.
+6. Publish legal/privacy/retention terms and validate workspace export/deletion against all configured providers and backups.
+7. Run staging, failure, load, accessibility, and recovery exercises; then invite a controlled beta cohort.
 
 ## Related repository references
 
 - [Deploy to Vercel with Neon](deploy.md)
-- [Official-site operations and hosted identity](hosted.md)
+- [Data handling inventory](data-handling.md)
+- [Operations runbook](operations-runbook.md)
 - [Development architecture and checks](development.md)
 - [Treg provider behavior and current gaps](treg-provider.md)
 - [Security policy and current operating assumptions](../SECURITY.md)

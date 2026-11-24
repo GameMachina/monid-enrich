@@ -13,7 +13,28 @@ export function contextSignInEnabled() {
 	return false;
 }
 
-export const selfHostedEnabled = () => !contextSignInEnabled() && !(process.env.NODE_ENV === 'development' && process.env.ENRICHABLE_DEV_AUTH === 'true');
+export function managedAuthEnabled() {
+	return process.env.ENRICHABLE_AUTH_MODE === 'clerk';
+}
+
+export function durableEnrichmentEnabled() {
+	return managedAuthEnabled() && process.env.ENRICHABLE_DURABLE_ENRICHMENT === 'true' && Boolean(process.env.DATABASE_URL?.trim());
+}
+
+export function durableWorkerConfigured() {
+	return process.env.CRON_SECRET?.trim().length !== undefined && (process.env.CRON_SECRET?.trim().length ?? 0) >= 32;
+}
+
+export function authMode(): 'clerk' | 'self-hosted' | 'unconfigured' {
+	const configured = process.env.ENRICHABLE_AUTH_MODE;
+	if (configured === 'clerk' || configured === 'self-hosted') return configured;
+	if (configured) throw new Error('ENRICHABLE_AUTH_MODE must be clerk or self-hosted.');
+	if (process.env.NODE_ENV === 'production') return 'unconfigured';
+	return 'self-hosted';
+}
+
+/** Production deployments fail closed unless their owner explicitly chooses a hosted identity mode. */
+export const selfHostedEnabled = () => authMode() === 'self-hosted' && !(process.env.NODE_ENV === 'development' && process.env.ENRICHABLE_DEV_AUTH === 'true');
 
 /** Public origin for canonical and Open Graph URLs. The official apex always resolves to www. */
 export function siteUrl() {

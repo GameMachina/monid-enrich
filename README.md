@@ -21,7 +21,7 @@ The embedded store uses PGlite rather than SQLite because the workspace schema a
 
 - Monid and Treg are distinct, explicit data providers. Supported data columns choose Monid or Treg before they run; unsupported Treg operations stop with a clear message and never fall back to Monid.
 - OpenAI is only used when a workspace member supplies an OpenAI key. It supports reasoning, classification, scoring, and natural-language row discovery. The app does not fall back to a different model provider.
-- Provider keys are encrypted in the server-side workspace vault. The browser receives connection status and masked metadata, never the saved key.
+- In managed mode, provider keys are encrypted in the server-side workspace vault. The browser receives connection status and masked metadata, never the saved key. Self-hosted browser mode has separate local-storage behavior; see [security](SECURITY.md).
 - Monid and Treg keep separate connection, billing, usage, and run receipts. Cell provenance records the selected provider, run status, sources, and returned cost/usage where available. Uncertain Treg submissions reuse their saved idempotency key; they are never submitted as a new call automatically.
 - Mobile phone enrichment supports LeadMagic and Clay through Monid, with workspace route access, each member's default strategy, and per-column overrides. Workspace Monid credentials bill the workspace wallet; actual costs are attached to the cell.
 - Treg supports company and people discovery, company/person data, company funding events, web search and page reading, email and phone lookup, email verification, and public profile search across LinkedIn, Instagram, Facebook, X, TikTok, and YouTube. Some person fields, certain scrape modes, website country filters, and social actions are not supported; these gaps are reported without provider fallback.
@@ -38,6 +38,8 @@ The embedded store uses PGlite rather than SQLite because the workspace schema a
 ## Architecture and reference analysis
 
 See [docs/rebuild-status.md](docs/rebuild-status.md) for the public UI and workflow inventory, visual specification, data model, architecture, provider operations reviewed, implementation stages, and known gaps.
+
+The managed SaaS foundations are implemented, but the repository is not launch-ready until Clerk, Neon, Stripe, Vercel Cron, backups, monitoring, legal policy, and staging verification are configured. Track the remaining launch gates in the [production-readiness backlog](docs/production-readiness-backlog.md); see [production setup](docs/production-setup.md) before deploying.
 
 ## Development checks
 

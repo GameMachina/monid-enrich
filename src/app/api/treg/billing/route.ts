@@ -1,12 +1,15 @@
 import { NO_STORE_HEADERS, jsonError } from '@/lib/server/credentials';
 import { routeAccess } from '@/lib/server/provider-access';
 import { tregBalanceUsd, tregRequest, tregTopupDefaultUsd } from '@/lib/server/treg';
+import { workspaceAdminResponse } from '@/lib/server/request-admin';
 
 export const maxDuration = 30;
 
 export async function GET(request: Request) {
 	const access = await routeAccess(request);
 	if (access instanceof Response) return access;
+	const denied = await workspaceAdminResponse();
+	if (denied) return denied;
 	try {
 		const token = access.requireKey('treg');
 		const [identity, billing] = await Promise.all([tregRequest(token, '/auth/me'), tregRequest(token, '/billing')]);

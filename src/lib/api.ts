@@ -3,6 +3,7 @@
 import { contextRequest } from './context-credits';
 import { notifyTrialLimit } from './ai-trial';
 import { keyHeaders, loadSettings, type Settings } from './keys';
+import { accountHeaders } from './account-storage';
 import type { Provider } from './organization-settings';
 import { FAILURE_REASONS, type ColumnOp, type ComposeColumnResponse, type DataProvider, type EnrichFailure, type EnrichResponse, type FailureProvider, type KeyVerification, type CellValue, type EntityKind } from './types';
 
@@ -40,23 +41,46 @@ export async function readError(response: Response): Promise<ApiError> {
 	return new ApiError(message, response.status, failure);
 }
 
-export async function enrichCell(op: ColumnOp, row: Record<string, CellValue>, signal?: AbortSignal, idempotencyKey?: string): Promise<EnrichResponse> {
+export async function enrichCell(op: ColumnOp, row: Record<string, CellValue>, signal?: AbortSignal, idempotencyKey?: string, runContext?: { sheetId: string; rowId: string; columnId: string }): Promise<EnrichResponse> {
 	const settings = loadSettings();
 	const deadline = new AbortController();
 	const timer = setTimeout(() => deadline.abort(), ENRICHMENT_REQUEST_MS);
+	let durableJobId: string | undefined;
 	try {
+		const stableKey = idempotencyKey ?? (runContext ? crypto.randomUUID() : undefined);
 		const response = await contextRequest('/api/enrich', {
 			method: 'POST',
 			headers: { ...keyHeaders(), 'x-prefer-jev': settings.preferJev ? 'true' : 'false' },
-			body: JSON.stringify({ op, row, ...(idempotencyKey ? { idempotencyKey } : {}) }),
+			body: JSON.stringify({ op, row, ...(stableKey ? { idempotencyKey: stableKey } : {}), ...(runContext ? { runContext } : {}) }),
 			signal: signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal,
 		});
 		if (!response.ok) throw await readError(response);
-		const result = (await response.json()) as EnrichResponse;
+		let data = await response.json() as EnrichResponse & { jobId?: string; status?: string };
+		if (data.jobId && !['succeeded', 'failed', 'uncertain', 'cancelled'].includes(data.status ?? '')) {
+			durableJobId = data.jobId;
+			while (!deadline.signal.aborted && !signal?.aborted) {
+				await new Promise<void>((resolve, reject) => {
+					const cleanup = () => { clearTimeout(timer); deadline.signal.removeEventListener('abort', abort); signal?.removeEventListener('abort', abort); };
+					const timer = setTimeout(() => { cleanup(); resolve(); }, 900);
+					const abort = () => { cleanup(); reject(signal?.reason ?? deadline.signal.reason); };
+					deadline.signal.addEventListener('abort', abort, { once: true });
+					signal?.addEventListener('abort', abort, { once: true });
+				});
+				const polled = await fetch(`/api/enrich/jobs/${encodeURIComponent(durableJobId)}`, { headers: accountHeaders(), cache: 'no-store', signal: signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal });
+				if (!polled.ok) throw await readError(polled);
+				data = await polled.json() as typeof data;
+				if (data.status === 'succeeded' || data.status === 'failed' || data.status === 'uncertain' || data.status === 'cancelled') break;
+			}
+		}
+		if (deadline.signal.aborted && !signal?.aborted) throw new ApiError('This enrichment is still queued or running. It will continue in the workspace.', 0, { reason: 'timeout', retryable: false });
+		const result = data as EnrichResponse;
 		const failure = parseFailure(result.failure);
 		notifyTrialLimit(result.error, failure);
 		return { ...result, failure };
 	} catch (error) {
+		if (signal?.aborted && durableJobId) {
+			void fetch(`/api/enrich/jobs/${encodeURIComponent(durableJobId)}`, { method: 'POST', headers: { ...accountHeaders(), 'content-type': 'application/json' }, body: '{}', keepalive: true }).catch(() => {});
+		}
 		// A request that outlived the deadline may have been billed, so the runner does not retry it (as the server marks
 		// its own provider timeouts).
 		if (deadline.signal.aborted && !signal?.aborted) throw new ApiError('This enrichment took too long. Run this cell again.', 0, { reason: 'timeout', retryable: false });

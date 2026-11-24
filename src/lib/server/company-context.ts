@@ -31,6 +31,7 @@ export function lookupFailure(error: unknown) {
 
 /** Only called after authorization. The durable claim also records negative/failed attempts. */
 export async function lookupCompanyOnAuthorization(actor: Account, key: string, store: CompanyContextStore) {
+	if (!actor.user.email) return;
  if (!await store.claimLookup(actor)) return;
  try {
   const client = contextClient(key, actor.user.email, undefined, actor);

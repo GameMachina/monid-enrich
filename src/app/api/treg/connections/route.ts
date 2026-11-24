@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { NO_STORE_HEADERS, jsonError } from '@/lib/server/credentials';
 import { routeAccess } from '@/lib/server/provider-access';
 import { normalizeTregConnectResult, normalizeTregConnections, tregConnectionRequest } from '@/lib/server/treg-connections';
+import { workspaceAdminResponse } from '@/lib/server/request-admin';
 
 export const maxDuration = 30;
 
@@ -22,6 +23,8 @@ const tokenInput = z.object({ service: z.string().trim().toLowerCase().regex(/^[
 export async function POST(request: Request) {
 	const access = await routeAccess(request);
 	if (access instanceof Response) return access;
+	const denied = await workspaceAdminResponse();
+	if (denied) return denied;
 	const parsed = tokenInput.safeParse(await request.json().catch(() => null));
 	if (!parsed.success) return jsonError(`Invalid Treg connection: ${parsed.error.issues[0]?.message ?? 'check the provider and credential.'}`, 400);
 	try {

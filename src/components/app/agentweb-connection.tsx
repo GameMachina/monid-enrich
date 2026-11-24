@@ -1,10 +1,9 @@
 'use client';
 
-import { CheckCircle2, ExternalLink, Globe2, MoreHorizontal } from 'lucide-react';
+import { ExternalLink, Globe2, MoreHorizontal } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { accountHeaders } from '@/lib/account-storage';
 import { Button } from '@/components/ui/button';
-import { buttonClassName } from '@/components/ui/button-class';
 import { Dialog } from '@/components/ui/dialog';
 import { Field, Input } from '@/components/ui/field';
 import { MenuButton, type MenuItem } from '@/components/ui/menu';
@@ -40,13 +39,14 @@ export function AgentWebConnection() {
 	const [error, setError] = useState('');
 	const [disconnecting, setDisconnecting] = useState(false);
 
-	async function refresh() {
-		setLoading(true);
-		try { setState(await readResponse(await fetch('/api/agentweb/connection', { cache: 'no-store', headers: accountHeaders() }))); }
-		catch (cause) { setState({ connected: false, usageError: cause instanceof Error ? cause.message : 'Could not load the AgentWeb connection.' }); }
-		finally { setLoading(false); }
-	}
-	useEffect(() => { void refresh(); }, []);
+	useEffect(() => {
+		let cancelled = false;
+		void fetch('/api/agentweb/connection', { cache: 'no-store', headers: accountHeaders() }).then(readResponse)
+			.then((result) => { if (!cancelled) setState(result); })
+			.catch((cause: unknown) => { if (!cancelled) setState({ connected: false, usageError: cause instanceof Error ? cause.message : 'Could not load the AgentWeb connection.' }); })
+			.finally(() => { if (!cancelled) setLoading(false); });
+		return () => { cancelled = true; };
+	}, []);
 
 	async function save() {
 		setSaving(true); setError('');

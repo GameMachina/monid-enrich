@@ -272,6 +272,10 @@ export interface CellMeta {
 	/** Reused only for an explicit retry of an uncertain Treg request, within Treg's idempotency window. */
 	tregIdempotencyKey?: string;
 	tregIdempotencyCreatedAt?: number;
+	/** Durable application-run key; contains no user data or provider credentials. */
+	jobIdempotencyKey?: string;
+	jobIdempotencyCreatedAt?: number;
+	failure?: EnrichFailure;
 	durationMs?: number;
 	pageUrl?: string;
 	raw?: unknown;
@@ -409,6 +413,7 @@ export const EnrichRequestSchema = z.object({
 	model: z.string().max(100).optional(),
 	/** Stable per-cell retry key for providers that support idempotent execution. */
 	idempotencyKey: z.string().min(8).max(128).optional(),
+	runContext: z.object({ sheetId: z.string().min(1).max(256), rowId: z.string().min(1).max(256), columnId: z.string().min(1).max(256) }).strict().optional(),
 });
 
 /** Why an enrichment failed. Set where the failure is understood; code branches on this, never on `error` text. */

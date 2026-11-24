@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { NO_STORE_HEADERS, jsonError } from '@/lib/server/credentials';
 import { routeAccess } from '@/lib/server/provider-access';
 import { normalizeTregResources, tregConnectionRequest } from '@/lib/server/treg-connections';
+import { workspaceAdminResponse } from '@/lib/server/request-admin';
 
 export const maxDuration = 30;
 type RouteContext = { params: Promise<{ secretId: string }> };
@@ -26,6 +27,8 @@ export async function GET(request: Request, context: RouteContext) {
 
 const resourceInput = z.object({ resource_ref: z.string().trim().min(1).max(1000), resource_name: z.string().trim().max(250).optional() }).strict();
 export async function POST(request: Request, context: RouteContext) {
+	const denied = await workspaceAdminResponse();
+	if (denied) return denied;
 	const access = await routeAccess(request);
 	if (access instanceof Response) return access;
 	const id = await idFrom(context);

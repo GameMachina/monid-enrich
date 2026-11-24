@@ -11,6 +11,7 @@ import { DEFAULT_MEMBER_PREFERENCES, type MemberPreferences } from '@/lib/member
 
 interface SettingsContextValue {
 	selfHosted: boolean;
+	workspaceAdmin: boolean;
 	/** Legacy onboarding prop retained for hosts that have not removed the old consent route. */
 	contextSignIn: boolean;
 	workspaceName: string;
@@ -50,7 +51,7 @@ async function requestMemberSettings(method: 'GET' | 'PATCH', body?: unknown): P
 	return await response.json() as MemberSettingsSnapshot;
 }
 
-export function SettingsProvider({ children, logolinkPublicId, selfHosted = false, contextSignIn = false, workspaceName = '' }: { children: ReactNode; logolinkPublicId?: string; selfHosted?: boolean; contextSignIn?: boolean; workspaceName?: string }) {
+export function SettingsProvider({ children, logolinkPublicId, selfHosted = false, workspaceAdmin = false, contextSignIn = false, workspaceName = '' }: { children: ReactNode; logolinkPublicId?: string; selfHosted?: boolean; workspaceAdmin?: boolean; contextSignIn?: boolean; workspaceName?: string }) {
 	const settings = useSyncExternalStore(subscribeSettings, loadSettings, serverSnapshot);
 	const [settingsError, setSettingsError] = useState<string | null>(null);
 	const [memberSettings, setMemberSettings] = useState<MemberSettingsSnapshot>({ revision: 0, preferences: DEFAULT_MEMBER_PREFERENCES });
@@ -134,7 +135,7 @@ export function SettingsProvider({ children, logolinkPublicId, selfHosted = fals
 	const hasJev = false;
 	const openKeys = useCallback((provider?: 'monid' | 'treg') => { setKeysRequiredProvider(provider); setKeysOpen(true); }, []);
 	const closeKeys = useCallback(() => { setKeysOpen(false); setKeysRequiredProvider(undefined); }, []);
-	const value = useMemo<SettingsContextValue>(() => ({ selfHosted, contextSignIn, workspaceName, settings, update, organization, memberPreferences: memberSettings.preferences, memberPreferencesError, updateMemberPreferences, settingsError, retrySettings, disconnectProvider, server, connections, ready, hasKeys, providerReady, hasJev, logolinkPublicId, keysOpen, keysRequiredProvider, trialLimitMessage: activeTrialLimit, reportTrialLimit, openKeys, closeKeys }), [selfHosted, contextSignIn, workspaceName, settings, update, organization, memberSettings.preferences, memberPreferencesError, updateMemberPreferences, settingsError, retrySettings, disconnectProvider, server, connections, ready, hasKeys, providerReady, hasJev, logolinkPublicId, keysOpen, keysRequiredProvider, activeTrialLimit, reportTrialLimit, openKeys, closeKeys]);
+	const value = useMemo<SettingsContextValue>(() => ({ selfHosted, workspaceAdmin, contextSignIn, workspaceName, settings, update, organization, memberPreferences: memberSettings.preferences, memberPreferencesError, updateMemberPreferences, settingsError, retrySettings, disconnectProvider, server, connections, ready, hasKeys, providerReady, hasJev, logolinkPublicId, keysOpen, keysRequiredProvider, trialLimitMessage: activeTrialLimit, reportTrialLimit, openKeys, closeKeys }), [selfHosted, workspaceAdmin, contextSignIn, workspaceName, settings, update, organization, memberSettings.preferences, memberPreferencesError, updateMemberPreferences, settingsError, retrySettings, disconnectProvider, server, connections, ready, hasKeys, providerReady, hasJev, logolinkPublicId, keysOpen, keysRequiredProvider, activeTrialLimit, reportTrialLimit, openKeys, closeKeys]);
 	return <SettingsContext.Provider value={value}>{children}</SettingsContext.Provider>;
 }
 

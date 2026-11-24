@@ -1,6 +1,5 @@
 'use client';
 
-import { useEffect, useState } from 'react';
 import Image from 'next/image';
 import { GripVertical } from 'lucide-react';
 import { Sortable, SortableItem, SortableItemHandle } from '@/components/ui/sortable';
@@ -16,8 +15,7 @@ export function MonidWaterfallPicker<T extends string>({ value, providers, info,
 	onChange: (value: T[]) => void;
 	label?: string;
 }) {
-	const [order, setOrder] = useState<T[]>(() => [...value, ...providers.filter((provider) => !value.includes(provider))]);
-	useEffect(() => setOrder((current) => [...current.filter((provider) => providers.includes(provider)), ...providers.filter((provider) => !current.includes(provider))]), [providers]);
+	const order = [...value, ...providers.filter((provider) => !value.includes(provider))];
 	const enabled = new Set(value);
 	return <div className="w-full">
 		<div className="flex items-center gap-1 pb-1 text-body-sm">{label}<HelpTooltip label="About Monid provider waterfalls">
@@ -25,7 +23,7 @@ export function MonidWaterfallPicker<T extends string>({ value, providers, info,
 			<span>Monid bills the workspace wallet. A provider may charge for a no-match; prices shown are current starting estimates and the cell records actual usage.</span>
 			<span>Only completed no-matches advance to the next provider. Errors and timeouts stop the waterfall to avoid duplicate charges.</span>
 		</HelpTooltip></div>
-		<Sortable value={order} onValueChange={(next) => { setOrder(next); onChange(next.filter((provider) => enabled.has(provider))); }} getItemValue={(provider) => provider} className="space-y-0.5">
+		<Sortable value={order} onValueChange={(next) => onChange(next.filter((provider) => enabled.has(provider)))} getItemValue={(provider) => provider} className="space-y-0.5">
 			{order.map((provider) => {
 				const item = info[provider];
 				return <SortableItem key={provider} value={provider} className="flex h-9 items-center gap-2 rounded-md border-0 bg-surface px-1 shadow-none ring-0 hover:bg-neutral-5">

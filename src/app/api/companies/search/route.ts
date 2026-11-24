@@ -4,6 +4,8 @@ import { CredentialError, jsonError, NO_STORE_HEADERS } from '@/lib/server/crede
 import { browserAccess } from '@/lib/server/provider-access';
 import { runTregEndpoint, tregOutput } from '@/lib/server/treg';
 import { logoDomain } from '@/lib/organization-logo';
+import { subscriptionGate } from '@/lib/server/stripe-billing';
+import { reservePaidRequest } from '@/lib/server/provider-access';
 
 /** Name/domain autocomplete, rather than the natural-language company discovery endpoint. */
 export async function POST(request: Request) {
@@ -15,6 +17,9 @@ export async function POST(request: Request) {
 		if (body?.dataProvider !== undefined && body.dataProvider !== 'monid' && body.dataProvider !== 'treg') return jsonError('Choose Monid or Treg as the company search provider.', 400);
 		const provider = body?.dataProvider ?? 'monid';
 		const access = await browserAccess(request);
+		const billingBlock = await subscriptionGate(access.account);
+		if (billingBlock) return billingBlock;
+		if (access.account && !await reservePaidRequest(access.account)) return new Response(JSON.stringify({ error: 'This workspace reached its enrichment request limit. Wait a minute and try again.' }), { status: 429, headers: { ...NO_STORE_HEADERS, 'retry-after': '60' } });
 		if (!access.key(provider)) return jsonError(`Connect ${provider === 'treg' ? 'Treg' : 'Monid'} in Configuration to search companies.`, 401);
 		let companies;
 		if (provider === 'treg') {

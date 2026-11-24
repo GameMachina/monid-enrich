@@ -1,10 +1,11 @@
 'use client';
 
+import { OrganizationSwitcher, UserButton } from '@clerk/nextjs';
 import { CreditsRemaining } from './credits-remaining';
 import { Logo } from '@/components/ui/logo';
 import clsx from 'clsx';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { ChevronDown, LifeBuoy, LogOut, Menu, Settings, Table2, X } from 'lucide-react';
+import { ChevronDown, LifeBuoy, LogOut, Menu, Settings, Table2, Users, X } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { createContext, type ReactNode, useContext, useEffect, useMemo, useRef, useState } from 'react';
@@ -79,7 +80,7 @@ function SheetsNav({ pathname, onNavigate }: { pathname: string; onNavigate: () 
 	);
 }
 
-export function Sidebar({ account }: { account: Account }) {
+export function Sidebar({ account, managedAuth = false }: { account: Account; managedAuth?: boolean }) {
 	const pathname = usePathname() ?? '';
 	const { open: mobileOpen, setOpen: setMobileOpen } = useContext(NavigationContext);
 	const drawerRef = useRef<HTMLElement>(null);
@@ -127,8 +128,13 @@ export function Sidebar({ account }: { account: Account }) {
 					<X className="size-4" strokeWidth={1.5} />
 				</button>
 			</div>
+			{managedAuth && <div className="mt-4 px-1"><OrganizationSwitcher hidePersonal={false} /></div>}
 			<nav aria-label="App" className="mt-5 flex flex-col gap-0.5">
 				<SheetsNav pathname={pathname} onNavigate={close} />
+				{managedAuth && <Link href="/app/team" onClick={close} aria-current={pathname.startsWith('/app/team') ? 'page' : undefined} className={linkClass(pathname.startsWith('/app/team'))}>
+					<Users className={iconClass(pathname.startsWith('/app/team'))} strokeWidth={1.75} />
+					<span className="min-w-0 flex-1 truncate">Team</span>
+				</Link>}
 			</nav>
 			<div className="min-h-6 flex-1" />
 			<div className="flex flex-col gap-0.5">
@@ -145,9 +151,13 @@ export function Sidebar({ account }: { account: Account }) {
 				</div>
 				{account.issuer === SELF_HOSTED_ISSUER
 					? <p className="mt-4 border-t border-hairline px-3 pt-4 text-caption text-fg-subtle">Self-hosted</p>
+					: managedAuth ? <div className="mt-4 flex items-center gap-2 border-t border-hairline px-3 pt-4 text-caption text-fg-muted">
+						<div className="min-w-0 flex-1"><p className="truncate font-medium">{account.user.name || account.user.email || 'Account'}</p><p className="mt-0.5 truncate text-fg-subtle" title={account.organization.name}>{account.organization.name}</p></div>
+						<UserButton />
+					</div>
 					: <div className="mt-4 flex items-center gap-2 border-t border-hairline px-3 pt-4 text-caption text-fg-muted">
 						<div className="min-w-0 flex-1">
-							<p className="truncate font-medium" title={account.user.email}>{account.user.name || account.user.email}</p>
+							<p className="truncate font-medium" title={account.user.email}>{account.user.name || account.user.email || 'Account'}</p>
 							<p className="mt-0.5 truncate text-fg-subtle" title={account.organization.name}>{account.organization.name}</p>
 						</div>
 						<form action="/api/auth/logout" method="post" className="shrink-0"><button type="submit" aria-label="Sign out" title="Sign out" className="grid size-11 place-items-center rounded-md text-fg-subtle md:size-7 transition-colors hover:bg-tint/[0.05] hover:text-fg"><LogOut className="size-3.5" strokeWidth={1.75} /></button></form>

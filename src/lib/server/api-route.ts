@@ -7,7 +7,7 @@ import { WorkspaceError } from '../workspace';
 import { currentAccount } from './auth';
 import { CreditBudgetError } from './credit-ledger';
 import { CredentialError } from './credentials';
-import { withDatabase, type Database } from './database';
+import { assertWorkspaceActive, withDatabase, type Database } from './database';
 import { logWorkspaceError } from './workspace-logging';
 
 /** Who is asking and the storage to answer with: what every signed-in route needs. */
@@ -16,6 +16,11 @@ type ContextSource = <T>(run: (context: RouteContext) => Promise<T>) => Promise<
 export type RequestTrace = { operation: string; requestId: string; started: number; phase?: string };
 
 export const UNAVAILABLE = 'Monid Enrich could not complete this request. Try again in a moment.';
+
+/** Server-side permission check for actions that change shared workspace state or spend workspace funds. */
+export function requireWorkspaceAdmin(account: Account) {
+	if (account.role !== 'owner' && account.role !== 'admin') throw new WorkspaceError('A workspace owner or admin must make this change.', 403);
+}
 
 /** What a caller is told about `error`. Our errors carry a status and a message written for the caller (400 means the
     caller's input failed to parse; see parseInput). Anything else is logged under the request id and answered 503 without
@@ -38,7 +43,7 @@ export const newTrace = (operation: string): RequestTrace => ({ operation, reque
 let source: ContextSource = async (run) => {
 	const account = await currentAccount();
 	if (!account) throw new WorkspaceError('Sign in required.', 401);
-	return withDatabase((database) => run({ account, database }));
+	return withDatabase(async (database) => { await assertWorkspaceActive(database, account); return run({ account, database }); });
 };
 
 /** Test seam: routes get their account and database from `next` until the returned function restores the session's. */

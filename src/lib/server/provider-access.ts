@@ -1,4 +1,5 @@
 import 'server-only';
+import { createHash } from 'node:crypto';
 import type { LanguageModelV4 } from '@ai-sdk/provider';
 import { wrapLanguageModel, type LanguageModelMiddleware } from 'ai';
 import type ContextDev from 'context.dev';
@@ -6,18 +7,20 @@ import type { z } from 'zod';
 import { SELF_HOSTED_ISSUER, type Account } from '../auth-identity';
 import { DECISIONS_CLASSIFIER, MODEL_ID, PROVIDERS, type OrganizationPreferences, type Provider, type ProviderAlias } from '../organization-settings';
 import { DEFAULT_MODEL, type Decider, type FailureProvider } from '../types';
-import { readSession, SESSION_COOKIE } from './auth';
+import { clerkAccount, readSession, SESSION_COOKIE } from './auth';
+import { managedAuthEnabled } from './deployment';
 import { contextClient } from './context';
 import { failureOf, newTrace } from './api-route';
 import type { LedgerAccess } from './credit-ledger';
-import { clean, CredentialError, ensureSafeEndpoint, jsonError, redactError, safeBaseUrl } from './credentials';
+import { clean, CredentialError, ensureSafeEndpoint, jsonError, NO_STORE_HEADERS, redactError, safeBaseUrl } from './credentials';
 import { classifyFailure, failure, Spend, spendMiddleware } from './enrich-failure';
 import { openaiModel } from './openai';
 import type { Jev } from './typesafe-trial';
 import { DEFAULT_ALLOWED_PHONE_PROVIDERS, type PhoneProvider } from '../phone-strategy';
-import { withDatabase } from './database';
+import { assertWorkspaceActive, withDatabase } from './database';
 import { OrganizationStore, organizationPersistenceEnabled } from './organization-store';
 import { localCredentialVault } from './local-credential-store';
+import { subscriptionGate } from './stripe-billing';
 
 /* Provider access resolves only an explicit verification key or the encrypted workspace vault. */
 
@@ -45,6 +48,26 @@ const PROVIDER_INFO: Record<ProviderAlias, { label: string; failure: FailureProv
 	contactout: { label: 'Monid', failure: 'monid' },
 };
 const OPENAI_API = 'https://api.openai.com/v1';
+const MEMBER_PAID_REQUESTS_PER_MINUTE = 120;
+const WORKSPACE_PAID_REQUESTS_PER_MINUTE = 600;
+
+export async function reservePaidRequest(account: Account) {
+	return withDatabase((database) => database.transaction(async (sql, workspace) => {
+		const windowStart = new Date(Math.floor(Date.now() / 60_000) * 60_000);
+		const actorHash = createHash('sha256').update(account.user.id).digest('hex');
+		const member = await sql.query(`INSERT INTO enrichable.workspace_request_limits(workspace_id,subject_id,window_start,request_count)
+			VALUES($1,$2,$3,1) ON CONFLICT(workspace_id,subject_id,window_start) DO UPDATE
+			SET request_count=enrichable.workspace_request_limits.request_count+1
+			WHERE enrichable.workspace_request_limits.request_count < $4 RETURNING request_count`, [workspace, `member:${actorHash}`, windowStart, MEMBER_PAID_REQUESTS_PER_MINUTE]);
+		if (!member.rows.length) return false;
+		const shared = await sql.query(`INSERT INTO enrichable.workspace_request_limits(workspace_id,subject_id,window_start,request_count)
+			VALUES($1,'workspace',$2,1) ON CONFLICT(workspace_id,subject_id,window_start) DO UPDATE
+			SET request_count=enrichable.workspace_request_limits.request_count+1
+			WHERE enrichable.workspace_request_limits.request_count < $3 RETURNING request_count`, [workspace, windowStart, WORKSPACE_PAID_REQUESTS_PER_MINUTE]);
+		if (windowStart.getUTCMinutes() === 0) await sql.query('DELETE FROM enrichable.workspace_request_limits WHERE workspace_id=$1 AND window_start < $2', [workspace, new Date(windowStart.getTime() - 48 * 60 * 60_000)]);
+		return shared.rows.length > 0;
+	}, { workspace: account }));
+}
 
 type Keys = Partial<Record<Provider, string>>;
 export interface Vault { keys: Keys; preferences: Partial<Pick<OrganizationPreferences, 'model' | 'classifierModel' | 'openaiBaseUrl' | 'preferJev' | 'mobilePhoneProviders'>>; contextUserEmail?: string }
@@ -233,13 +256,15 @@ export const resolveAccess = (policy: AccessPolicy, inputs: AccessInputs) => pro
 
 const vaultOf = ({ keys, settings, contextUserEmail }: Awaited<ReturnType<OrganizationStore['credentials']>>): Vault => ({ keys, preferences: settings.preferences, contextUserEmail });
 
-function requestAccount(request: Request) {
+async function requestAccount(request: Request) {
+	if (managedAuthEnabled()) return await clerkAccount() ?? undefined;
 	const cookie = (request.headers.get('cookie') ?? '').split(';').map((entry) => entry.trim()).find((entry) => entry.startsWith(`${SESSION_COOKIE}=`));
 	return readSession(cookie?.slice(SESSION_COOKIE.length + 1)) ?? undefined;
 }
 
 export async function browserInputs(request: Request): Promise<AccessInputs> {
-	const account = requestAccount(request);
+	const account = await requestAccount(request);
+	if (account) await withDatabase((database) => assertWorkspaceActive(database, account));
 	if (organizationPersistenceEnabled(account)) {
 		const stored = await withDatabase((database) => new OrganizationStore(database).credentials(account!));
 		return { account, headers: request.headers, vault: vaultOf(stored), allowedPhoneProviders: stored.settings.preferences.mobilePhoneProviders };
@@ -261,7 +286,12 @@ export async function mcpInputs(headers: Headers, actor: Account, organization?:
 	return { account: actor, headers, vault: vaultOf(stored), allowedPhoneProviders: stored.settings.preferences.mobilePhoneProviders };
 }
 
-export const browserAccess = async (request: Request) => resolveAccess(BROWSER_POLICY, await browserInputs(request));
+export const browserAccess = async (request: Request) => {
+	const inputs = await browserInputs(request);
+	// Managed jobs must remain runnable after the browser closes, so hosted requests
+	// can only use keys persisted in the encrypted workspace vault.
+	return resolveAccess(managedAuthEnabled() ? { sources: ['vault'], strict: false } : BROWSER_POLICY, inputs);
+};
 export const mcpAccess = async (headers: Headers, actor: Account, organization?: OrganizationStore) => resolveAccess(MCP_POLICY, await mcpInputs(headers, actor, organization));
 
 /** What the browser policy resolves without request overrides, so the client knows whether it must ask for keys. */
@@ -314,5 +344,11 @@ export async function routeInput<S extends z.ZodType>(request: Request, schema: 
 	const parsed = schema.safeParse(body);
 	if (!parsed.success) return jsonError(`Invalid request: ${parsed.error.issues[0]?.message ?? 'bad input'}`, 400, failure('input_invalid'));
 	const access = await routeAccess(request);
-	return access instanceof Response ? access : { input: parsed.data, access };
+	if (access instanceof Response) return access;
+	const billingBlock = await subscriptionGate(access.account);
+	if (billingBlock) return billingBlock;
+	if (access.account && !await reservePaidRequest(access.account)) {
+		return new Response(JSON.stringify({ error: 'This workspace reached its enrichment request limit. Wait a minute and try again.' }), { status: 429, headers: { ...NO_STORE_HEADERS, 'retry-after': '60' } });
+	}
+	return { input: parsed.data, access };
 }

@@ -337,7 +337,6 @@ function socialRequest(provider: SocialProvider, platform: SocialPlatform, ident
 async function runSocialProvider(access: ProviderAccess, provider: SocialProvider, platform: SocialPlatform, identity: ContactIdentity) {
 	const request = socialRequest(provider, platform, identity);
 	if (!request) return null;
-	const query = socialQuery(identity);
 	if ('generic' in request) {
 		if (request.generic === 'people_enrich') {
 			const parts = identity.name.split(/\s+/).filter(Boolean);

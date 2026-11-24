@@ -65,7 +65,7 @@ export interface RunnerStore {
 
 export interface RunnerPorts {
 	store: RunnerStore;
-	enrich(op: ColumnOp, record: Record<string, CellValue>, signal: AbortSignal, idempotencyKey?: string): Promise<EnrichResponse>;
+	enrich(op: ColumnOp, record: Record<string, CellValue>, signal: AbortSignal, idempotencyKey?: string, context?: { sheetId: string; rowId: string; columnId: string }): Promise<EnrichResponse>;
 	concurrency(): number;
 	/** How long a cell waiting on one running in another tab or an agent waits before looking again. */
 	waitMs: number;
@@ -283,8 +283,7 @@ export class Runner {
 				existing.state.controller.abort();
 			}
 			const oldCell = row.cells[column.id];
-			const usesTreg = Boolean(column.op && (column.op.kind === 'email-enrichment' || column.op.kind === 'phone-enrichment' || column.op.kind === 'social-enrichment') && column.op.dataProvider === 'treg');
-			const task: Task = { key, sheetId, rowId: row.id, columnId: column.id, attempts: 0, targetRowIds: options.targetRowIds, basis: existing ? undefined : basisOf(oldCell), unfinished: options.unfinished, ...(usesTreg ? { idempotencyKey: nanoid(32) } : {}), state: { phase: 'queued', starting: false } };
+			const task: Task = { key, sheetId, rowId: row.id, columnId: column.id, attempts: 0, targetRowIds: options.targetRowIds, basis: existing ? undefined : basisOf(oldCell), unfinished: options.unfinished, idempotencyKey: nanoid(32), state: { phase: 'queued', starting: false } };
 			this.tasks.delete(key);
 			this.tasks.set(key, task);
 			added.push(task);
@@ -663,13 +662,12 @@ export class Runner {
 		const currentFingerprint = inputFingerprint(plan.version);
 		const priorMeta = plan.cell?.m;
 		const reusablePriorRun = plan.cell?.s === 'error' && priorMeta?.inputFingerprint === currentFingerprint;
-		if (usesTreg) {
-			if (task.idempotencyFingerprint && task.idempotencyFingerprint !== currentFingerprint) task.idempotencyKey = nanoid(32);
-			else if (!task.idempotencyFingerprint && reusablePriorRun && priorMeta?.tregIdempotencyKey && priorMeta.tregIdempotencyCreatedAt && this.now() - priorMeta.tregIdempotencyCreatedAt <= 24 * 60 * 60 * 1000) task.idempotencyKey = priorMeta.tregIdempotencyKey;
-			task.idempotencyFingerprint = currentFingerprint;
-		}
+		if (task.idempotencyFingerprint && task.idempotencyFingerprint !== currentFingerprint) task.idempotencyKey = nanoid(32);
+		else if (!task.idempotencyFingerprint && reusablePriorRun && priorMeta?.jobIdempotencyKey && priorMeta.jobIdempotencyCreatedAt && this.now() - priorMeta.jobIdempotencyCreatedAt <= 24 * 60 * 60 * 1000) task.idempotencyKey = priorMeta.jobIdempotencyKey;
+		if (usesTreg && !task.idempotencyFingerprint && reusablePriorRun && priorMeta?.tregIdempotencyKey && priorMeta.tregIdempotencyCreatedAt && this.now() - priorMeta.tregIdempotencyCreatedAt <= 24 * 60 * 60 * 1000) task.idempotencyKey = priorMeta.tregIdempotencyKey;
+		task.idempotencyFingerprint = currentFingerprint;
 		const selectedDataProvider = op.kind === 'email-enrichment' || op.kind === 'phone-enrichment' || op.kind === 'social-enrichment' ? op.dataProvider : undefined;
-		const marker = selectedDataProvider ? { ...startedCell, m: { ...(startedCell.m ?? {}), dataProvider: selectedDataProvider, inputFingerprint: currentFingerprint, ...(task.idempotencyKey ? { tregIdempotencyKey: task.idempotencyKey, tregIdempotencyCreatedAt: this.now() } : {}) } } : startedCell;
+		const marker = { ...startedCell, m: { ...(startedCell.m ?? {}), ...(selectedDataProvider ? { dataProvider: selectedDataProvider } : {}), inputFingerprint: currentFingerprint, jobIdempotencyKey: task.idempotencyKey, jobIdempotencyCreatedAt: this.now(), ...(usesTreg && task.idempotencyKey ? { tregIdempotencyKey: task.idempotencyKey, tregIdempotencyCreatedAt: this.now() } : {}) } };
 		const started = await commit(marker, 'start');
 		if (started !== 'applied') {
 			// Inputs moved, or someone else changed the cell first: plan it again rather than fail, so a run started
@@ -680,7 +678,7 @@ export class Runner {
 		try {
 			if (signal.aborted) return;
 			let result: EnrichResponse | undefined, error: unknown;
-			try { result = await this.ports.enrich(op, plan.record, signal, task.idempotencyKey); }
+			try { result = await this.ports.enrich(op, plan.record, signal, task.idempotencyKey, { sheetId: task.sheetId, rowId: task.rowId, columnId: task.columnId }); }
 			catch (caught) { error = caught; }
 			if (signal.aborted) return;
 			if (result && !result.error) { await finish(resultCell(plan, result.value, result.meta)); return; }

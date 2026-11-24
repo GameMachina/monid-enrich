@@ -81,7 +81,7 @@ as comma-separated references, suitable for functions such as SUM and AVERAGE.
 
 ## Logos
 
-For self-hosting, enter your optional Logo Link public client ID in Configuration → Connections → Context.dev. Automatic Logo Link connection through Context.dev sign-in is available only on the official hosted service.
+The Logo Link connection described here is a legacy logo-display option and is separate from Monid/Treg enrichment billing. Managed identity for this fork uses Clerk; see [production setup](production-setup.md) for hosted configuration.
 
 ## Data providers and enrichment
 

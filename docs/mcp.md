@@ -1,6 +1,6 @@
 # Enrichable MCP
 
-Enrichable exposes a stateless Streamable HTTP MCP endpoint at `/mcp`. An external agent plans the workflow and requests successive batches. Enrichable validates operations, executes bounded calls, and persists results in the same workspace as the browser app. There is no background worker or durable job queue.
+Enrichable exposes a stateless Streamable HTTP MCP endpoint at `/mcp`. An external agent plans the workflow and requests successive batches. Enrichable validates operations, executes bounded calls, and persists results in the same workspace as the browser app. Hosted per-cell enrichments can be persisted as durable jobs when `ENRICHABLE_DURABLE_ENRICHMENT=true` and the worker is configured. The MCP endpoint remains synchronous and bounded; natural-language Find rows is not durable yet.
 
 ## Setup
 
@@ -15,7 +15,7 @@ For clients that accept an `mcpServers` configuration:
 {
   "mcpServers": {
     "enrichable": {
-      "url": "https://www.enrichable.io/mcp",
+      "url": "https://your-host.example/mcp",
       "headers": {
         "Authorization": "Bearer enr_mcp_YOUR_ORGANIZATION_KEY",
         "x-openai-key": "YOUR_OPENAI_KEY",
@@ -29,13 +29,13 @@ For clients that accept an `mcpServers` configuration:
 
 Exact client configuration varies. This endpoint requires a client that supports custom authorization headers. No OAuth setup is needed.
 
-Each organization has exactly one active key, with full sheet and enrichment access and no scopes. Any signed-in member of that workspace can retrieve/copy the key, create the initial key, or rotate it. Rotation is atomic and immediately invalidates the previous key for new requests; requests already authenticated may finish. Concurrent creation and stale rotation attempts return a conflict. In self-hosted deployments, the key belongs to the current browser workspace.
+Each workspace has exactly one active key, with full sheet and enrichment access and no scopes. A workspace owner or admin can retrieve/copy the key, create the initial key, or rotate it. Rotation is atomic and immediately invalidates the previous key for new requests; requests already authenticated may finish. Concurrent creation and stale rotation attempts return a conflict. In self-hosted deployments, the key belongs to the current browser workspace.
 
-The shared key grants access to Enrichable and its saved organization provider connections. Browser enrichment and MCP load the same organization vault and saved model/classifier defaults; additional provider headers are optional request-only overrides. Deployment provider keys and the sponsored OpenAI trial are not inherited by MCP. Sheet reads/writes and template columns require no provider credentials.
+The shared key grants access to Monid Enrich and its saved workspace provider connections. Browser enrichment and MCP load the same workspace vault and saved model/classifier defaults; additional provider headers are optional request-only overrides. Deployment provider keys are not inherited by MCP. Sheet reads/writes and template columns require no provider credentials.
 
 Migration `006_organization_settings.sql` adds organization preferences, encrypted provider records, and metadata-only audit events. Organization settings are keyed by verified identity issuer and organization ID. They are shared by every signed-in member and device, and can be managed in Configuration. Save new keys there; browsers receive only connection status and masked prefixes. Existing account-local keys/settings require explicit import, which refuses to overwrite existing organization configuration.
 
-The current Context.dev Enrichable sign-in grant lasts 14 days and does not support refresh tokens. Sign-in persists its verified API key and expiration in the organization vault. Expired keys are not used; Settings offers reconnection. Healthy connections from another member and manually connected keys are preserved on ordinary sign-in. Explicit disconnect persists across later sign-ins until a member reconnects deliberately. A manually connected organization Context.dev API key supports unattended MCP use without the sign-in grant’s 14-day limit. Logging out only clears that browser session; it does not disconnect the organization provider.
+Managed SaaS sign-in uses Clerk. Workspace members save Monid/Treg credentials in the server-side encrypted vault; logging out does not disconnect provider credentials. Self-hosted mode keeps its existing browser-workspace access model.
 
 Optional headers: `x-openai-key`, `x-monid-key`, `x-treg-key`, `x-openai-model`, and `x-openai-base-url`. Supported data operations explicitly select Monid or Treg in their column definition. A Treg selection does not use the Monid key or wallet, and unsupported Treg operations do not fall back to Monid. Base URL overrides use the same URL and DNS validation as browser enrichment. Overriding the saved OpenAI endpoint requires an explicit `x-openai-key`; a stored organization key is never forwarded to a different request-supplied endpoint.
 
@@ -68,7 +68,7 @@ A sheet saved by an older version is upgraded the first time an agent reads it, 
 
 Prefer Enrichable’s specialized operations over implementing providers, scraping, or research yourself. Use company/person fields for supported facts, Hunter/Prospeo for contact data, scrape/search for web data, check/classify/score for decisions, email-draft for emails, and no-cost template for deterministic text. Reserve generic ai and deep-research answer for work specialized operations cannot handle. All operations use the same validation and execution paths as the browser app.
 
-For additional research beyond these operations, prefer the Context.dev MCP when available. Use people search and people enrichment to resolve identities, web search to find supporting sources, and web scrape or web answers to verify details. Write confirmed profile URLs or company domains back into the sheet, then rerun affected enrichments in dependency order to persist results and provenance. Never guess missing identities or URLs. If Context.dev MCP is unavailable, use Enrichable search/scrape/answer operations before another web research tool.
+For additional research beyond these operations, use the explicitly selected Monid or Treg-backed operations supported by the sheet. Write confirmed profile URLs or company domains back into the sheet, then rerun affected enrichments in dependency order to persist results and provenance. Never guess missing identities or URLs. Do not treat an unsupported Treg capability as permission to route the request to Monid.
 
 A single `create_sheet` call can create the app’s Companies layout with an existing column configured for enrichment:
 
@@ -109,9 +109,9 @@ If the process dies, the original request remains `running` until ten minutes af
 ## Current limits
 
 - Formula sheets can be read and deleted, but other MCP mutations/enrichment are rejected because formula calculation currently requires the browser worker.
-- Enrichment runs only during an active HTTP request. The external agent must continue the workflow; there is no promise of completion after disconnects.
+- MCP batches remain synchronous, bounded to five cells, and limited by the hosting request duration. The browser's durable queue currently covers individual cells only; Find rows and MCP batches do not continue after their request ends.
 - Browser views refresh through the existing focus and polling behavior, rather than immediate push updates.
-- No autonomous population, exports, MCP OAuth, permission scopes, or background jobs are added by this version.
+- No autonomous row discovery, MCP exports, MCP OAuth, or permission scopes are exposed by this endpoint.
 
 ## Verification
 

@@ -2,11 +2,14 @@ import { z } from 'zod';
 import { NO_STORE_HEADERS, jsonError } from '@/lib/server/credentials';
 import { routeAccess } from '@/lib/server/provider-access';
 import { tregCheckoutUrl, tregRequest } from '@/lib/server/treg';
+import { workspaceAdminResponse } from '@/lib/server/request-admin';
 
 export const maxDuration = 30;
 const topupInput = z.object({ amountUsd: z.number().finite().positive() });
 
 export async function POST(request: Request) {
+	const denied = await workspaceAdminResponse();
+	if (denied) return denied;
 	const access = await routeAccess(request);
 	if (access instanceof Response) return access;
 	const parsed = topupInput.safeParse(await request.json().catch(() => null));

@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { NO_STORE_HEADERS, jsonError } from '@/lib/server/credentials';
 import { routeAccess } from '@/lib/server/provider-access';
 import { normalizeTregOAuthStart, normalizeTregOAuthStatus, tregConnectionRequest } from '@/lib/server/treg-connections';
+import { workspaceAdminResponse } from '@/lib/server/request-admin';
 
 export const maxDuration = 30;
 
@@ -28,6 +29,8 @@ const startInput = z.object({
 });
 
 export async function POST(request: Request) {
+	const denied = await workspaceAdminResponse();
+	if (denied) return denied;
 	const access = await routeAccess(request);
 	if (access instanceof Response) return access;
 	const parsed = startInput.safeParse(await request.json().catch(() => null));

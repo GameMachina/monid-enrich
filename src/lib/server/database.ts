@@ -60,7 +60,8 @@ export function createDatabase(driver: Driver): Database {
 			const actor = options.workspace, workspace = actor ? workspaceId(actor) : '';
 			if (actor && !options.readOnly) {
 				await connection.query('INSERT INTO enrichable.workspaces (id, issuer, organization_id, name) VALUES ($1, $2, $3, $4) ON CONFLICT (id) DO NOTHING', [workspace, actor.issuer, actor.organization.id, actor.organization.name]);
-				await connection.query('SELECT id FROM enrichable.workspaces WHERE id = $1 FOR UPDATE', [workspace]);
+				const current = await connection.query('SELECT deleted_at FROM enrichable.workspaces WHERE id = $1 FOR UPDATE', [workspace]);
+				if (current.rows[0]?.deleted_at) throw new WorkspaceError('This workspace has been closed. Choose another workspace or contact support.', 410);
 			}
 			const result = await run(connection, workspace);
 			await connection.query('COMMIT');
@@ -72,6 +73,11 @@ export function createDatabase(driver: Driver): Database {
 		} finally { connection.release(broken); }
 	}
 	return { read: (text, values = []) => driver.read(text, values), transaction };
+}
+
+export async function assertWorkspaceActive(database: Database, actor: WorkspaceActor) {
+	const row = (await database.read('SELECT deleted_at FROM enrichable.workspaces WHERE id=$1', [workspaceId(actor)])).rows[0];
+	if (row?.deleted_at) throw new WorkspaceError('This workspace has been closed. Choose another workspace or contact support.', 410);
 }
 
 // Checked on first use, so requests that never touch storage work on deployments without it.

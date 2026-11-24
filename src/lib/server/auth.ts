@@ -3,8 +3,8 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypt
 import { cookies } from 'next/headers';
 import { connection } from 'next/server';
 import { z } from 'zod';
-import { identitySchema, type Account } from '../auth-identity';
-import { configuredUrl, contextSignInEnabled, selfHostedEnabled } from './deployment';
+import { identitySchema, CLERK_ISSUER, type Account } from '../auth-identity';
+import { authMode, configuredUrl, contextSignInEnabled, managedAuthEnabled, selfHostedEnabled } from './deployment';
 import { selfHostedAccount } from './self-hosted';
 
 export const authCookieName = (name: string) => `${process.env.NODE_ENV === 'production' ? '__Host-' : ''}enrichable.${name}`;
@@ -59,11 +59,46 @@ export function unseal(token: string | undefined, purpose: 'flow' | 'session', n
 
 export function readSession(token?: string): (Account & { sessionId: string }) | null {
 	if (selfHostedEnabled()) return selfHostedAccount(token);
+	if (authMode() === 'unconfigured') return null;
 	const result = sessionSchema.safeParse(unseal(token, 'session'));
 	return result.success && acceptedIssuer(result.data.issuer) ? result.data : null;
 }
 
-export async function currentAccount() { await connection(); return readSession((await cookies()).get(SESSION_COOKIE)?.value); }
+export function clerkScope(input: { userId: string; orgId?: string | null; sessionId?: string | null }) {
+	const organizationId = input.orgId || `personal:${input.userId}`;
+	return {
+		organizationId,
+		partition: createHash('sha256').update(JSON.stringify([CLERK_ISSUER, input.userId, organizationId])).digest('hex'),
+		sessionId: createHash('sha256').update(`clerk-session:${input.sessionId || input.userId}`).digest('hex'),
+	};
+}
+
+/** Map the verified active Clerk session to the app's existing workspace identity. Organization scope comes only
+ * from Clerk's signed session, and personal accounts are isolated as their own workspace. */
+export async function clerkAccount() {
+	const { auth } = await import('@clerk/nextjs/server');
+	const session = await auth();
+	if (!session.userId) return null;
+	const claims = session.sessionClaims as Record<string, unknown>;
+	const scope = clerkScope(session);
+	const email = typeof claims.email === 'string' && z.string().email().safeParse(claims.email).success ? claims.email : undefined;
+	const name = typeof claims.name === 'string' ? claims.name : undefined;
+	const organizationName = typeof claims.org_name === 'string' ? claims.org_name : typeof claims.org_slug === 'string' ? claims.org_slug : session.orgId ? session.orgId : 'Personal workspace';
+	return {
+		issuer: CLERK_ISSUER,
+		user: { id: session.userId, ...(email ? { email } : {}), email_verified: claims.email_verified === true || claims.email_verified === 'true', ...(name ? { name } : {}) },
+		organization: { id: scope.organizationId, name: organizationName },
+		role: !session.orgId ? 'owner' as const : session.orgRole === 'org:admin' ? 'admin' as const : 'member' as const,
+		partition: scope.partition,
+		sessionId: scope.sessionId,
+	};
+}
+
+export async function currentAccount() {
+	await connection();
+	if (managedAuthEnabled()) return clerkAccount();
+	return readSession((await cookies()).get(SESSION_COOKIE)?.value);
+}
 export const cookieOptions = () => ({ httpOnly: true, secure: sessionConfig().origin.startsWith('https:'), sameSite: 'lax' as const, path: '/' });
 export const newSecret = () => randomBytes(32).toString('base64url');
 export const pkceChallenge = (verifier: string) => createHash('sha256').update(verifier).digest('base64url');

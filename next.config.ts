@@ -4,11 +4,12 @@ import type { NextConfig } from 'next';
 // 'wasm-unsafe-eval' covers the IronCalc formula engine and Databuddy hosts cover opt-in analytics.
 const contentSecurityPolicy = [
 	"default-src 'self'",
-	`script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://cdn.databuddy.cc${process.env.NODE_ENV === 'development' ? " 'unsafe-eval'" : ''}`,
+	`script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://cdn.databuddy.cc https://*.clerk.accounts.dev https://*.clerk.com${process.env.NODE_ENV === 'development' ? " 'unsafe-eval'" : ''}`,
 	"style-src 'self' 'unsafe-inline'",
 	"img-src 'self' data: blob: https:",
 	"font-src 'self'",
-	"connect-src 'self' https://basket.databuddy.cc https://api.databuddy.cc",
+	"connect-src 'self' https://basket.databuddy.cc https://api.databuddy.cc https://*.clerk.accounts.dev https://*.clerk.com",
+	"frame-src 'self' https://*.clerk.accounts.dev https://*.clerk.com",
 	"worker-src 'self' blob:",
 	"object-src 'none'",
 	"base-uri 'none'",

@@ -1,8 +1,9 @@
 import type { Metadata, Viewport } from 'next';
 import { Rethink_Sans } from 'next/font/google';
+import { ClerkProvider } from '@clerk/nextjs';
 import { Analytics } from '@/components/analytics';
 import { PRODUCT_NAME, SITE_DESCRIPTION, SITE_TITLE } from '@/lib/constants';
-import { indexingEnabled, siteUrl } from '@/lib/server/deployment';
+import { indexingEnabled, managedAuthEnabled, siteUrl } from '@/lib/server/deployment';
 import './globals.css';
 
 const rethinkSans = Rethink_Sans({ subsets: ['latin'], variable: '--font-rethink-sans', display: 'swap', weight: 'variable' });
@@ -21,11 +22,11 @@ export const metadata: Metadata = {
 export const viewport: Viewport = { themeColor: '#ffffff', width: 'device-width', initialScale: 1, viewportFit: 'cover', interactiveWidget: 'resizes-content' };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
+	const app = <>{children}<Analytics /></>;
 	return (
 		<html lang="en" className={rethinkSans.variable} suppressHydrationWarning>
 			<body>
-				{children}
-				<Analytics />
+				{managedAuthEnabled() ? <ClerkProvider signInUrl="/sign-in" signUpUrl="/sign-up">{app}</ClerkProvider> : app}
 			</body>
 		</html>
 	);

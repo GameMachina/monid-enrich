@@ -1,10 +1,8 @@
 import 'server-only';
-import type { CellMeta, CellValue, ColumnOp, EmailProvider, EnrichFailure, EnrichResponse } from '../types';
-import { renderTemplate, toDomain } from '../template';
+import type { CellValue, ColumnOp, EmailProvider, EnrichFailure, EnrichResponse } from '../types';
 import type { ProviderAccess } from './provider-access';
 import { CredentialError } from './credentials';
-import { inputError } from './enrich-failure';
-import { runMonidOperation, type MonidOperationInputs } from './monid';
+import type { MonidOperationInputs } from './monid';
 import { runMonidEmailWaterfall } from './monid-contact-waterfalls';
 
 type Identity = { name: string; company: string; domain: string; profileUrl: string };
@@ -40,13 +38,6 @@ export function sharedRequest(_provider: EmailProvider, identity: Identity): Sha
 export async function includedRun(_access: ProviderAccess, _request: SharedRequest, _ledger?: unknown): Promise<{ output: unknown; costUsd: number }> {
 	void _access; void _request; void _ledger;
 	throw new CredentialError('Included enrichment is not configured. Connect a Monid API key to this workspace.', 401, 'credential_missing', 'monid');
-}
-
-function actualCost(run: { cost?: { value?: number }; billing?: unknown }) {
-	if (typeof run.cost?.value === 'number') return run.cost.value;
-	const billing = object(run.billing), cost = object(billing.reportedCost ?? billing.actualCost);
-	if (typeof cost.value !== 'number') return 0;
-	return cost.unit === 'MICRO_DOLLAR' ? cost.value / 1_000_000 : cost.value;
 }
 
 export async function runEmailWaterfall(access: ProviderAccess, op: Extract<ColumnOp, { kind: 'email-enrichment' }>, row: Record<string, CellValue>, _ledger?: unknown): Promise<EnrichResponse> {
