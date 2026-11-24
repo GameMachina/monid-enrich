@@ -3,6 +3,7 @@ import { NO_STORE_HEADERS, jsonError } from '@/lib/server/credentials';
 import { routeAccess } from '@/lib/server/provider-access';
 import { tregCheckoutUrl, tregRequest } from '@/lib/server/treg';
 import { workspaceAdminResponse } from '@/lib/server/request-admin';
+import { auditTregConnectionAction } from '@/lib/server/treg-connection-audit';
 
 export const maxDuration = 30;
 const topupInput = z.object({ amountUsd: z.number().finite().positive() });
@@ -18,6 +19,7 @@ export async function POST(request: Request) {
 		const result = await tregRequest(access.requireKey('treg'), '/billing/topup', { method: 'POST', body: JSON.stringify({ amount_usd: parsed.data.amountUsd }) });
 		const checkoutUrl = tregCheckoutUrl(result);
 		if (!checkoutUrl) return jsonError('Treg did not return a valid Stripe checkout link.', 502);
+		await auditTregConnectionAction(access, 'workspace.provider_billing.topup_started', { provider: 'treg', amountUsd: parsed.data.amountUsd });
 		return Response.json({ checkoutUrl }, { headers: NO_STORE_HEADERS });
 	} catch (error) {
 		const status = (error as { status?: number }).status ?? 502;

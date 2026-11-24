@@ -23,6 +23,7 @@ CLERK_SECRET_KEY=sk_…
 CLERK_WEBHOOK_SIGNING_SECRET=whsec_…
 DATABASE_URL=postgresql://…
 ENRICHABLE_MCP_ENCRYPTION_SECRET=<stable random secret, 32+ characters>
+# ENRICHABLE_MCP_ENCRYPTION_PREVIOUS_SECRET=<old root, only during rotation>
 ENRICHABLE_APP_URL=https://your-production-host
 ENRICHABLE_BILLING_REQUIRED=true
 STRIPE_SECRET_KEY=sk_…
@@ -32,7 +33,7 @@ ENRICHABLE_DURABLE_ENRICHMENT=true
 CRON_SECRET=<stable random secret, 32+ characters>
 ```
 
-The Clerk publishable key is intentionally browser-visible; the Clerk secret, Stripe keys, cron secret, database URL, and encryption root are server-only. Use distinct random secrets per environment. Keep the encryption root stable and backed up: replacing it without a re-encryption procedure makes existing saved provider credentials unreadable.
+The Clerk publishable key is intentionally browser-visible; the Clerk secret, Stripe keys, cron secret, database URL, and encryption roots are server-only. Use distinct random secrets per environment. Migrations `025_credential_key_versions.sql` and `026_provider_billing_audit.sql` add key-version tracking and current audit actions. To rotate the managed vault root, first deploy this dual-key-capable code while keeping the current secret unchanged. Then set the new root as `ENRICHABLE_MCP_ENCRYPTION_SECRET` and the old root as `ENRICHABLE_MCP_ENCRYPTION_PREVIOUS_SECRET`, redeploy, and repeatedly call `POST /api/internal/credentials/rotate` with `Authorization: Bearer $CRON_SECRET` until every `remaining` count is zero. Allow the new deployment to fully replace all old instances, verify provider and MCP connections, then remove the previous secret and redeploy. Never overwrite the old root before the new code and previous-key setting are active.
 
 Do not put a platform Monid or Treg key into the deployment environment for customer use. Workspace members connect their own workspace credentials in Configuration; AgentWeb credentials are personal to each member. OpenAI is optional and remains user-configured.
 
@@ -57,7 +58,7 @@ The current implementation supports one configured recurring price. It does not 
 
 ## Database, migrations, and previews
 
-The Vercel build command is `npm run db:migrate && npm run build`. Migrations are additive and serialized, but this has not been exercised against a production account as part of this code change. Migration `024_durable_populate_jobs.sql` adds the managed Find rows queue and seeds the 20 shared worker slots. Apply and verify it on staging before any worker is enabled; keep previews isolated from production. Local single-process development applies migrations to embedded PGlite on first database use, while `npm run db:migrate` requires a dedicated Neon `DATABASE_URL` or `DATABASE_URL_UNPOOLED`. Do not run migration commands against a customer database to troubleshoot a preview build.
+The Vercel build command is `npm run db:migrate && npm run build`. Migrations are additive and serialized, but this has not been exercised against a production account as part of this code change. Migration `024_durable_populate_jobs.sql` adds the managed Find rows queue and seeds the 20 shared worker slots; migrations `025` and `026` add credential key versions and audit actions. Apply and verify them on staging before any worker is enabled; keep previews isolated from production. Local single-process development applies migrations to embedded PGlite on first database use, while `npm run db:migrate` requires a dedicated Neon `DATABASE_URL` or `DATABASE_URL_UNPOOLED`. Do not run migration commands against a customer database to troubleshoot a preview build.
 
 Neon backups/PITR, access roles, retention, and restore are configured in the Neon account, not by the app. Before onboarding customers, restore a backup to a separate database, record the time and data loss window, and document who can authorize recovery.
 
@@ -66,7 +67,7 @@ Neon backups/PITR, access roles, retention, and restore are configured in the Ne
 Before a staged release:
 
 1. Confirm `/api/health/live` returns `200`.
-2. Confirm `/api/health/ready` returns `200` and all checks are true. In managed production this includes Postgres, vault encryption, Clerk, the Clerk webhook secret, Stripe billing, the durable-job migrations (including the Find rows queue and shared worker slots), provider-usage attribution, workspace audit schema, and the worker secret.
+2. Confirm `/api/health/ready` returns `200` and all checks are true. In managed production this includes Postgres, vault encryption/key-version schema, Clerk, the Clerk webhook secret, Stripe billing, the durable-job migrations (including the Find rows queue and shared worker slots), provider-usage attribution, workspace audit schema, and the worker secret.
 3. Create a test organization, invite a second test member, and verify admin/member route behavior.
 4. Run a synthetic one-row Monid and Treg operation separately; check provider, run ID, status, cost, and source metadata in the sheet. Do not treat successful UI display as billing reconciliation.
 5. Start a cell run and a Find rows run separately, close the tab, then reopen it and confirm the job status reconnects and all committed rows/results are present. Queue cancellation only works before a provider request starts; an uncertain Find rows run must not be automatically retried.
@@ -74,7 +75,7 @@ Before a staged release:
 7. Export a synthetic workspace and close a disposable workspace; inspect the export and retention behavior.
 8. Confirm backup restore, rollback, alerts, and incident ownership before inviting real customers.
 
-Workspace owners and admins can review provider receipts in **Configuration → Provider usage**. The report keeps Monid and Treg charges separate, supports provider/status/date/member/sheet filters, and exports up to 10,000 matching rows. New cell runs include member and cell IDs; receipts from before migration `021_provider_usage_attribution.sql` are shown without attribution. Costs are only what a provider reported to the app; reconcile against each provider's billing records before treating them as settled totals. **Configuration → Workspace activity** shows the latest 100 recorded exports, closure, shared-settings, MCP-key, Clerk membership, and invitation changes. Billing and provider-connection lifecycle events are not yet mirrored there.
+Workspace owners and admins can review provider receipts in **Configuration → Provider usage**. The report keeps Monid and Treg charges separate, supports provider/status/date/member/sheet filters, and exports up to 10,000 matching rows. New cell runs include member and cell IDs; receipts from before migration `021_provider_usage_attribution.sql` are shown without attribution. Costs are only what a provider reported to the app; reconcile against each provider's billing records before treating them as settled totals. **Configuration → Workspace activity** shows the latest 100 recorded exports, closure, shared-settings, provider connection updates, MCP-key and credential rotation, Clerk membership, invitation, Stripe subscription, Treg OAuth starts, and Treg top-up initiation events. It stores metadata only and never records provider credentials, OAuth state, checkout URLs, or row contents.
 
 Health endpoints intentionally omit detailed infrastructure errors. Use Vercel, Neon, Stripe, and Clerk operator logs to investigate. See the [authorization review](authorization-review.md) for route boundaries and the [operations runbook](operations-runbook.md) for safe recovery guidance.
 
@@ -82,8 +83,9 @@ Health endpoints intentionally omit detailed infrastructure errors. Use Vercel, 
 
 - Managed Find rows and individual enrichment cells use durable Postgres jobs and a shared pool of up to 20 active provider workers. Self-hosted Find rows remains request-streamed. MCP bulk work does not yet use this durable queue.
 - Request-rate limits do not enforce hard dollar spend caps, concurrent spend reservations, or budget alerts.
+- Credential rotation code is staged and bounded, but no production rotation rehearsal has been performed. Keep the previous root available until the rotation endpoint reports zero remaining rows and a post-rotation connection check succeeds.
 - Provider usage reporting does not reconcile receipts with Monid/Treg billing ledgers or distinguish provider-specific estimated and settled cost states beyond the receipt status.
-- Workspace activity does not yet include billing or provider-connection lifecycle events.
+- Workspace activity records provider connection updates and Stripe/Treg billing metadata. Personal AgentWeb connection events and provider-side billing reconciliation are not yet mirrored.
 - There is no production backup/restore drill, centralized error monitoring, service SLO, status page, or staffed support process yet.
 - Workspace export excludes credentials and is capped at 50 MB. Workspace closure retains provider usage receipts and Stripe reconciliation records. Personal AgentWeb credentials do not belong to workspace deletion.
 - Privacy terms, customer terms, subprocessors/DPA, retention schedule, and legal hold policy must be reviewed and published by the operator.

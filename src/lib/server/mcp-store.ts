@@ -5,6 +5,7 @@ import { WorkspaceError } from '../workspace';
 import { decryptSecret, encryptSecret } from './credentials';
 import { workspaceId, type Database } from './database';
 import { appendWorkspaceAuditEvent } from './workspace-audit';
+import { credentialKeyId, previousEncryptionSecret } from './credential-keyring';
 
 export const hashMcpSecret = (value: string) => createHash('sha256').update(value).digest('hex');
 export type McpKeyInfo = { prefix: string; version: string; createdAt: number; recoverable: boolean };
@@ -14,26 +15,37 @@ export const MCP_ATTEMPT_LEASE_MS = 330_000;
 
 export class McpStore {
 	constructor(private database: Database, private encryptionSecret = () => process.env.ENRICHABLE_MCP_ENCRYPTION_SECRET) {}
-	private encryptionKey() {
-		const secret = this.encryptionSecret();
+	private currentSecret() {
+		const secret = this.encryptionSecret()?.trim();
 		if (!secret || secret.length < 32) throw new WorkspaceError('Configure the shared MCP encryption secret on every server using this database.', 503);
-		return createHash('sha256').update(secret).digest();
+		return secret;
+	}
+	private encryptionKey(secret = this.currentSecret()) { return createHash('sha256').update(secret).digest(); }
+	private keyForVersion(keyId: string) {
+		const current = this.currentSecret(), previous = previousEncryptionSecret();
+		const secret = keyId === credentialKeyId(current) ? current : keyId === 'legacy' ? previous ?? current : previous && keyId === credentialKeyId(previous) ? previous : null;
+		if (!secret) throw new WorkspaceError('The organization key uses an unknown encryption key version.', 503);
+		return this.encryptionKey(secret);
 	}
 	async revealKey(actor: Account): Promise<McpKeyInfo & { secret: string }> {
-		const workspace = workspaceId(actor);
-		const row = (await this.database.read('SELECT * FROM enrichable.mcp_keys WHERE workspace_id=$1', [workspace])).rows[0];
-		if (!row) throw new WorkspaceError('No organization key exists.', 404);
-		if (!row.encrypted_secret) throw new WorkspaceError('This legacy key needs a verified backfill before it can be retrieved.', 409);
-		const secret = decryptSecret(this.encryptionKey(), String(row.encrypted_secret), [workspace, String(row.version)]);
-		if (secret === null || hashMcpSecret(secret) !== row.key_hash) throw new WorkspaceError('The organization key could not be decrypted. Check that all servers use the same MCP encryption secret.', 503);
-		return { prefix: String(row.prefix), version: String(row.version), createdAt: Number(row.created_at), recoverable: true, secret };
+		return this.database.transaction(async (sql, workspace) => {
+			const row = (await sql.query('SELECT * FROM enrichable.mcp_keys WHERE workspace_id=$1 FOR UPDATE', [workspace])).rows[0];
+			if (!row) throw new WorkspaceError('No organization key exists.', 404);
+			if (!row.encrypted_secret) throw new WorkspaceError('This legacy key needs a verified backfill before it can be retrieved.', 409);
+			const keyId = String(row.encryption_key_id ?? 'legacy');
+			const secret = decryptSecret(this.keyForVersion(keyId), String(row.encrypted_secret), [workspace, String(row.version)]);
+			if (secret === null || hashMcpSecret(secret) !== row.key_hash) throw new WorkspaceError('The organization key could not be decrypted. Check that all servers use the same MCP encryption secret.', 503);
+			const current = this.currentSecret(), currentId = credentialKeyId(current);
+			if (keyId !== currentId) await sql.query('UPDATE enrichable.mcp_keys SET encrypted_secret=$2,encryption_key_id=$3 WHERE workspace_id=$1', [workspace, encryptSecret(this.encryptionKey(current), secret, [workspace, String(row.version)]), currentId]);
+			return { prefix: String(row.prefix), version: String(row.version), createdAt: Number(row.created_at), recoverable: true, secret };
+		}, { workspace: actor });
 	}
 	// Operator recovery: only the exact currently active secret can fill a legacy record.
 	async backfillKey(actor: Account, secret: string) {
 		return this.database.transaction(async (sql, workspace) => {
 			const { rows } = await sql.query('SELECT key_hash,version,encrypted_secret FROM enrichable.mcp_keys WHERE workspace_id=$1', [workspace]);
 			if (!rows[0] || hashMcpSecret(secret) !== rows[0].key_hash) throw new WorkspaceError('The supplied key is not the active organization key.', 409);
-			if (!rows[0].encrypted_secret) await sql.query('UPDATE enrichable.mcp_keys SET encrypted_secret=$2 WHERE workspace_id=$1', [workspace, encryptSecret(this.encryptionKey(), secret, [workspace, String(rows[0].version)])]);
+			if (!rows[0].encrypted_secret) await sql.query('UPDATE enrichable.mcp_keys SET encrypted_secret=$2,encryption_key_id=$3 WHERE workspace_id=$1', [workspace, encryptSecret(this.encryptionKey(), secret, [workspace, String(rows[0].version)]), credentialKeyId(this.currentSecret())]);
 		}, { workspace: actor });
 	}
 	async keyInfo(actor: Account): Promise<McpKeyInfo | null> {
@@ -46,8 +58,9 @@ export class McpStore {
 			if (expectedVersion === undefined ? rows.length > 0 : rows[0]?.version !== expectedVersion) throw new WorkspaceError('The organization key changed. Refresh before creating or rotating it.', 409);
 			const secret = `enr_mcp_${randomBytes(32).toString('base64url')}`;
 			const info = { prefix: secret.slice(0, 16), version: randomUUID(), createdAt: Date.now(), recoverable: true };
-			await sql.query('INSERT INTO enrichable.mcp_keys (workspace_id,key_hash,prefix,version,created_at,encrypted_secret) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (workspace_id) DO UPDATE SET key_hash=excluded.key_hash,prefix=excluded.prefix,version=excluded.version,created_at=excluded.created_at,encrypted_secret=excluded.encrypted_secret', [id, hashMcpSecret(secret), info.prefix, info.version, info.createdAt, encryptSecret(this.encryptionKey(), secret, [id, info.version])]);
-   await appendWorkspaceAuditEvent(sql, id, actor.user.id, expectedVersion === undefined ? 'workspace.mcp_key.create' : 'workspace.mcp_key.rotate', { keyPrefix: info.prefix, version: info.version });
+			const encryptionSecret = this.currentSecret();
+			await sql.query('INSERT INTO enrichable.mcp_keys (workspace_id,key_hash,prefix,version,created_at,encrypted_secret,encryption_key_id) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (workspace_id) DO UPDATE SET key_hash=excluded.key_hash,prefix=excluded.prefix,version=excluded.version,created_at=excluded.created_at,encrypted_secret=excluded.encrypted_secret,encryption_key_id=excluded.encryption_key_id', [id, hashMcpSecret(secret), info.prefix, info.version, info.createdAt, encryptSecret(this.encryptionKey(encryptionSecret), secret, [id, info.version]), credentialKeyId(encryptionSecret)]);
+			await appendWorkspaceAuditEvent(sql, id, actor.user.id, expectedVersion === undefined ? 'workspace.mcp_key.create' : 'workspace.mcp_key.rotate', { keyPrefix: info.prefix, version: info.version });
 			return { ...info, secret };
 		}, { workspace: actor });
 	}

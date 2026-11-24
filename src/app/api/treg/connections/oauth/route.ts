@@ -3,6 +3,7 @@ import { NO_STORE_HEADERS, jsonError } from '@/lib/server/credentials';
 import { routeAccess } from '@/lib/server/provider-access';
 import { normalizeTregOAuthStart, normalizeTregOAuthStatus, tregConnectionRequest } from '@/lib/server/treg-connections';
 import { workspaceAdminResponse } from '@/lib/server/request-admin';
+import { auditTregConnectionAction } from '@/lib/server/treg-connection-audit';
 
 export const maxDuration = 30;
 
@@ -49,7 +50,9 @@ export async function POST(request: Request) {
 				...(parsed.data.redirectUri ? { redirect_uri: parsed.data.redirectUri } : {}),
 			} : {}),
 		}) });
-		return Response.json(normalizeTregOAuthStart(value), { headers: NO_STORE_HEADERS });
+		const result = normalizeTregOAuthStart(value);
+		await auditTregConnectionAction(access, 'workspace.provider_connection.oauth_started', { provider: parsed.data.service, customOAuth: Boolean(parsed.data.clientId) });
+		return Response.json(result, { headers: NO_STORE_HEADERS });
 	} catch (error) {
 		const status = (error as { status?: number }).status ?? 502;
 		const message = error instanceof Error ? error.message : 'Could not start Treg account authorization.';

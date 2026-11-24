@@ -4,6 +4,7 @@ import { WorkspaceError } from '../workspace';
 import type { Account } from '../auth-identity';
 import { workspaceId, withDatabase, type Database, type Sql, type WorkspaceActor } from './database';
 import { jsonError } from './credentials';
+import { appendWorkspaceAuditEvent, recordWorkspaceAuditEvent } from './workspace-audit';
 
 let cached: { key: string; client: Stripe } | undefined;
 export function stripeConfigured() {
@@ -71,6 +72,7 @@ export async function createCheckout(account: Account, database: Database, idemp
 		subscription_data: { metadata: { enrichable_workspace_id: workspace, enrichable_issuer: account.issuer } },
 	}, { idempotencyKey });
 	if (!session.url) throw new WorkspaceError('Stripe did not return a checkout URL.', 502);
+	await recordWorkspaceAuditEvent(database, account, 'workspace.billing.checkout_started', { provider: 'stripe', mode: 'subscription' });
 	return { url: session.url };
 }
 
@@ -81,6 +83,7 @@ export async function createPortal(account: Account, database: Database) {
 	const customer = (await database.read('SELECT customer_id FROM enrichable.stripe_customers WHERE workspace_id=$1', [workspace])).rows[0];
 	if (!customer) throw new WorkspaceError('This workspace has no subscription customer yet.', 404);
 	const session = await stripe().billingPortal.sessions.create({ customer: String(customer.customer_id), return_url: `${origin}/app/settings` });
+	await recordWorkspaceAuditEvent(database, account, 'workspace.billing.portal_opened', { provider: 'stripe' });
 	return { url: session.url };
 }
 
@@ -98,7 +101,7 @@ export async function subscriptionGate(account: Account | undefined): Promise<Re
 }
 
 function asId(value: string | Stripe.Customer | Stripe.DeletedCustomer | null) { return typeof value === 'string' ? value : value?.id ?? null; }
-async function saveSubscription(sql: Sql, database: Database, subscription: Stripe.Subscription, workspaceHint?: string) {
+async function saveSubscription(sql: Sql, subscription: Stripe.Subscription, workspaceHint?: string) {
 	const customerId = asId(subscription.customer);
 	if (!customerId) return;
 	const metadataWorkspace = subscription.metadata?.enrichable_workspace_id;
@@ -108,6 +111,7 @@ async function saveSubscription(sql: Sql, database: Database, subscription: Stri
 	const periodEnd = firstItem?.current_period_end ?? subscription.items.data[0]?.current_period_end ?? null;
 	await sql.query(`INSERT INTO enrichable.workspace_subscriptions (workspace_id,customer_id,subscription_id,price_id,status,current_period_end,cancel_at_period_end,updated_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,now()) ON CONFLICT (workspace_id) DO UPDATE SET customer_id=excluded.customer_id,subscription_id=excluded.subscription_id,price_id=excluded.price_id,status=excluded.status,current_period_end=excluded.current_period_end,cancel_at_period_end=excluded.cancel_at_period_end,updated_at=now()`, [workspace, customerId, subscription.id, firstItem?.price.id ?? null, subscription.status, periodEnd, subscription.cancel_at_period_end]);
+	return String(workspace);
 }
 
 export async function processStripeEvent(event: Stripe.Event, database: Database) {
@@ -124,6 +128,10 @@ export async function processStripeEvent(event: Stripe.Event, database: Database
 		// Webhooks may arrive late or out of order. Fetch Stripe's current subscription state so an older
 		// `updated` snapshot cannot overwrite a newer cancellation or payment recovery.
 		subscription = await stripe().subscriptions.retrieve(snapshot.id);
+	} else if (event.type === 'invoice.payment_failed' || event.type === 'invoice.payment_succeeded') {
+		const invoice = event.data.object as Stripe.Invoice & { subscription?: string | Stripe.Subscription | null };
+		const subId = typeof invoice.subscription === 'string' ? invoice.subscription : invoice.subscription?.id;
+		if (subId) subscription = await stripe().subscriptions.retrieve(subId);
 	}
 	return database.transaction(async (sql) => {
 		const inserted = await sql.query('INSERT INTO enrichable.stripe_webhook_events (event_id,event_type) VALUES ($1,$2) ON CONFLICT (event_id) DO NOTHING RETURNING event_id', [event.id, event.type]);
@@ -132,7 +140,15 @@ export async function processStripeEvent(event: Stripe.Event, database: Database
 			const customerId = asId(session.customer as string | Stripe.Customer | Stripe.DeletedCustomer | null);
 			if (workspaceHint && customerId) await sql.query('INSERT INTO enrichable.stripe_customers (workspace_id,customer_id) VALUES ($1,$2) ON CONFLICT (workspace_id) DO UPDATE SET customer_id=excluded.customer_id,updated_at=now()', [workspaceHint, customerId]);
 		}
-		if (subscription) await saveSubscription(sql, database, subscription, workspaceHint);
+		if (subscription) {
+			const workspace = await saveSubscription(sql, subscription, workspaceHint);
+			if (workspace) await appendWorkspaceAuditEvent(sql, workspace, 'system:stripe', 'workspace.billing.subscription_updated', {
+				stripeEvent: event.type,
+				status: subscription.status,
+				priceId: subscription.items.data[0]?.price.id ?? null,
+				cancelAtPeriodEnd: subscription.cancel_at_period_end,
+			});
+		}
 		return true;
 	});
 }

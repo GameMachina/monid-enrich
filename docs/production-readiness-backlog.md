@@ -74,7 +74,7 @@ Keep production on managed Postgres; do not use embedded PGlite for a multi-user
 
 Threat-model auth, workspace isolation, spreadsheet imports/formulas, OAuth callbacks, provider adapters, file/URL retrieval, MCP, and billing. Verify dependency and container/build provenance controls, security headers/CSP, cookie flags, input/output limits, and rate limits. Define credential encryption-key rotation and recovery: the current hosted vault depends on a stable shared encryption root, and changing it without re-encryption makes saved credentials unreadable. Add a process for rotating/revoking user and operator keys without downtime.
 
-**Status: Partial.** Clerk, encrypted shared credential storage, security headers, bounded inputs, redacted error paths, private GitHub vulnerability reporting, Gitleaks history scanning, CodeQL, Dependabot, and request limits are in place. CSP remains report-only; review scanner findings, complete an independent security review, and rehearse encryption-root rotation before launch.
+**Status: Partial.** Clerk, encrypted shared credential storage, security headers, bounded inputs, redacted error paths, private GitHub vulnerability reporting, Gitleaks history scanning, CodeQL, Dependabot, and request limits are in place. Managed-vault dual-key rotation and a bounded secret-protected re-encryption endpoint are implemented. CSP remains report-only; review scanner findings, complete an independent security review, and rehearse key rotation on staging before launch. Self-hosted file-vault rotation remains an operator-managed separate path.
 
 **Done when:** a documented security review has no unresolved critical/high findings; a credential/key rotation has been rehearsed on staging; secrets are absent from Git history, browser bundles, logs, traces, and error responses; vulnerability reports have a working private contact and response target.
 
@@ -106,7 +106,7 @@ Expand the current CI baseline with production-like staging checks for signup/au
 
 ### P1.1 Team administration and auditability
 
-**Status: Partial.** Clerk OrganizationProfile supplies member management. Workspace export/closure, shared-settings changes, MCP-key create/rotation, and signed/deduplicated Clerk membership and invitation lifecycle webhooks are recorded as metadata-only events; workspace admins can review the latest 100 in Configuration. Billing/provider connection lifecycle events remain outside this local audit stream, and Clerk webhook endpoint configuration and event-delivery verification remain staging gates.
+**Status: Partial.** Clerk OrganizationProfile supplies member management. Workspace export/closure, shared-settings changes, MCP-key create/rotation, credential re-encryption, Monid/Treg workspace connection updates, Treg API-key/OAuth-start and top-up initiation events, signed/deduplicated Clerk membership and invitation webhooks, and Stripe subscription lifecycle webhooks are recorded as metadata-only events; workspace admins can review the latest 100 in Configuration. Personal AgentWeb connection events and Clerk/Stripe webhook delivery verification remain staging gates.
 
 Add workspace member/role management, invitation expiry/revocation, credential change history, and audit events for membership, billing, provider connections, exports, and destructive actions. Keep audit payloads free of raw secrets and unnecessary prospect data.
 

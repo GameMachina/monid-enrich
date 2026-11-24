@@ -3,6 +3,7 @@ import { NO_STORE_HEADERS, jsonError } from '@/lib/server/credentials';
 import { routeAccess } from '@/lib/server/provider-access';
 import { normalizeTregConnectResult, normalizeTregConnections, tregConnectionRequest } from '@/lib/server/treg-connections';
 import { workspaceAdminResponse } from '@/lib/server/request-admin';
+import { auditTregConnectionAction } from '@/lib/server/treg-connection-audit';
 
 export const maxDuration = 30;
 
@@ -29,7 +30,9 @@ export async function POST(request: Request) {
 	if (!parsed.success) return jsonError(`Invalid Treg connection: ${parsed.error.issues[0]?.message ?? 'check the provider and credential.'}`, 400);
 	try {
 		const value = await tregConnectionRequest(access.requireKey('treg'), '/connections/token', { method: 'POST', body: JSON.stringify({ provider: parsed.data.service, token: parsed.data.token }) });
-		return Response.json({ connection: normalizeTregConnectResult(value) }, { headers: NO_STORE_HEADERS });
+		const connection = normalizeTregConnectResult(value);
+		if (connection.connected) await auditTregConnectionAction(access, 'workspace.provider_connection.added', { provider: parsed.data.service, authKind: 'api_key', needsExtraCredential: connection.needsExtraCredential });
+		return Response.json({ connection }, { headers: NO_STORE_HEADERS });
 	} catch (error) {
 		const status = (error as { status?: number }).status ?? 502;
 		return jsonError(error instanceof Error ? error.message : 'Treg could not verify this provider credential.', status);

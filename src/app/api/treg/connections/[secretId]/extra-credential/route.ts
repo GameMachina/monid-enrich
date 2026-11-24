@@ -3,6 +3,7 @@ import { NO_STORE_HEADERS, jsonError } from '@/lib/server/credentials';
 import { routeAccess } from '@/lib/server/provider-access';
 import { tregConnectionRequest } from '@/lib/server/treg-connections';
 import { workspaceAdminResponse } from '@/lib/server/request-admin';
+import { auditTregConnectionAction } from '@/lib/server/treg-connection-audit';
 
 export const maxDuration = 30;
 type RouteContext = { params: Promise<{ secretId: string }> };
@@ -23,6 +24,7 @@ export async function POST(request: Request, context: RouteContext) {
 	if (!parsed.success) return jsonError('Enter the additional provider credential.', 400);
 	try {
 		await tregConnectionRequest(access.requireKey('treg'), `/connections/${id}/extra-credential`, { method: 'POST', body: JSON.stringify(parsed.data) });
+		await auditTregConnectionAction(access, 'workspace.provider_connection.extra_credential_added', { connectionId: id });
 		return Response.json({ connected: true }, { headers: NO_STORE_HEADERS });
 	} catch (error) {
 		const status = (error as { status?: number }).status ?? 502;

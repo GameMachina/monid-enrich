@@ -47,6 +47,7 @@ The cron worker claims the oldest queued cell or Find rows job and processes one
 
 - If a credential or encryption root may be exposed, restrict deployment access and revoke affected upstream keys. Rotate the stable encryption root only with a rehearsed re-encryption procedure.
 - If the encryption root is lost, restore the matching secret from the approved secret manager backup. Do not generate a replacement and overwrite the old value; saved provider credentials will no longer decrypt.
+- For a planned managed-vault rotation, follow the staged steps in [production setup](production-setup.md): deploy dual-key code with the current root, set new current plus old previous root, redeploy, and call `POST /api/internal/credentials/rotate` with the cron bearer credential until all three remaining counts are zero. Keep the previous root until old deployment instances are drained and a connection check succeeds. The endpoint never returns credential material.
 - Rotate compromised Clerk, Stripe, database, cron, Monid, Treg, OpenAI, AgentWeb, and MCP credentials at their source. Keep each provider and member/workspace billing record separate.
 
 ## Workspace export and closure

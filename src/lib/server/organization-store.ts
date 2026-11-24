@@ -1,24 +1,29 @@
 import 'server-only';
-import { hkdfSync } from 'node:crypto';
 import { SELF_HOSTED_ISSUER, type Account } from '../auth-identity';
 import { organizationPreferencesSchema, organizationSettingsPatchSchema, type OrganizationSettings, type Provider } from '../organization-settings';
 import { parseInput, WorkspaceError } from '../workspace';
 import { decryptSecret, encryptSecret, ensureSafeEndpoint, safeBaseUrl } from './credentials';
 import type { Database, Sql } from './database';
 import { appendWorkspaceAuditEvent } from './workspace-audit';
+import { credentialKeyId, deriveCredentialKey, previousEncryptionSecret } from './credential-keyring';
 
 /** Signed-in organizations keep settings and connections on the server; production always does, so a missing database fails loudly. */
 export const organizationPersistenceEnabled = (actor: Account | null | undefined) => Boolean(actor && (actor.issuer !== SELF_HOSTED_ISSUER ? process.env.DATABASE_URL || process.env.NODE_ENV === 'production' : process.env.DATABASE_URL));
 
 export class OrganizationStore {
  constructor(private database: Database, private encryptionSecret = () => process.env.ENRICHABLE_MCP_ENCRYPTION_SECRET) {}
- private key() {
-  const secret = this.encryptionSecret();
+ private currentSecret() {
+  const secret = this.encryptionSecret()?.trim();
   if (!secret || secret.length < 32) throw new WorkspaceError('Organization credential encryption is not configured.', 503);
-  return Buffer.from(hkdfSync('sha256', secret, '', 'enrichable:organization-providers:v1', 32));
+  return secret;
  }
- private decrypt(value: string, workspace: string, provider: Provider) {
-  const secret = decryptSecret(this.key(), value, [workspace, provider]);
+ private key(secret = this.currentSecret()) { return deriveCredentialKey(secret, 'enrichable:organization-providers:v1'); }
+ private decrypt(value: string, workspace: string, provider: Provider, keyId: string) {
+  const current = this.currentSecret(), previous = previousEncryptionSecret();
+  const keySecret = keyId === credentialKeyId(current) ? current
+   : keyId === 'legacy' ? previous ?? current
+   : previous && keyId === credentialKeyId(previous) ? previous : null;
+  const secret = keySecret ? decryptSecret(this.key(keySecret), value, [workspace, provider]) : null;
   if (secret === null) throw new WorkspaceError('The organization connection could not be decrypted. Check the shared server encryption secret.', 503);
   return secret;
  }
@@ -58,6 +63,7 @@ export class OrganizationStore {
      await sql.query('UPDATE enrichable.organization_providers SET disabled=true WHERE workspace_id=$1 AND provider=$2', [workspace, provider]);
     }
     else await this.saveProvider(sql, workspace, actor, provider, secret, 'manual', null);
+    await appendWorkspaceAuditEvent(sql, workspace, actor.user.id, 'workspace.provider_connection.updated', { provider, connected: secret !== null });
    }
    await sql.query('UPDATE enrichable.organization_settings SET preferences=$2::jsonb,revision=revision+1 WHERE workspace_id=$1', [workspace, JSON.stringify(preferences)]);
    await this.audit(sql, workspace, actor, args.importOnly ? 'import' : 'update', [...Object.keys(args.preferences ?? {}), ...Object.keys(args.providers ?? {})]);
@@ -69,7 +75,8 @@ export class OrganizationStore {
   });
  }
  private async saveProvider(sql: Sql, workspace: string, actor: Account, provider: Provider, secret: string, source: 'manual' | 'signin', expiresAt: number | null) {
-  await sql.query('INSERT INTO enrichable.organization_providers (workspace_id,provider,encrypted_secret,prefix,source,subject_id,subject_email,expires_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT (workspace_id,provider) DO UPDATE SET encrypted_secret=excluded.encrypted_secret,prefix=excluded.prefix,source=excluded.source,subject_id=excluded.subject_id,subject_email=excluded.subject_email,expires_at=excluded.expires_at,updated_at=excluded.updated_at,disabled=false', [workspace, provider, encryptSecret(this.key(), secret, [workspace, provider]), secret.length >= 12 ? secret.slice(0, 7) : '', source, actor.user.id, actor.user.email ?? null, expiresAt, Date.now()]);
+  const encryptionSecret = this.currentSecret();
+  await sql.query('INSERT INTO enrichable.organization_providers (workspace_id,provider,encrypted_secret,encryption_key_id,prefix,source,subject_id,subject_email,expires_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT (workspace_id,provider) DO UPDATE SET encrypted_secret=excluded.encrypted_secret,encryption_key_id=excluded.encryption_key_id,prefix=excluded.prefix,source=excluded.source,subject_id=excluded.subject_id,subject_email=excluded.subject_email,expires_at=excluded.expires_at,updated_at=excluded.updated_at,disabled=false', [workspace, provider, encryptSecret(this.key(encryptionSecret), secret, [workspace, provider]), credentialKeyId(encryptionSecret), secret.length >= 12 ? secret.slice(0, 7) : '', source, actor.user.id, actor.user.email ?? null, expiresAt, Date.now()]);
  }
  async saveSignin(actor: Account, secret: string, expiresAt: number, reconnect = false) {
   if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) throw new WorkspaceError('Context.dev connection has expired. Sign in again.', 401);
@@ -92,15 +99,18 @@ export class OrganizationStore {
   return this.get(actor);
  }
  async credentials(actor: Account) {
-  return this.read(actor, async (sql, workspace) => {
+  return this.write(actor, async (sql, workspace) => {
    const settings = await this.snapshot(sql, workspace);
-   const rows = (await sql.query('SELECT provider,encrypted_secret,source,expires_at,subject_email,disabled FROM enrichable.organization_providers WHERE workspace_id=$1', [workspace])).rows;
+   const rows = (await sql.query('SELECT provider,encrypted_secret,encryption_key_id,source,expires_at,subject_email,disabled FROM enrichable.organization_providers WHERE workspace_id=$1', [workspace])).rows;
    const keys: Partial<Record<Provider, string>> = {};
    let contextUserEmail: string | undefined;
+   const currentId = credentialKeyId(this.currentSecret());
    for (const row of rows) {
     if (row.disabled || row.expires_at && Number(row.expires_at) <= Date.now()) continue;
     const provider = row.provider as Provider;
-    keys[provider] = this.decrypt(String(row.encrypted_secret), workspace, provider);
+    const keyId = String(row.encryption_key_id ?? 'legacy');
+    keys[provider] = this.decrypt(String(row.encrypted_secret), workspace, provider, keyId);
+    if (keyId !== currentId) await sql.query('UPDATE enrichable.organization_providers SET encrypted_secret=$3,encryption_key_id=$4,updated_at=$5 WHERE workspace_id=$1 AND provider=$2', [workspace, provider, encryptSecret(this.key(), keys[provider]!, [workspace, provider]), currentId, Date.now()]);
     if (provider === 'context') contextUserEmail = String(row.subject_email);
    }
    return { settings, keys, contextUserEmail };

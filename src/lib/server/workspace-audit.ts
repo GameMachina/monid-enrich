@@ -15,7 +15,18 @@ export type WorkspaceAuditAction =
 	| 'workspace.member.removed'
 	| 'workspace.invitation.created'
 	| 'workspace.invitation.accepted'
-	| 'workspace.invitation.revoked';
+	| 'workspace.invitation.revoked'
+	| 'workspace.credentials.reencrypted'
+	| 'workspace.provider_connection.added'
+	| 'workspace.provider_connection.removed'
+	| 'workspace.provider_connection.renamed'
+	| 'workspace.provider_connection.oauth_started'
+	| 'workspace.provider_connection.extra_credential_added'
+	| 'workspace.provider_connection.updated'
+	| 'workspace.provider_billing.topup_started'
+	| 'workspace.billing.checkout_started'
+	| 'workspace.billing.portal_opened'
+	| 'workspace.billing.subscription_updated';
 
 export type WorkspaceAuditDetails = Record<string, string | number | boolean | null>;
 
@@ -32,6 +43,11 @@ function safeDetails(details: Record<string, unknown>): WorkspaceAuditDetails {
 
 export async function appendWorkspaceAuditEvent(sql: Sql, workspace: string, actorId: string, action: WorkspaceAuditAction, details: WorkspaceAuditDetails = {}) {
 	await sql.query('INSERT INTO enrichable.workspace_audit_events (workspace_id,id,actor_id,action,details) VALUES ($1,$2,$3,$4,$5::jsonb)', [workspace, randomUUID(), actorId, action, JSON.stringify(safeDetails(details))]);
+}
+
+/** Record a workspace action in the same scoped transaction used by other workspace writes. */
+export async function recordWorkspaceAuditEvent(database: Database, actor: Account, action: WorkspaceAuditAction, details: WorkspaceAuditDetails = {}) {
+	return database.transaction((sql, workspace) => appendWorkspaceAuditEvent(sql, workspace, actor.user.id, action, details), { workspace: actor });
 }
 
 export async function workspaceAuditReport(database: Database, actor: Account) {

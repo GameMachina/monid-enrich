@@ -1,5 +1,5 @@
 -- Attribute provider receipts to the workspace member and spreadsheet cell that initiated the run.
--- Historical receipts remain unattributed; no row contents or prompts are copied into the usage ledger.
+-- Historical receipts remain unattributed and no row contents or prompts are copied into the usage ledger.
 ALTER TABLE enrichable.monid_runs ADD COLUMN IF NOT EXISTS actor_id text;
 ALTER TABLE enrichable.monid_runs ADD COLUMN IF NOT EXISTS sheet_id text;
 ALTER TABLE enrichable.monid_runs ADD COLUMN IF NOT EXISTS row_id text;

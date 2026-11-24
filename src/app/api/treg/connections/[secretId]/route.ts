@@ -3,6 +3,7 @@ import { NO_STORE_HEADERS, jsonError } from '@/lib/server/credentials';
 import { routeAccess } from '@/lib/server/provider-access';
 import { tregConnectionRequest } from '@/lib/server/treg-connections';
 import { workspaceAdminResponse } from '@/lib/server/request-admin';
+import { auditTregConnectionAction } from '@/lib/server/treg-connection-audit';
 
 export const maxDuration = 30;
 type RouteContext = { params: Promise<{ secretId: string }> };
@@ -21,6 +22,7 @@ export async function DELETE(request: Request, context: RouteContext) {
 	if (!id) return jsonError('Invalid Treg connection ID.', 400);
 	try {
 		await tregConnectionRequest(access.requireKey('treg'), `/connections/${id}`, { method: 'DELETE' });
+		await auditTregConnectionAction(access, 'workspace.provider_connection.removed', { connectionId: id });
 		return Response.json({ disconnected: true }, { headers: NO_STORE_HEADERS });
 	} catch (error) {
 		const status = (error as { status?: number }).status ?? 502;
@@ -40,6 +42,7 @@ export async function PATCH(request: Request, context: RouteContext) {
 	if (!parsed.success) return jsonError('Enter a connection name.', 400);
 	try {
 		await tregConnectionRequest(access.requireKey('treg'), `/connections/${id}`, { method: 'PATCH', body: JSON.stringify(parsed.data) });
+		await auditTregConnectionAction(access, 'workspace.provider_connection.renamed', { connectionId: id });
 		return Response.json({ renamed: true }, { headers: NO_STORE_HEADERS });
 	} catch (error) {
 		const status = (error as { status?: number }).status ?? 502;
