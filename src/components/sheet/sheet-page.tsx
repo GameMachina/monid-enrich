@@ -70,7 +70,16 @@ function SheetWorkspace({ sheetId, sheet, allRows, commands }: { sheetId: string
 	const openFilter = () => setFilterOpenRequest((value) => value + 1);
 	const menus = useSheetMenus({ sheetId, sheet, allRows, commands, content, selection, overlays, actions, view, onFilter: openFilter });
 	const findButtonRef = useRef<HTMLButtonElement>(null);
-	useBeforeUnloadGuard(runStatus.pending > 0 || populate.running);
+	const resumeAttempted = useRef<string | null>(null);
+	useBeforeUnloadGuard(runStatus.pending > 0 || populate.running && !populate.durableJobId);
+	useEffect(() => {
+		const key = sheet.populate?.idempotencyKey;
+		if (!key) { resumeAttempted.current = null; return; }
+		const resumeKey = `${sheet.id}:${key}`;
+		if (resumeAttempted.current === resumeKey || populate.running || populate.phase !== 'idle') return;
+		resumeAttempted.current = resumeKey;
+		void populateRunner.resume(sheet, sheet.populate!);
+	}, [sheet, populate.running, populate.phase]);
 	useDocumentTitle(sheet.name);
 	const { runCells, report } = actions;
 	const halt = runStatus.halt;
@@ -103,7 +112,7 @@ function SheetWorkspace({ sheetId, sheet, allRows, commands }: { sheetId: string
 						onRetryFailed: () => actions.request(commands.planRetry(content.progressRows ?? [], enrichedColumns, { ready: actions.providerReady })),
 						onStop: () => void commands.stop(),
 					}}
-					finding={{ running: populate.running, stopping: populate.phase === 'stopping', revealing: content.findingRows, added: populate.added, status: populate.status, onFind: openFind, onStop: () => populateRunner.stop(sheetId) }}
+					finding={{ running: populate.running, stopping: populate.phase === 'stopping', canStop: !populate.durableJobId || populate.durableStatus === 'queued', revealing: content.findingRows, added: populate.added, status: populate.status, onFind: openFind, onStop: () => populateRunner.stop(sheetId) }}
 					findButtonRef={findButtonRef}
 					addItems={menus.addItems}
 					onShowColumns={(ids) => void updateSheet(sheetId, (current) => {

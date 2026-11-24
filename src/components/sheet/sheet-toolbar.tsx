@@ -33,7 +33,7 @@ export interface SheetToolbarProps {
 	/** `unfinished`: cells never run, failed or stopped. `outdated`: finished cells whose instructions or inputs changed
 	    since they ran; they run only from their own menu item. */
 	runs: { status: SheetRunStatus; unfinished: number; outdated: number; failed: number; canRun: boolean; onRunUnfinished: () => void; onRerunOutdated: () => void; onRerunVisible: () => void; onRetryFailed: () => void; onStop: () => void };
-	finding: { running: boolean; stopping: boolean; revealing: boolean; added: number; status: string; onFind: () => void; onStop: () => void };
+	finding: { running: boolean; stopping: boolean; canStop: boolean; revealing: boolean; added: number; status: string; onFind: () => void; onStop: () => void };
 	/** The Find rows dialog collapses into this button. */
 	findButtonRef: RefObject<HTMLButtonElement | null>;
 	addItems: MenuItem[];
@@ -228,14 +228,14 @@ function SelectionActions({ selectedRows, canRun, selection, exportOpen, onExpor
 
 /** One button that starts finding rows, then stops it; the label carries the running count. */
 function FindRowsButton({ finding, buttonRef }: { finding: SheetToolbarProps['finding']; buttonRef: RefObject<HTMLButtonElement | null> }) {
-	const { running, stopping } = finding;
+	const { running, stopping, canStop } = finding;
 	return (
 		<Button
 			ref={buttonRef}
 			size="sm"
 			variant="ghost"
-			aria-label={running && !stopping ? 'Stop finding rows' : undefined}
-			disabled={stopping || !running && finding.revealing}
+			aria-label={running && !stopping ? canStop ? 'Stop finding rows' : 'Find rows running in the background' : undefined}
+			disabled={stopping || running && !canStop || !running && finding.revealing}
 			onClick={running ? finding.onStop : finding.onFind}
 			className={running ? 'bg-blue-10 text-brand hover:bg-blue-20 hover:text-brand' : undefined}
 		>

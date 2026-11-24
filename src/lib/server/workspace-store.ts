@@ -1,11 +1,14 @@
 import 'server-only';
 import { createHash } from 'node:crypto';
+import { nanoid } from 'nanoid';
 import type { Account } from '../auth-identity';
-import type { Cell, Row, Sheet } from '../types';
+import type { Cell, CellMeta, CellValue, Column, EntityKind, FoundRow, Row, Sheet } from '../types';
 import { PRESENCE_TTL_MS, type presenceInputSchema } from '../collaboration';
 import type { z } from 'zod';
 import { createSheetSchema, patchSheetSchema, parseInput, WorkspaceError } from '../workspace';
-import { invalidCell, redefinedColumns } from '../cell-admission';
+import { admittedCell, fitGuessedFormat, invalidCell, redefinedColumns } from '../cell-admission';
+import { foundRecords, foundRowColumns, foundRowKey } from '../found-rows';
+import { inferredFormat } from '../column-roles';
 import { workspaceId, type Database, type Sql } from './database';
 
 type Actor = Pick<Account, 'issuer' | 'user' | 'organization'>;
@@ -64,6 +67,96 @@ ON CONFLICT (workspace_id,client_id) DO UPDATE SET sheet_id=excluded.sheet_id,na
 			ORDER BY part, position, id`, [workspaceId(actor), id])).rows;
 		if (!record || Number(record.part) !== 0) throw new WorkspaceError('Sheet not found in this workspace.', 404);
 		return { sheet: { ...(record.data as Sheet), revision: Number(record.revision) }, rows: rows.map((entry) => entry.data as Row) };
+	}
+	/** Persist one provider batch into the shared sheet before reporting its progress to a browser. */
+	async appendFoundRows(actor: Account, id: string, entity: EntityKind, input: readonly FoundRow[], meta?: CellMeta, mergeExisting = false, persist?: (sql: Sql, result: { added: number; updated: number }) => Promise<void>) {
+		if (!input.length) return { added: 0, updated: 0 };
+		return this.database.transaction(async (client, workspace) => {
+			const record = await client.query('SELECT data FROM enrichable.sheets WHERE workspace_id=$1 AND id=$2', [workspace, id]);
+			if (!record.rows.length) throw new WorkspaceError('Sheet not found in this workspace.', 404);
+			const sheet = record.rows[0].data as Sheet;
+			const columns = [...sheet.columns];
+			const ensureColumn = (name: string, width = 180, format?: Column['format']) => {
+				if (columns.some((column) => column.name.toLowerCase() === name.toLowerCase())) return;
+				const proposed = { id: nanoid(12), name, type: 'source' as const, width, format: format ?? inferredFormat({ name, type: 'source' }), createdAt: Date.now() };
+				columns.push(proposed);
+			};
+			for (const missing of foundRowColumns(entity, columns).missing) ensureColumn(missing.name, missing.width, missing.format);
+			let mapped = foundRecords(entity, input, columns, meta);
+			for (const row of mapped.records) for (const name of Object.keys(row)) {
+				const exists = columns.some((column) => column.name.toLowerCase() === name.toLowerCase());
+				if (!exists) ensureColumn(name);
+			}
+			if (columns.length !== sheet.columns.length) {
+				const created = columns.slice(sheet.columns.length);
+				for (const column of created) {
+					const values = mapped.records.flatMap((row) => Object.entries(row).filter(([name]) => name.toLowerCase() === column.name.toLowerCase()).map(([, value]) => value));
+					const fitted = fitGuessedFormat(column, values);
+					columns[columns.findIndex((entry) => entry.id === column.id)] = fitted;
+				}
+				mapped = foundRecords(entity, input, columns, meta);
+			}
+			const byName = new Map(columns.map((column) => [column.name.toLowerCase(), column]));
+			const dedupeColumn = byName.get(mapped.dedupeOn.toLowerCase());
+			const candidateKeys = [...new Set(mapped.records.map((row) => foundRowKey(row[mapped.dedupeOn])).filter(Boolean))];
+			const existingByKey = new Map<string, Row>();
+			if (dedupeColumn && candidateKeys.length) {
+				const matching = await client.query(`SELECT id,position,data FROM enrichable.sheet_rows
+					WHERE workspace_id=$1 AND sheet_id=$2 AND regexp_replace(regexp_replace(regexp_replace(btrim(lower(data->'cells'->($3)->>'v')), '^https?://', ''), '^www\\.', ''), '/+$', '')=ANY($4::text[])`, [workspace, id, dedupeColumn.id, candidateKeys]);
+				for (const entry of matching.rows) {
+					const row = entry.data as Row;
+					const key = foundRowKey(row.cells[dedupeColumn.id]?.v);
+					if (key) existingByKey.set(key, row);
+				}
+			}
+			const seen = new Set(existingByKey.keys()), changed = new Map<string, Row>(), added: Row[] = [];
+			let order = Number((await client.query('SELECT COALESCE(MAX(position),-1)+1 AS next FROM enrichable.sheet_rows WHERE workspace_id=$1 AND sheet_id=$2', [workspace, id])).rows[0]?.next ?? 0);
+			for (const [index, values] of mapped.records.entries()) {
+				const key = foundRowKey(values[mapped.dedupeOn]);
+				const existing = key ? existingByKey.get(key) : undefined;
+				if (key && seen.has(key)) {
+					if (mergeExisting && existing && !changed.has(existing.id)) {
+						let didChange = false;
+						for (const [field, value] of Object.entries(values)) {
+							if (value === null || value === '' || typeof value === 'string' && !value.trim()) continue;
+							const column = byName.get(field.toLowerCase());
+							if (!column || column.type !== 'source') continue;
+							const current = existing.cells[column.id] ?? { v: null, s: 'idle' as const, t: Date.now() };
+							if (current.f || current.v !== null && current.v !== '') continue;
+							const cellMeta = mapped.cellMeta[index]?.[field];
+							existing.cells[column.id] = admittedCell(column, { v: value, s: 'done', t: Date.now(), ...(cellMeta ? { m: cellMeta } : {}) }, 'find-rows');
+							didChange = true;
+						}
+						if (didChange) changed.set(existing.id, existing);
+					}
+					continue;
+				}
+				if (key) seen.add(key);
+				const cells: Record<string, Cell> = {};
+				const valuesByName = new Map(Object.entries(values).map(([name, value]) => [name.toLowerCase(), [name, value] as const]));
+				for (const column of columns) {
+					const entry = valuesByName.get(column.name.toLowerCase());
+					const cellMeta = entry ? mapped.cellMeta[index]?.[entry[0]] : undefined;
+					const cell: Cell = column.type === 'source' && entry ? { v: entry[1] as CellValue, s: 'done', t: Date.now(), ...(cellMeta ? { m: cellMeta } : {}) } : { v: null, s: 'idle', t: Date.now() };
+					cells[column.id] = admittedCell(column, cell, 'find-rows');
+				}
+				added.push({ id: nanoid(12), sheetId: id, order: order++, cells, createdAt: Date.now() });
+			}
+			const rowsToWrite = [...changed.values(), ...added];
+			if (rowsToWrite.length) {
+				const saved = await client.query(`INSERT INTO enrichable.sheet_rows (workspace_id,sheet_id,id,position,data)
+					SELECT $1,$2,value->>'id',(value->>'order')::double precision,value FROM jsonb_array_elements($3::jsonb)
+					ON CONFLICT (workspace_id,id) DO UPDATE SET position=excluded.position,data=excluded.data
+					WHERE enrichable.sheet_rows.sheet_id=excluded.sheet_id RETURNING id`, [workspace, id, JSON.stringify(rowsToWrite)]);
+				if (saved.rows.length !== rowsToWrite.length) throw new WorkspaceError('A row ID is already used by another sheet.', 409);
+			}
+			if (columns.length !== sheet.columns.length || rowsToWrite.length) {
+				await client.query('UPDATE enrichable.sheets SET data=$3::jsonb,revision=revision+1,updated_by=$4 WHERE workspace_id=$1 AND id=$2', [workspace, id, JSON.stringify({ ...sheet, ...(columns.length !== sheet.columns.length ? { columns } : {}), updatedAt: Date.now() }), actor.user.id]);
+			}
+			const result = { added: added.length, updated: changed.size };
+			await persist?.(client, result);
+			return result;
+		}, { workspace: actor });
 	}
 	async create(actor: Actor, input: unknown) {
 		const { sheet, rows } = parseInput(createSheetSchema, input, 'Invalid sheet data.');

@@ -19,15 +19,15 @@ This runbook covers first response for a managed deployment. It does not replace
 
 ## Enrichment queue stalled
 
-The application accepts at most 100 queued or running cell jobs per member and 500 per workspace. A `429` at that boundary is a queue-cap response; wait for active jobs to finish or cancel queued jobs before submitting more. These ceilings bound queue growth and do not represent a provider dollar budget.
+The application accepts at most 100 queued or running cell and Find rows jobs per member and 500 per workspace. A `429` at that boundary is a queue-cap response; wait for active jobs to finish or cancel queued jobs before submitting more. The shared Postgres `durable_worker_slots` table allows at most 20 provider jobs across all Vercel instances. These ceilings bound queue growth and concurrency; they do not represent a provider dollar budget.
 
 1. Check readiness, the Vercel Cron schedule, the production deployment, and that `CRON_SECRET` is configured for the cron environment.
-2. Inspect `enrichable.enrichment_jobs` status and `updated_at` with workspace-safe operator access. Never copy row contents into incident chat.
-3. Queued jobs should be picked up by the next worker run. Expired Monid jobs become `uncertain` if a paid request may have started; check Monid usage before any manual retry. Treg runs reuse their stored idempotency key according to the adapter behavior.
+2. Inspect `enrichable.enrichment_jobs` and `enrichable.populate_jobs` status and `updated_at` with workspace-safe operator access. Never copy row contents into incident chat.
+3. Queued jobs should be picked up by the next worker run. Expired non-idempotent cell jobs and all expired multi-step Find rows jobs become `uncertain` if provider work may have started; check provider usage before any manual retry. Treg cell retries reuse their stored idempotency key according to the adapter behavior.
 4. Do not reset a running lease or mark an uncertain job queued just to clear the dashboard. Reconcile provider status first; this can otherwise cause duplicate charges.
 5. Jobs can be cancelled only before their provider request starts. Running work must finish or reach its timeout/error state.
 
-The current worker processes cell jobs only. Find rows is not durable yet. A per-minute Vercel Cron schedule depends on an eligible Vercel plan.
+The cron worker claims the oldest queued cell or Find rows job and processes one job per invocation. The request may opportunistically start one job immediately after enqueue. A per-minute Vercel Cron schedule depends on an eligible Vercel plan. If all 20 shared worker slots are leased, new work waits for a slot or lease expiry.
 
 ## Provider usage mismatch
 

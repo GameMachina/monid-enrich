@@ -12,8 +12,8 @@ The article is a useful SaaS feature checklist: frontend and backend, customer i
 
 - Hosted customer sign-in now uses Clerk Organizations. The code is implemented, but Clerk application setup, organization settings, email recovery, role revocation, and signup flow still need a staging verification before public onboarding.
 - Stripe subscription checkout, portal, idempotent webhook recording, and active-subscription gating are implemented for one configured price. Product plans, taxes, invoices/support workflows, and end-to-end billing verification remain open.
-- Per-cell enrichment jobs persist in Postgres and a Vercel Cron route drains them. The natural-language Find rows workflow is not durable yet; bulk concurrency and queue capacity need measured staging/load work.
-- Per-minute request limits and bounded active durable-cell queues are implemented. They do not enforce a hard monetary workspace budget or safely reserve unknown provider charges; spend caps and reconciliation remain open.
+- Per-cell enrichment and managed natural-language Find rows jobs persist in Postgres. The Vercel worker uses a shared 20-slot lease pool across job types; queue capacity, recovery, and provider billing behavior still need staging/load verification.
+- Per-minute request limits, bounded active durable-job queues, and a 20-slot worker concurrency cap are implemented. They do not enforce a hard monetary workspace budget or safely reserve unknown provider charges; spend caps and reconciliation remain open.
 - Workspace export and closure are implemented. Export excludes credentials and caps at 50 MB; closure retains usage receipts and Stripe reconciliation data, and personal AgentWeb credentials are outside the workspace deletion path. Retention, backup expiry, and legal holds are not implemented.
 - Treg and Monid retain separate connections, charges, and usage records. OAuth availability and supported capabilities depend on each provider's live catalog; see [Treg gaps](treg-provider.md).
 - CI checks are not a substitute for staging auth/billing/provider tests, a security review, a measured restore, or load testing. No production deployment or live paid integration test has been performed as part of this work.
@@ -50,9 +50,9 @@ Add an application billing model if this will be a paid hosted SaaS: plans, tria
 
 Create persisted jobs for Find rows, bulk cell runs, and other long work. Use a durable queue/worker with transactional enqueue, leases, progress, cancellation, bounded concurrency, retries, and dead-letter/reconciliation paths. Keep the sheet as the visible trust surface, but make persisted job state authoritative across tab closure, deploys, and function timeouts. Reuse operation fingerprints and provider idempotency keys; never create a new paid call just because a poll or save failed.
 
-**Status: Partial.** Transactional per-cell enqueue, fingerprints, idempotency keys, leases, stale-lease recovery, status polling, safe queued cancellation, and a bounded Vercel worker are implemented. Find rows and some multi-step workflows still run through request/browser paths; queue capacity and recovery need staging tests.
+**Status: Partial.** Per-cell and managed Find rows jobs have durable records, workspace-scoped idempotency, progress polling, server-side writes, safe queued cancellation, and lease recovery. Find rows batches and counters commit in one transaction; a 20-slot Postgres lease pool caps combined provider concurrency across Vercel instances. A Find rows worker timeout is marked `uncertain` and is never automatically replayed. Cell jobs retry after a stale lease only for the provider path whose adapter supports stable idempotency. Self-hosted Find rows remains a request stream; MCP bulk execution and live staging tests are not yet covered. Verify migration `024_durable_populate_jobs.sql`, tab-close/deploy recovery, concurrent claim behavior, and provider usage reconciliation on staging.
 
-**Done when:** closing a browser, restarting a worker, or deploying during a run does not lose results or duplicate a billed call; users can resume/cancel and see per-row status; stale leases recover safely; terminal failures and uncertain charges are inspectable and reconcilable.
+**Done when:** closing a browser, restarting a worker, or deploying during a run does not lose committed results or duplicate a billed call; users can resume and inspect progress/status; stale leases recover safely; terminal failures and uncertain charges are inspectable and reconcilable. Running provider work cannot be safely cancelled after the request begins.
 
 ### P0.5 Put hard spend and abuse controls around every paid path
 
@@ -158,7 +158,7 @@ Document account setup, provider billing boundaries, supported operations, impor
 
 1. Configure isolated staging Clerk, Neon, Stripe, and Vercel environments; verify sign-up, org roles, subscription events, and protected routes.
 2. Finish hard-spend limits and budget alerts; decide whether each provider is customer/workspace-paid before enabling any platform-funded credential.
-3. Extend durable execution to Find rows and MCP bulk work; verify retry, cancellation, run reconciliation, and queue capacity.
+3. Verify durable Find rows and cell execution on isolated staging; extend durable execution to MCP bulk work; exercise retry, cancellation, run reconciliation, and queue capacity.
 4. Complete security review, CSP decision, encryption-key rotation rehearsal, and dependency/history scans.
 5. Prove database backup/restore, migration rollback, monitoring, incident ownership, and customer-support handling.
 6. Publish legal/privacy/retention terms and validate workspace export/deletion against all configured providers and backups.

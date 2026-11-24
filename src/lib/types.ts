@@ -356,6 +356,7 @@ export const PopulateRequestSchema = z.object({
 /** The temporary per-request limit applies only when starting a new Find rows search. */
 export const FindRowsRequestSchema = PopulateRequestSchema.extend({
 	target: z.number().int().min(1).max(5, 'A single Find rows request can return up to 5 rows while testing.').default(5),
+	sheetId: z.string().min(1).max(128).optional(),
 });
 export type PopulateRequest = Omit<z.infer<typeof PopulateRequestSchema>, 'dataProvider' | 'enrichFullProfiles'> & {
 	dataProvider?: DataProvider;
@@ -367,6 +368,8 @@ export type FoundRow = Record<string, CellValue>;
 
 export type PopulateEvent =
 	| { type: 'status'; message: string }
+	| { type: 'progress'; added: number; updated: number }
+	| { type: 'durable'; jobId: string; status?: string }
 	/** `key` is only read by tabs loaded before the found-rows Module; drop it after one release. */
 	| { type: 'rows'; rows: FoundRow[]; key?: string; meta?: CellMeta; updateExisting?: boolean }
 	| { type: 'done'; total: number; message?: string }

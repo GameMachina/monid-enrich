@@ -12,6 +12,7 @@ import { mcpAccess } from './provider-access';
 import { runOp } from './enrich';
 import { withDatabase, workspaceId, type Database } from './database';
 import { logWorkspaceError } from './workspace-logging';
+import { acquireDurableWorkerSlot, releaseDurableWorkerSlot } from './durable-slots';
 
 const fingerprint = (value: string) => createHash('sha256').update(value).digest('hex');
 const terminal = new Set(['succeeded', 'failed', 'uncertain', 'cancelled']);
@@ -37,8 +38,10 @@ export async function enqueueEnrichment(actor: Account, input: { op: unknown; ro
 				if (String(existing.input_fingerprint) !== inputFingerprint) throw new WorkspaceError('This retry key was already used for different inputs. Run the cell again to create a new job.', 409);
 				return { jobId: String(existing.id), status: String(existing.status) };
 			}
-			const active = (await sql.query(`SELECT count(*)::int AS workspace_count, count(*) FILTER (WHERE actor_id=$2)::int AS member_count
-				FROM enrichable.enrichment_jobs WHERE workspace_id=$1 AND status IN ('queued','running')`, [workspace, actor.user.id])).rows[0];
+			const active = (await sql.query(`SELECT count(*)::int AS workspace_count, count(*) FILTER (WHERE actor_id=$2)::int AS member_count FROM (
+				SELECT actor_id FROM enrichable.enrichment_jobs WHERE workspace_id=$1 AND status IN ('queued','running')
+				UNION ALL SELECT actor_id FROM enrichable.populate_jobs WHERE workspace_id=$1 AND status IN ('queued','running')
+			) active_jobs`, [workspace, actor.user.id])).rows[0];
 			if (Number(active?.member_count ?? 0) >= MAX_ACTIVE_JOBS_PER_MEMBER) throw new WorkspaceError('You already have 100 enrichment runs queued or running. Wait for some to finish before adding more.', 429);
 			if (Number(active?.workspace_count ?? 0) >= MAX_ACTIVE_JOBS_PER_WORKSPACE) throw new WorkspaceError('This workspace already has 500 enrichment runs queued or running. Wait for some to finish before adding more.', 429);
 			const inserted = await sql.query(`INSERT INTO enrichable.enrichment_jobs (workspace_id,id,idempotency_key,actor_id,sheet_id,row_id,column_id,input_fingerprint,retryable,status)
@@ -54,9 +57,9 @@ function inputFingerprintOf(plan: EnrichmentPlan) {
 	return inputFingerprint(plan.version);
 }
 
-type Job = { workspace_id: string; id: string; actor_id: string; sheet_id: string; row_id: string; column_id: string; input_fingerprint: string; idempotency_key: string; attempts: number };
+type Job = { workspace_id: string; id: string; actor_id: string; sheet_id: string; row_id: string; column_id: string; input_fingerprint: string; idempotency_key: string; lease_owner: string; attempts: number };
 
-async function recoverExpired(database: Database) {
+export async function recoverExpiredEnrichmentJobs(database: Database) {
 	await database.transaction(async (sql) => {
 		const expired = await sql.query(`SELECT j.workspace_id,j.id,j.sheet_id,j.row_id,j.column_id,j.input_fingerprint,j.retryable,r.data AS row_data
 			FROM enrichable.enrichment_jobs j LEFT JOIN enrichable.sheet_rows r ON r.workspace_id=j.workspace_id AND r.sheet_id=j.sheet_id AND r.id=j.row_id
@@ -76,14 +79,19 @@ async function recoverExpired(database: Database) {
 }
 
 async function claim(database: Database): Promise<Job | null> {
-	await recoverExpired(database);
 	return database.transaction(async (sql) => {
 		const row = (await sql.query(`SELECT j.workspace_id,j.id,j.actor_id,j.sheet_id,j.row_id,j.column_id,j.input_fingerprint,j.idempotency_key,j.attempts
 			FROM enrichable.enrichment_jobs j JOIN enrichable.workspaces w ON w.id=j.workspace_id AND w.deleted_at IS NULL
 			WHERE j.status='queued' ORDER BY j.created_at LIMIT 1 FOR UPDATE OF w,j SKIP LOCKED`)).rows[0] as Job | undefined;
 		if (!row) return null;
-		await sql.query("UPDATE enrichable.enrichment_jobs SET status='running',attempts=attempts+1,lease_owner=$3,lease_expires_at=now()+interval '7 minutes',updated_at=now() WHERE workspace_id=$1 AND id=$2", [row.workspace_id, row.id, randomUUID()]);
-		return { ...row, attempts: Number(row.attempts) + 1 };
+		const lease = randomUUID();
+		if (!await acquireDurableWorkerSlot(sql, row.workspace_id, row.id, lease)) return null;
+		const claimed = await sql.query("UPDATE enrichable.enrichment_jobs SET status='running',attempts=attempts+1,lease_owner=$3,lease_expires_at=now()+interval '7 minutes',updated_at=now() WHERE workspace_id=$1 AND id=$2 AND status='queued' RETURNING id", [row.workspace_id, row.id, lease]);
+		if (!claimed.rows.length) {
+			await releaseDurableWorkerSlot(sql, row.workspace_id, row.id, lease);
+			return null;
+		}
+		return { ...row, lease_owner: lease, attempts: Number(row.attempts) + 1 };
 	});
 }
 
@@ -110,7 +118,10 @@ async function processClaimed(database: Database, job: Job) {
 	const grid = await new WorkspaceStore(database).snapshot(actor, job.sheet_id);
 	const plan = planCell(grid, { rowId: job.row_id, columnId: job.column_id });
 	if (!plan || inputFingerprint(plan.version) !== job.input_fingerprint) {
-		await database.transaction((sql) => sql.query("UPDATE enrichable.enrichment_jobs SET status='failed',error='The row or column changed while the run was queued. Run the cell again.',updated_at=now() WHERE workspace_id=$1 AND id=$2", [job.workspace_id, job.id]).then(() => undefined));
+		await database.transaction(async (sql) => {
+			await sql.query("UPDATE enrichable.enrichment_jobs SET status='failed',error='The row or column changed while the run was queued. Run the cell again.',lease_owner=NULL,lease_expires_at=NULL,updated_at=now() WHERE workspace_id=$1 AND id=$2 AND lease_owner=$3", [job.workspace_id, job.id, job.lease_owner]);
+			await releaseDurableWorkerSlot(sql, job.workspace_id, job.id, job.lease_owner);
+		});
 		return;
 	}
 	let result: EnrichResponse;
@@ -126,12 +137,14 @@ async function processClaimed(database: Database, job: Job) {
 	const status = !saved ? 'failed' : result.error ? 'failed' : 'succeeded';
 	const safeError = result.error ? result.error.slice(0, 1000) : !saved ? 'The row changed while the provider was running. Run the cell again.' : null;
 	await database.transaction(async (sql) => {
-		await sql.query('UPDATE enrichable.enrichment_jobs SET status=$3,error=$4,lease_owner=NULL,lease_expires_at=NULL,updated_at=now() WHERE workspace_id=$1 AND id=$2', [job.workspace_id, job.id, status, safeError]);
+		await sql.query('UPDATE enrichable.enrichment_jobs SET status=$3,error=$4,lease_owner=NULL,lease_expires_at=NULL,updated_at=now() WHERE workspace_id=$1 AND id=$2 AND lease_owner=$5', [job.workspace_id, job.id, status, safeError, job.lease_owner]);
+		await releaseDurableWorkerSlot(sql, job.workspace_id, job.id, job.lease_owner);
 	});
 }
 
-export async function processOneEnrichmentJob() {
+export async function processOneEnrichmentJob(recoverExpired = true) {
 	return withDatabase(async (database) => {
+		if (recoverExpired) await recoverExpiredEnrichmentJobs(database);
 		const job = await claim(database);
 		if (!job) return false;
 		try { await processClaimed(database, job); }

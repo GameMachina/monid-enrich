@@ -111,7 +111,7 @@ export async function populatePeopleList(access: ProviderAccess, request: Popula
 		const batch = queue.slice(start, start + Math.min(LOOKUP_CONCURRENCY, capacity - added));
 		if (!batch.length) return start;
 		const label = (person: ListedPerson) => person.name ?? person.email ?? person.profileUrls[0] ?? 'person';
-		emit({ type: 'status', message: `Enriching ${batch.map(label).join(', ')}…` });
+		await emit({ type: 'status', message: `Enriching ${batch.map(label).join(', ')}…` });
 		const rows = await Promise.all(batch.map(lookup));
 		signal.throwIfAborted();
 		for (const row of rows) {
@@ -119,12 +119,12 @@ export async function populatePeopleList(access: ProviderAccess, request: Popula
 			if (key && seen.has(key)) continue;
 			if (key) seen.add(key);
 			added++;
-			emit({ type: 'rows', rows: [row], key: foundRowKeyField('people') });
+			await emit({ type: 'rows', rows: [row], key: foundRowKeyField('people') });
 		}
 		return round(start + batch.length);
 	};
 	const next = await round(0);
-	if (failed) emit({ type: 'error', message: `${failed} person lookup${failed === 1 ? '' : 's'} failed. Their supplied details were kept in the sheet; see Enrichment status and Enrichment note.` });
-	else if (next < queue.length) emit({ type: 'error', message: 'The sheet is full. Some supplied people could not be added; free up space before retrying.' });
-	else emit({ type: 'done', total: added, message: `${added} supplied people added, including unmatched people.` });
+	if (failed) await emit({ type: 'error', message: `${failed} person lookup${failed === 1 ? '' : 's'} failed. Their supplied details were kept in the sheet; see Enrichment status and Enrichment note.` });
+	else if (next < queue.length) await emit({ type: 'error', message: 'The sheet is full. Some supplied people could not be added; free up space before retrying.' });
+	else await emit({ type: 'done', total: added, message: `${added} supplied people added, including unmatched people.` });
 }

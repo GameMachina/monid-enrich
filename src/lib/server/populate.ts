@@ -264,7 +264,9 @@ export function populateStream(access: ProviderAccess, request: PopulateRequest)
 	});
 }
 
-async function runPopulate(access: ProviderAccess, request: PopulateRequest, emit: (event: PopulateEvent) => void, signal: AbortSignal) {
+/** Shared execution path for request streams and durable workspace jobs. The durable worker persists each emitted batch
+ * before it reports progress, and treats a lost lease as uncertain because Find rows can make multiple paid calls. */
+export async function runPopulate(access: ProviderAccess, request: PopulateRequest, emit: (event: PopulateEvent) => void, signal: AbortSignal) {
 	const requestedTarget = promptResultCount(request.query) ?? request.target;
 	const limitError = populateLimitError(requestedTarget);
 	if (limitError) throw new Error(limitError);
@@ -281,7 +283,7 @@ async function runPopulate(access: ProviderAccess, request: PopulateRequest, emi
 	}
 	const model = access.openai();
 	if (request.entity === 'people') {
-		emit({ type: 'status', message: 'Checking for a supplied list of people…' });
+		await emit({ type: 'status', message: 'Checking for a supplied list of people…' });
 		const plan = await planPeopleInput(access, request.query, signal);
 		if (plan.mode === 'list') {
 			if (plan.people.length > 1000) throw new Error('A single Find rows request can include up to 1,000 people.');
@@ -303,18 +305,18 @@ async function runPopulate(access: ProviderAccess, request: PopulateRequest, emi
 		runCursor = access.spend.monidRuns.length;
 		return monidRuns.length ? { monidRuns } : undefined;
 	};
-	const push = (rows: FoundRow[]) => {
+	const push = async (rows: FoundRow[]) => {
 		const accepted = rows.slice(0, Math.max(0, target - state.added));
 		if (accepted.length) {
 			state.added += accepted.length;
-			emit({ type: 'rows', rows: accepted, key: foundRowKeyField(request.entity), meta: nextRunMeta() });
+			await emit({ type: 'rows', rows: accepted, key: foundRowKeyField(request.entity), meta: nextRunMeta() });
 		}
 		return accepted;
 	};
-	const summarise = (added: number, names: string[], nextCursor: string | null, total: number) => {
+	const summarise = async (added: number, names: string[], nextCursor: string | null, total: number) => {
 		state.calls += 1;
 		state.emptyStreak = added === 0 ? state.emptyStreak + 1 : 0;
-		emit({ type: 'status', message: added ? `Added ${added} (${state.added} of ${target})` : `No new results (${state.added} of ${target})` });
+		await emit({ type: 'status', message: added ? `Added ${added} (${state.added} of ${target})` : `No new results (${state.added} of ${target})` });
 		return { added_this_call: added, returned_this_call: total, total_added: state.added, target, remaining: Math.max(0, target - state.added), next_cursor: nextCursor, sample: names.slice(0, 5), hint: nextCursor ? 'Call again with next_cursor to continue this query.' : 'This query is exhausted; try a different angle.' };
 	};
 
@@ -338,7 +340,7 @@ async function runPopulate(access: ProviderAccess, request: PopulateRequest, emi
 					seen.add(key);
 					rows.push(companyRow(hit));
 				}
-				const accepted = push(rows);
+				const accepted = await push(rows);
 				return summarise(accepted.length, accepted.map((row) => String(row.Company ?? '')), result.next_cursor, result.results.length);
 			}),
 		});
@@ -386,7 +388,7 @@ async function runPopulate(access: ProviderAccess, request: PopulateRequest, emi
 					'Years of experience': hit.years_of_experience,
 					Summary: hit.description,
 				}));
-				const accepted = push(rows);
+				const accepted = await push(rows);
 				return summarise(accepted.length, accepted.map((row) => String(row.Name ?? '')), response.next_cursor ?? null, response.results.length);
 			}),
 		});
@@ -405,7 +407,7 @@ async function runPopulate(access: ProviderAccess, request: PopulateRequest, emi
 					seen.add(key);
 					rows.push({ URL: hit.url, Title: hit.title, Description: hit.description });
 				}
-				const accepted = push(rows);
+				const accepted = await push(rows);
 				return summarise(accepted.length, accepted.map((row) => String(row.Title ?? '')), null, result.results.length);
 			}),
 		});
@@ -414,7 +416,7 @@ async function runPopulate(access: ProviderAccess, request: PopulateRequest, emi
 	const reachedTarget: StopCondition<ToolSet> = () => state.added >= target;
 	const stalled: StopCondition<ToolSet> = () => state.emptyStreak >= 4;
 
-	emit({ type: 'status', message: `Searching for ${request.entity}…` });
+	await emit({ type: 'status', message: `Searching for ${request.entity}…` });
 	const entityGuide = {
 		companies: 'Write queries the way a market analyst would describe the segment (industry + geography + size + business model). To reach large targets, split the market into sub-segments (sub-industries, states or regions, company sizes, customer types) and run each as its own query; always follow next_cursor until it is null before moving on.',
 		people: 'Describe the role, seniority, employer type, industry, location and background. Split large targets by geography, seniority, or employer segment. Use fast mode unless the query has several hard criteria.',
@@ -438,7 +440,7 @@ async function runPopulate(access: ProviderAccess, request: PopulateRequest, emi
 		abortSignal: signal,
 	});
 	const summary = result.text?.trim();
-	emit({ type: 'done', total: state.added, message: summary && summary.length < 400 ? summary : undefined });
+	await emit({ type: 'done', total: state.added, message: summary && summary.length < 400 ? summary : undefined });
 }
 
 /** Direct catalog-routed discovery keeps Treg selection explicit and avoids hidden Monid calls. */
@@ -455,7 +457,7 @@ async function populateDirectTreg(access: ProviderAccess, request: PopulateReque
 	let fullProfileCalls = 0, fullProfilesWithDetails = 0, fullProfileMisses = 0, fullProfileFailures = 0, fullProfileSkipped = 0;
 	let companyDomainCalls = 0, companyDomainsFound = 0, companyDomainFailures = 0;
 	let fullProfileBlocked = false;
-	emit({ type: 'status', message: `Searching Treg for ${request.entity}…` });
+	await emit({ type: 'status', message: `Searching Treg for ${request.entity}…` });
 	for (const country of countries) {
 		let cursor: string | undefined;
 		while ((canUpdateExisting ? profileRowsProcessed : added) < target && calls < 40) {
@@ -611,14 +613,14 @@ async function populateDirectTreg(access: ProviderAccess, request: PopulateReque
 						rowMeta = { ...rowMeta, reasoning: fullProfileBlocked ? 'Treg profile lookups stopped after a balance or connection error.' : 'Full profile lookup was stopped before it began.' };
 					}
 					if (!existingKeys.has(foundRowKey(row[keyField]))) added++;
-					emit({ type: 'rows', rows: [enrichedRow], key: keyField, meta: rowMeta, updateExisting: canUpdateExisting });
-					emit({ type: 'status', message: `Added ${added} of ${target}${existingProfilesMatched ? ` · refreshing ${existingProfilesMatched} existing` : ''}${fullProfileCalls ? ` · full profiles ${fullProfileCalls} started` : ''}` });
+					await emit({ type: 'rows', rows: [enrichedRow], key: keyField, meta: rowMeta, updateExisting: canUpdateExisting });
+					await emit({ type: 'status', message: `Added ${added} of ${target}${existingProfilesMatched ? ` · refreshing ${existingProfilesMatched} existing` : ''}${fullProfileCalls ? ` · full profiles ${fullProfileCalls} started` : ''}` });
 				});
 			} else if (unique.length) {
 				added += unique.length;
-				emit({ type: 'rows', rows: unique, key: keyField, meta: { ...meta, raw: undefined, dataProvider: 'treg' } });
+				await emit({ type: 'rows', rows: unique, key: keyField, meta: { ...meta, raw: undefined, dataProvider: 'treg' } });
 			}
-			emit({ type: 'status', message: `Added ${added} of ${target}` });
+			await emit({ type: 'status', message: `Added ${added} of ${target}` });
 			const next = textValue(output.next_cursor ?? output.nextCursor) || null;
 			if (request.entity === 'websites' || !next || unique.length === 0) break;
 			cursor = next;
@@ -636,7 +638,7 @@ async function populateDirectTreg(access: ProviderAccess, request: PopulateReque
 			: request.entity === 'people' && duplicateProfiles
 				? 'Treg found people, but their LinkedIn profiles are already in this sheet.'
 				: 'Treg found no matches. Try a broader description or remove country filters.';
-	emit({ type: 'done', total: added + existingProfilesMatched, message });
+	await emit({ type: 'done', total: added + existingProfilesMatched, message });
 }
 
 /** Direct Monid discovery keeps natural-language row search available when the user has not connected OpenAI. */
@@ -648,7 +650,7 @@ async function populateDirectMonid(access: ProviderAccess, request: PopulateRequ
 	const seen = new Set((request.existingKeys ?? []).map(foundRowKey).filter(Boolean));
 	let added = 0, cursor: string | undefined, calls = 0;
 	let runCursor = access.spend.monidRuns.length;
-	emit({ type: 'status', message: `Searching Monid for ${request.entity}…` });
+	await emit({ type: 'status', message: `Searching Monid for ${request.entity}…` });
 	while (added < target && calls < 20) {
 		signal.throwIfAborted();
 		calls++;
@@ -684,13 +686,13 @@ async function populateDirectMonid(access: ProviderAccess, request: PopulateRequ
 			added += unique.length;
 			const monidRuns = access.spend.monidRuns.slice(runCursor);
 			runCursor = access.spend.monidRuns.length;
-			emit({ type: 'rows', rows: unique, key: foundRowKeyField(request.entity), meta: monidRuns.length ? { monidRuns } : undefined });
+			await emit({ type: 'rows', rows: unique, key: foundRowKeyField(request.entity), meta: monidRuns.length ? { monidRuns } : undefined });
 		}
-		emit({ type: 'status', message: `Added ${added} of ${target}` });
+		await emit({ type: 'status', message: `Added ${added} of ${target}` });
 		if (request.entity === 'websites' || !nextCursor || unique.length === 0) break;
 		cursor = nextCursor;
 	}
-	emit({ type: 'done', total: added, message: added ? `Found ${added} ${request.entity} with Monid.` : 'No results found. Try a more specific query.' });
+	await emit({ type: 'done', total: added, message: added ? `Found ${added} ${request.entity} with Monid.` : 'No results found. Try a more specific query.' });
 }
 
 const DISCOVERY_LEAD = /^(?:please\s+)?(?:find|search(?:\s+for)?|look\s+for|show(?:\s+me)?|give(?:\s+me)?|return|list|get|discover)(?:\s+me)?\s+/i;

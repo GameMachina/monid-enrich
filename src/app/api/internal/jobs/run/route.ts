@@ -1,5 +1,5 @@
 import { timingSafeEqual } from 'node:crypto';
-import { processEnrichmentJobs } from '@/lib/server/enrichment-jobs';
+import { processOneDurableJob } from '@/lib/server/durable-jobs';
 import { durableEnrichmentEnabled } from '@/lib/server/deployment';
 
 export const maxDuration = 300;
@@ -16,8 +16,8 @@ export async function GET(request: Request) {
 	if (!authorized(request)) return Response.json({ error: 'Unauthorized.' }, { status: 401, headers: { 'Cache-Control': 'no-store' } });
 	if (!durableEnrichmentEnabled()) return Response.json({ ok: true, processed: false, disabled: true }, { headers: { 'Cache-Control': 'no-store' } });
 	try {
-		const processed = await processEnrichmentJobs();
-		return Response.json({ ok: true, processed }, { headers: { 'Cache-Control': 'no-store' } });
+		const processed = await processOneDurableJob();
+		return Response.json({ ok: true, processed: Boolean(processed), kind: processed || undefined }, { headers: { 'Cache-Control': 'no-store' } });
 	} catch {
 		return Response.json({ error: 'The enrichment worker could not claim a job.' }, { status: 503, headers: { 'Cache-Control': 'no-store' } });
 	}

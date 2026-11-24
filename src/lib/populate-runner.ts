@@ -1,8 +1,8 @@
 'use client';
 
-import { appendRows, db, newColumn, onSheetRemoved, updateSheet } from './db';
+import { appendRows, db, loadSheet, newColumn, onSheetRemoved, updateSheet } from './db';
 import { foundRecords, foundRowColumns, foundRowKey } from './found-rows';
-import { streamPopulate } from './populate-client';
+import { cancelPopulateJob, lookupActivePopulateJob, streamPopulate } from './populate-client';
 import { RowArrivalPacer } from './row-arrival-pacer';
 import { MAX_ROWS } from './workspace';
 import type { EnrichFailure, PopulateRequest, Row, Sheet } from './types';
@@ -26,6 +26,8 @@ export interface PopulateState {
 	/** Why a failed search failed, when the server says: a missing or rejected key offers its fix. */
 	failure?: EnrichFailure;
 	request?: PopulateRequest;
+	durableJobId?: string;
+	durableStatus?: string;
 	/** Started away from its sheet (the Sheets page): the sheet's Find rows dialog reports the outcome, then acknowledges it. */
 	handoff: boolean;
 	/** Only presentation is delayed; every row is already committed to IndexedDB. */
@@ -88,6 +90,22 @@ class PopulateRunner {
 	stop = (sheetId: string) => {
 		const controller = this.controllers.get(sheetId);
 		if (!controller || controller.signal.aborted) return;
+		const state = this.getSnapshot(sheetId);
+		if (state.durableJobId) {
+			if (state.durableStatus === 'running') {
+				this.patch(sheetId, { status: 'This search is running in the background and cannot be stopped safely.' });
+				return;
+			}
+			this.patch(sheetId, { phase: 'stopping', status: 'Cancelling queued search…', hidden: new Set(), revealAt: new Map() });
+			void cancelPopulateJob(state.durableJobId).then((job) => {
+				if (job.status === 'cancelled') controller.abort();
+				else this.patch(sheetId, { phase: 'finding', status: 'The search has already started and will continue in the background.', durableStatus: job.status });
+			}).catch((error) => {
+				const message = error instanceof Error ? error.message : 'Could not confirm that the search was cancelled.';
+				this.patch(sheetId, { phase: 'finding', status: message, durableStatus: 'running' });
+			});
+			return;
+		}
 		controller.abort();
 		this.patch(sheetId, { phase: 'stopping', status: 'Stopping…', hidden: new Set(), revealAt: new Map() });
 	};
@@ -95,20 +113,42 @@ class PopulateRunner {
 	start(sheet: Sheet, input: PopulateRequest, options: { handoff?: boolean } = {}): Promise<PopulateState> {
 		const current = this.runs.get(sheet.id);
 		if (current) return current;
-		const run = this.run(sheet, input, options.handoff ?? false);
-		this.runs.set(sheet.id, run);
-		void run.finally(() => { if (this.runs.get(sheet.id) === run) this.runs.delete(sheet.id); });
+		const stableInput = input.idempotencyKey ? input : { ...input, idempotencyKey: crypto.randomUUID() };
+		const run = this.run(sheet, stableInput, options.handoff ?? false);
+		return this.track(sheet.id, run);
+	}
+	/** Reattach to a managed Find rows job after a reload; terminal searches are not enqueued again. */
+	resume(sheet: Sheet, input: PopulateRequest): Promise<PopulateState> {
+		const current = this.runs.get(sheet.id);
+		if (current) return current;
+		if (!input.idempotencyKey) return Promise.resolve(this.getSnapshot(sheet.id));
+		const key = input.idempotencyKey;
+		const run = (async () => {
+			try {
+				const job = await lookupActivePopulateJob(sheet.id, key);
+				if (!job) return this.getSnapshot(sheet.id);
+				return await this.run(sheet, input, false, job.jobId);
+			} catch (error) {
+				this.patch(sheet.id, { phase: 'failed', running: false, error: error instanceof Error ? error.message : 'Could not resume Find rows.', status: 'Could not resume finding rows' });
+				return this.getSnapshot(sheet.id);
+			}
+		})();
+		return this.track(sheet.id, run);
+	}
+	private track(sheetId: string, run: Promise<PopulateState>) {
+		this.runs.set(sheetId, run);
+		void run.finally(() => { if (this.runs.get(sheetId) === run) this.runs.delete(sheetId); });
 		return run;
 	}
-	private async run(sheet: Sheet, input: PopulateRequest, handoff: boolean): Promise<PopulateState> {
+	private async run(sheet: Sheet, input: PopulateRequest, handoff: boolean, jobId?: string): Promise<PopulateState> {
 		const controller = new AbortController();
 		this.controllers.set(sheet.id, controller);
 		this.pacers.set(sheet.id, new RowArrivalPacer());
 		clearTimeout(this.timers.get(sheet.id));
-		this.patch(sheet.id, { ...idle, failure: undefined, phase: 'finding', running: true, status: 'Finding rows…', request: input, handoff });
+		this.patch(sheet.id, { ...idle, failure: undefined, phase: 'finding', running: true, status: 'Finding rows…', request: input, handoff, durableJobId: jobId, durableStatus: jobId ? 'running' : undefined });
 		let outcome: Pick<PopulateState, 'phase' | 'error' | 'failure'> = { phase: 'finished', error: null };
 		try {
-			const completed = await this.search(sheet, input, controller.signal);
+			const completed = await this.search(sheet, input, controller.signal, jobId);
 			if (!completed && !controller.signal.aborted) {
 				const added = this.getSnapshot(sheet.id).added;
 				outcome = { phase: 'interrupted', error: `The connection closed before Find rows finished${added ? `, after ${added.toLocaleString()} ${added === 1 ? 'row' : 'rows'}` : ''}. Try again to continue.` };
@@ -130,7 +170,7 @@ class PopulateRunner {
 		return this.getSnapshot(sheet.id);
 	}
 	/** Resolves true when the server reported `done`. */
-	private async search(sheet: Sheet, input: PopulateRequest, signal: AbortSignal): Promise<boolean> {
+	private async search(sheet: Sheet, input: PopulateRequest, signal: AbortSignal, jobId?: string): Promise<boolean> {
 		const fresh = (await db.sheets.get(sheet.id)) ?? sheet;
 		const rows = await db.rows.where('sheetId').equals(sheet.id).toArray();
 		const capacity = MAX_ROWS - rows.length;
@@ -149,9 +189,15 @@ class PopulateRunner {
 		}, { history: false });
 		if (signal.aborted) return false;
 		const request = { ...input, target, availableRows: capacity, existingKeys: key ? rows.map((row) => foundRowKey(row.cells[key.id]?.v)).filter(Boolean).slice(0, 20000) : [] };
-		const { completed } = await streamPopulate(request, async (event) => {
+		const { completed } = await streamPopulate(request, sheet.id, async (event) => {
+			if (event.type === 'durable') this.patch(sheet.id, { durableJobId: event.jobId, durableStatus: event.status ?? this.getSnapshot(sheet.id).durableStatus ?? 'queued' });
 			if (event.type === 'status') this.patch(sheet.id, { status: event.message });
 			if (event.type === 'done') this.patch(sheet.id, { completionMessage: event.message ?? null });
+			if (event.type === 'progress') {
+				const state = this.getSnapshot(sheet.id);
+				if (state.added !== event.added || state.updated !== event.updated) await loadSheet(sheet.id).catch(() => {});
+				this.patch(sheet.id, { added: event.added, updated: event.updated });
+			}
 			if (event.type === 'rows') {
 				const remaining = Math.max(0, (input.entity === 'people' ? capacity : target) - this.getSnapshot(sheet.id).added);
 				if (remaining) {
@@ -163,7 +209,7 @@ class PopulateRunner {
 					} });
 				}
 			}
-		}, signal);
+		}, signal, { jobId });
 		return completed;
 	}
 }

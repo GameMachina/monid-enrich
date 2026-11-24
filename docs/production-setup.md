@@ -57,7 +57,7 @@ The current implementation supports one configured recurring price. It does not 
 
 ## Database, migrations, and previews
 
-The Vercel build command is `npm run db:migrate && npm run build`. Migrations are additive and serialized, but this has not been exercised against a production account as part of this code change. Review new migration SQL, test it on staging, and keep previews isolated from production. Do not run migration commands against a customer database to troubleshoot a preview build.
+The Vercel build command is `npm run db:migrate && npm run build`. Migrations are additive and serialized, but this has not been exercised against a production account as part of this code change. Migration `024_durable_populate_jobs.sql` adds the managed Find rows queue and seeds the 20 shared worker slots. Apply and verify it on staging before any worker is enabled; keep previews isolated from production. Local single-process development applies migrations to embedded PGlite on first database use, while `npm run db:migrate` requires a dedicated Neon `DATABASE_URL` or `DATABASE_URL_UNPOOLED`. Do not run migration commands against a customer database to troubleshoot a preview build.
 
 Neon backups/PITR, access roles, retention, and restore are configured in the Neon account, not by the app. Before onboarding customers, restore a backup to a separate database, record the time and data loss window, and document who can authorize recovery.
 
@@ -66,10 +66,10 @@ Neon backups/PITR, access roles, retention, and restore are configured in the Ne
 Before a staged release:
 
 1. Confirm `/api/health/live` returns `200`.
-2. Confirm `/api/health/ready` returns `200` and all checks are true. In managed production this includes Postgres, vault encryption, Clerk, the Clerk webhook secret, Stripe billing, the durable-job migration, provider-usage attribution, workspace audit schema, and the worker secret.
+2. Confirm `/api/health/ready` returns `200` and all checks are true. In managed production this includes Postgres, vault encryption, Clerk, the Clerk webhook secret, Stripe billing, the durable-job migrations (including the Find rows queue and shared worker slots), provider-usage attribution, workspace audit schema, and the worker secret.
 3. Create a test organization, invite a second test member, and verify admin/member route behavior.
 4. Run a synthetic one-row Monid and Treg operation separately; check provider, run ID, status, cost, and source metadata in the sheet. Do not treat successful UI display as billing reconciliation.
-5. Start a cell run, close the tab, and verify the result is saved by the worker. Queue cancellation only works before a provider request starts.
+5. Start a cell run and a Find rows run separately, close the tab, then reopen it and confirm the job status reconnects and all committed rows/results are present. Queue cancellation only works before a provider request starts; an uncertain Find rows run must not be automatically retried.
 6. Complete Stripe test checkout and cancellation; verify access changes only after the server-verified webhook state.
 7. Export a synthetic workspace and close a disposable workspace; inspect the export and retention behavior.
 8. Confirm backup restore, rollback, alerts, and incident ownership before inviting real customers.
@@ -80,7 +80,7 @@ Health endpoints intentionally omit detailed infrastructure errors. Use Vercel, 
 
 ## Known launch gaps
 
-- Find rows is still request/browser coordinated; only individual enrichment cells use the durable job table.
+- Managed Find rows and individual enrichment cells use durable Postgres jobs and a shared pool of up to 20 active provider workers. Self-hosted Find rows remains request-streamed. MCP bulk work does not yet use this durable queue.
 - Request-rate limits do not enforce hard dollar spend caps, concurrent spend reservations, or budget alerts.
 - Provider usage reporting does not reconcile receipts with Monid/Treg billing ledgers or distinguish provider-specific estimated and settled cost states beyond the receipt status.
 - Workspace activity does not yet include billing or provider-connection lifecycle events.
