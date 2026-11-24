@@ -105,21 +105,23 @@ function makeMeta(receipt: TregReceipt, response: unknown, provider: DataProvide
 	};
 }
 
-async function persistCall(actor: Account | undefined, receipt: TregReceipt, idempotencyKey: string, input: unknown, error?: string) {
+type RunAttribution = { actorId?: string; sheetId?: string; rowId?: string; columnId?: string };
+
+async function persistCall(actor: Account | undefined, receipt: TregReceipt, idempotencyKey: string, input: unknown, error?: string, attribution?: RunAttribution) {
 	if (!actor) return;
 	const inputHash = createHash('sha256').update(JSON.stringify(input)).digest('hex');
 	const callId = receipt.callId ?? `idem:${idempotencyKey}`;
 	const now = Date.now();
 	await withDatabase((database) => database.transaction(async (sql, workspace) => {
-		await sql.query(`INSERT INTO enrichable.treg_runs (workspace_id,call_id,idempotency_key,data_provider,operation,endpoint,status,input_hash,cost_usd,cost_micro_usd,served_via,error,created_at,updated_at)
-			VALUES ($1,$2,$3,'treg',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-			ON CONFLICT (workspace_id,idempotency_key) WHERE idempotency_key IS NOT NULL DO UPDATE SET call_id=excluded.call_id,status=excluded.status,cost_usd=COALESCE(excluded.cost_usd,enrichable.treg_runs.cost_usd),cost_micro_usd=COALESCE(excluded.cost_micro_usd,enrichable.treg_runs.cost_micro_usd),served_via=COALESCE(excluded.served_via,enrichable.treg_runs.served_via),error=excluded.error,updated_at=excluded.updated_at`,
-		[workspace, callId, idempotencyKey, receipt.operation, receipt.endpoint, receipt.status, inputHash, receipt.costUsd ?? null, receipt.costMicroUsd ?? null, receipt.servedVia ?? null, error ? 'Provider request failed.' : null, now, now]);
+		await sql.query(`INSERT INTO enrichable.treg_runs (workspace_id,call_id,idempotency_key,data_provider,operation,endpoint,status,input_hash,cost_usd,cost_micro_usd,served_via,error,created_at,updated_at,actor_id,sheet_id,row_id,column_id)
+			VALUES ($1,$2,$3,'treg',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+			ON CONFLICT (workspace_id,idempotency_key) WHERE idempotency_key IS NOT NULL DO UPDATE SET call_id=excluded.call_id,status=excluded.status,cost_usd=COALESCE(excluded.cost_usd,enrichable.treg_runs.cost_usd),cost_micro_usd=COALESCE(excluded.cost_micro_usd,enrichable.treg_runs.cost_micro_usd),served_via=COALESCE(excluded.served_via,enrichable.treg_runs.served_via),error=excluded.error,updated_at=excluded.updated_at,actor_id=COALESCE(excluded.actor_id,enrichable.treg_runs.actor_id),sheet_id=COALESCE(excluded.sheet_id,enrichable.treg_runs.sheet_id),row_id=COALESCE(excluded.row_id,enrichable.treg_runs.row_id),column_id=COALESCE(excluded.column_id,enrichable.treg_runs.column_id)`,
+		[workspace, callId, idempotencyKey, receipt.operation, receipt.endpoint, receipt.status, inputHash, receipt.costUsd ?? null, receipt.costMicroUsd ?? null, receipt.servedVia ?? null, error ? 'Provider request failed.' : null, now, now, attribution?.actorId ?? actor.user.id, attribution?.sheetId ?? null, attribution?.rowId ?? null, attribution?.columnId ?? null]);
 	}, { workspace: actor }));
 }
 
-async function persistReceipt(actor: Account | undefined, receipt: TregReceipt, idempotencyKey: string, input: unknown, error?: string, response?: unknown) {
-	try { await persistCall(actor, receipt, idempotencyKey, input, error); }
+async function persistReceipt(actor: Account | undefined, receipt: TregReceipt, idempotencyKey: string, input: unknown, error?: string, response?: unknown, attribution?: RunAttribution) {
+	try { await persistCall(actor, receipt, idempotencyKey, input, error, attribution); }
 	catch {
 		const meta = { ...makeMeta(receipt, response), tregIdempotencyKey: idempotencyKey, tregIdempotencyCreatedAt: Date.now() };
 		throw new TregCallError(`Treg call ${receipt.callId ?? '(ID pending)'} could not save its usage receipt. It was not resubmitted; retry safely with the saved idempotency key.`, failure('provider_error', 'treg', false), meta, idempotencyKey);
@@ -198,6 +200,7 @@ async function jsonResponse(response: Response) {
 
 async function callTreg(access: ProviderAccess, spec: CallSpec, input: unknown, idempotencyKey: string, signal?: AbortSignal): Promise<{ data: unknown; meta: CellMeta }> {
 	const token = access.requireKey('treg');
+	const saveReceipt = (receipt: TregReceipt, error?: string, response?: unknown) => persistReceipt(access.account, receipt, idempotencyKey, input, error, response, access.spend.attribution);
 	const url = new URL(`/call/${spec.endpoint}`, API);
 	for (const [key, value] of Object.entries(spec.query ?? {})) url.searchParams.set(key, value);
 	const headers = new Headers({ 'X-Treg-Token': token, 'Idempotency-Key': idempotencyKey });
@@ -219,7 +222,7 @@ async function callTreg(access: ProviderAccess, spec: CallSpec, input: unknown, 
 		} catch {
 			const receipt = { operation: spec.operation, endpoint: `/call/${spec.endpoint}`, status: 'UNCERTAIN' };
 			const meta = makeMeta(receipt, null);
-			await persistReceipt(access.account, receipt, idempotencyKey, input, 'Treg did not confirm the call; safe retry key retained.');
+			await saveReceipt(receipt, 'Treg did not confirm the call; safe retry key retained.');
 			throw new TregCallError('Treg did not confirm this call. Its idempotency key is saved for a safe retry; check Treg call history before retrying.', failure('timeout', 'treg', false), meta, idempotencyKey);
 		}
 	}
@@ -228,25 +231,25 @@ async function callTreg(access: ProviderAccess, spec: CallSpec, input: unknown, 
 	if (response.headers.get('x-treg-error') === '1') {
 		const refusal = ownTregRefusal(data, response.status);
 		receipt = { ...receipt, status: 'FAILED' };
-		await persistReceipt(access.account, receipt, idempotencyKey, input, refusal.message, data);
+		await saveReceipt(receipt, refusal.message, data);
 		throw new TregCallError(refusal.message, refusal.failure, makeMeta(receipt, data), idempotencyKey);
 	}
 	if (!response.ok && response.status !== 202) {
 		const message = str(obj(data).detail ?? obj(data).error ?? obj(data).message) || `Treg request failed (${response.status}).`;
-		await persistReceipt(access.account, receipt, idempotencyKey, input, message, data);
+		await saveReceipt(receipt, message, data);
 		throw new TregCallError(message, httpFailure(response.status, 'treg', message), makeMeta(receipt, data), idempotencyKey);
 	}
 	if (['failed', 'error', 'cancelled', 'canceled', 'timeout', 'timed_out'].includes(receipt.status.toLowerCase())) {
 		const message = str(obj(data).detail ?? obj(data).error ?? obj(data).message) || `Treg call ended with status ${receipt.status}.`;
 		receipt = { ...receipt, status: receipt.status.toUpperCase() };
-		await persistReceipt(access.account, receipt, idempotencyKey, input, message, data);
+		await saveReceipt(receipt, message, data);
 		throw new TregCallError(message, failure(receipt.status.toLowerCase().includes('timeout') ? 'timeout' : 'provider_error', 'treg', false), makeMeta(receipt, data), idempotencyKey);
 	}
 	const asyncRun = response.status === 202 || ['true', '1', 'yes'].includes((response.headers.get('x-treg-async') ?? '').toLowerCase());
 	if (asyncRun && !receipt.callId) {
 		receipt = { ...receipt, status: 'UNCERTAIN' };
 		const message = 'Treg accepted an asynchronous call without returning a call ID. It was not resubmitted; check Treg call history before retrying.';
-		await persistReceipt(access.account, receipt, idempotencyKey, input, message, data);
+		await saveReceipt(receipt, message, data);
 		throw new TregCallError(message, failure('timeout', 'treg', false), makeMeta(receipt, data), idempotencyKey);
 	}
 	if (asyncRun && receipt.callId) {
@@ -261,7 +264,7 @@ async function callTreg(access: ProviderAccess, spec: CallSpec, input: unknown, 
 			} catch (cause) {
 				const message = cause instanceof Error ? cause.message : 'Treg run status check failed.';
 				receipt = { ...receipt, status: 'UNCERTAIN' };
-				await persistReceipt(access.account, receipt, idempotencyKey, input, message);
+				await saveReceipt(receipt, message);
 				throw new TregCallError(`Treg created run ${receipt.callId}, but its status could not be checked. It was not resubmitted; retry safely with the saved idempotency key.`, failure('timeout', 'treg', false), makeMeta(receipt, null), idempotencyKey);
 			}
 			const polled = await jsonResponse(poll);
@@ -270,13 +273,13 @@ async function callTreg(access: ProviderAccess, spec: CallSpec, input: unknown, 
 			if (!poll.ok) {
 				const message = str(obj(polled).detail ?? obj(polled).error ?? obj(polled).message) || `Treg run status check failed (${poll.status}).`;
 				receipt = { ...receipt, status: 'UNCERTAIN' };
-				await persistReceipt(access.account, receipt, idempotencyKey, input, message, polled);
+				await saveReceipt(receipt, message, polled);
 				throw new TregCallError(message, httpFailure(poll.status, 'treg', message), makeMeta(receipt, polled), idempotencyKey);
 			}
 			if (['failed', 'error', 'cancelled', 'canceled', 'timeout', 'timed_out'].includes(pollStatus)) {
 				receipt = { ...receipt, status: pollStatus.toUpperCase() };
 				const message = str(obj(polled).detail ?? obj(polled).error ?? obj(polled).message) || `Treg run ended with status ${pollStatus}.`;
-				await persistReceipt(access.account, receipt, idempotencyKey, input, message, polled);
+				await saveReceipt(receipt, message, polled);
 				throw new TregCallError(message, failure(pollStatus.includes('timeout') ? 'timeout' : 'provider_error', 'treg', false), makeMeta(receipt, polled), idempotencyKey);
 			}
 			data = polled;
@@ -286,11 +289,11 @@ async function callTreg(access: ProviderAccess, spec: CallSpec, input: unknown, 
 		}
 		if (!terminal) {
 			receipt = { ...receipt, status: 'RUNNING' };
-			await persistReceipt(access.account, receipt, idempotencyKey, input, 'Treg async run is still active; not resubmitted.', data);
+			await saveReceipt(receipt, 'Treg async run is still active; not resubmitted.', data);
 			throw new TregCallError(`Treg run ${receipt.callId} is still active. It was not resubmitted; retry safely with the saved idempotency key.`, failure('timeout', 'treg', false), makeMeta(receipt, data), idempotencyKey);
 		}
 	}
-	await persistReceipt(access.account, receipt, idempotencyKey, input, undefined, data);
+	await saveReceipt(receipt, undefined, data);
 	return { data, meta: makeMeta(receipt, data) };
 }
 

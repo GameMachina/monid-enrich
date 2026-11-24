@@ -34,7 +34,7 @@ Implement customer-facing identity for this product rather than assuming the off
 
 Audit every page, API route, MCP tool, realtime subscription, connection-management endpoint, and usage report for workspace scoping. Define which credentials are personal, workspace-shared, or operator-owned. Enforce role checks for billing, member management, secret changes, and destructive operations. Add explicit CSRF/origin protections for cookie-authenticated mutations and abuse limits for unauthenticated or expensive entry points. Review server-side URL fetching for SSRF protections.
 
-**Status: Partial.** Admin checks now protect billing, workspace export/closure, shared settings, Treg billing/connections, and MCP key management. Existing workspace-scoped stores remain the authorization boundary; a request limiter protects provider-backed routes. Complete a route-by-route authorization and SSRF review and add cross-workspace and hostile-origin tests before launch.
+**Status: Partial.** Admin checks now protect billing, workspace export/closure, shared settings, Treg billing/connections, usage reports, and MCP key management. Existing workspace-scoped stores remain the authorization boundary; managed/self-hosted write requests have same-origin checks and provider-backed routes have request limits. A static route/fetch boundary review is recorded in [authorization review](authorization-review.md). Cross-workspace, stale-session, OAuth replay, and hostile-origin staging tests plus an independent SSRF review remain launch gates.
 
 **Done when:** automated cross-workspace tests prove one workspace cannot read, edit, enrich, export, or spend from another workspace; every privileged action checks role on the server; cookie-authenticated writes reject hostile origins; provider secrets and raw upstream payloads never reach browser responses or logs.
 
@@ -118,9 +118,9 @@ Maintain a capability matrix derived from current Monid/Treg catalogs and OAuth/
 
 ### P1.3 Usage and cost reporting
 
-**Status: Partial.** Per-provider receipts are retained and included in workspace export; searchable admin usage reports and reconciliation are still needed.
+**Status: Partial.** Workspace-admin usage reports now filter by provider, operation/search text, member, sheet, time, and status, paginate receipts, and export up to 10,000 matching rows to CSV. Monid and Treg totals stay separate. Migration `021_provider_usage_attribution.sql` associates new cell receipts with member/sheet/row/column IDs without copying row data or prompts. Older receipts remain unattributed. Provider-reported cost is labeled separately from unknown cost; provider-side reconciliation and settled-versus-estimated semantics remain open.
 
-Give workspace admins searchable, exportable usage records by provider, operation, member, sheet, time, status, and cost where available. Explain estimates versus settled and uncertain cost. Add reconciliation for provider usage that differs from app receipts. Do not show Treg balance as Monid balance or app subscription as provider credits.
+Remaining: reconcile app receipts against each provider's billing data; clarify which amounts are estimates, settled charges, or uncertain; and add automated mismatch alerts. Do not show Treg balance as Monid balance or app subscription as provider credits.
 
 ### P1.4 Onboarding and activation
 

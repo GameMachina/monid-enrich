@@ -49,6 +49,8 @@ export class Spend {
 	paid = false;
 	credits = 0;
 	costUsd = 0;
+	/** Workspace-local attribution only. Never contains row values or prompts. */
+	attribution?: { actorId?: string; sheetId?: string; rowId?: string; columnId?: string };
 	monidRuns: Array<{ runId?: string; provider: string; endpoint: string; status: string; costUsd?: number; billedUnits?: number; price?: { type?: string; amount?: number; currency?: string }; resultCount?: number; completedAt?: string }> = [];
 	record(credits = 0) { this.paid = true; this.credits += credits; }
 	recordMonid(run: { runId?: string; provider: string; endpoint: string; status: string; costUsd?: number; billedUnits?: number; price?: { type?: string; amount?: number; currency?: string }; resultCount?: number; completedAt?: string }) {

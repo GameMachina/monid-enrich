@@ -106,7 +106,7 @@ async function processClaimed(database: Database, job: Job) {
 	let access: Awaited<ReturnType<typeof mcpAccess>> | undefined;
 	try {
 		access = await mcpAccess(new Headers(), actor, new OrganizationStore(database));
-		result = await runOp(access, plan.op, plan.record, { idempotencyKey: job.idempotency_key });
+		result = await runOp(access, plan.op, plan.record, { idempotencyKey: job.idempotency_key, runContext: { sheetId: job.sheet_id, rowId: job.row_id, columnId: job.column_id } });
 	} catch (error) {
 		const safe = access?.redact(error) ?? 'The provider connection could not be loaded for this workspace.';
 		result = { value: null, error: safe, failure: { reason: 'credential_missing', retryable: false }, meta: { dataProvider: 'dataProvider' in plan.op ? plan.op.dataProvider : undefined } };

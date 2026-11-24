@@ -221,7 +221,7 @@ async function parseResponse(response: Response): Promise<MonidRun> {
 	return body as MonidRun;
 }
 
-async function persistRun(actor: Account | undefined, run: MonidRun, input: MonidInput, apiKey: string, costUsd?: number) {
+async function persistRun(actor: Account | undefined, run: MonidRun, input: MonidInput, apiKey: string, costUsd?: number, attribution?: { actorId?: string; sheetId?: string; rowId?: string; columnId?: string }) {
 	if (!actor || !run.runId) return;
 	const inputHash = createHash('sha256').update(JSON.stringify(input)).digest('hex');
 	const now = Date.now();
@@ -229,10 +229,10 @@ async function persistRun(actor: Account | undefined, run: MonidRun, input: Moni
 	const createdAt = Number.isFinite(reportedCreatedAt) ? reportedCreatedAt : now;
 	const error = run.providerResponse?.error === undefined ? null : (JSON.stringify(run.providerResponse.error) ?? String(run.providerResponse.error)).replaceAll(apiKey, '[redacted]').slice(0, 2000);
 	await withDatabase((database) => database.transaction(async (sql, workspace) => {
-		await sql.query(`INSERT INTO enrichable.monid_runs (workspace_id,run_id,provider,endpoint,status,input_hash,cost_usd,billed_units,price,result_count,error,created_at,updated_at)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11::jsonb,$12,$13)
-			ON CONFLICT (workspace_id,run_id) DO UPDATE SET status=excluded.status,cost_usd=excluded.cost_usd,billed_units=excluded.billed_units,price=excluded.price,result_count=excluded.result_count,error=excluded.error,updated_at=excluded.updated_at`,
-		[workspace, run.runId, run.provider, run.endpoint, run.status, inputHash, costUsd ?? null, run.billedUnits ?? null, JSON.stringify(run.price ?? null), run.resultCount ?? null, JSON.stringify(error), createdAt, now]);
+		await sql.query(`INSERT INTO enrichable.monid_runs (workspace_id,run_id,provider,endpoint,status,input_hash,cost_usd,billed_units,price,result_count,error,created_at,updated_at,actor_id,sheet_id,row_id,column_id)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11::jsonb,$12,$13,$14,$15,$16,$17)
+			ON CONFLICT (workspace_id,run_id) DO UPDATE SET status=excluded.status,cost_usd=excluded.cost_usd,billed_units=excluded.billed_units,price=excluded.price,result_count=excluded.result_count,error=excluded.error,updated_at=excluded.updated_at,actor_id=COALESCE(excluded.actor_id,enrichable.monid_runs.actor_id),sheet_id=COALESCE(excluded.sheet_id,enrichable.monid_runs.sheet_id),row_id=COALESCE(excluded.row_id,enrichable.monid_runs.row_id),column_id=COALESCE(excluded.column_id,enrichable.monid_runs.column_id)`,
+		[workspace, run.runId, run.provider, run.endpoint, run.status, inputHash, costUsd ?? null, run.billedUnits ?? null, JSON.stringify(run.price ?? null), run.resultCount ?? null, JSON.stringify(error), createdAt, now, attribution?.actorId ?? actor.user.id, attribution?.sheetId ?? null, attribution?.rowId ?? null, attribution?.columnId ?? null]);
 	}, { workspace: actor }));
 }
 
@@ -266,7 +266,7 @@ export async function runMonid(apiKey: string, provider: string, endpoint: strin
 	}
 	if (!run.runId) throw new MonidError('Monid returned no run ID. The result could not be confirmed; it was not retried.', response.status, undefined, true, run);
 	options.spend?.recordMonid({ runId: run.runId, provider, endpoint, status: run.status, costUsd: costOf(run), billedUnits: run.billedUnits, price: run.price, resultCount: run.resultCount ?? undefined, completedAt: run.completedAt });
-	try { await persistRun(options.actor, run, input, apiKey, costOf(run)); }
+	try { await persistRun(options.actor, run, input, apiKey, costOf(run), options.spend?.attribution); }
 	catch (cause) { throw new MonidError(`Monid created run ${run.runId}, but its receipt could not be saved. It was not resubmitted; check this run in Monid before retrying.`, undefined, run.runId, true, cause); }
 	const started = Date.now();
 	while (response.status === 202 || !TERMINAL.has(run.status)) {
@@ -282,7 +282,7 @@ export async function runMonid(apiKey: string, provider: string, endpoint: strin
 		}
 		response = poll;
 		options.spend?.recordMonid({ runId: run.runId, provider, endpoint, status: run.status, costUsd: costOf(run), billedUnits: run.billedUnits, price: run.price, resultCount: run.resultCount ?? undefined, completedAt: run.completedAt });
-		await persistRun(options.actor, run, input, apiKey, costOf(run)).catch(() => {});
+		await persistRun(options.actor, run, input, apiKey, costOf(run), options.spend?.attribution).catch(() => {});
 	}
 	const costUsd = costOf(run);
 	options.spend?.recordMonid({ runId: run.runId, provider, endpoint, status: run.status, costUsd, billedUnits: run.billedUnits, price: run.price, resultCount: run.resultCount ?? undefined, completedAt: run.completedAt });

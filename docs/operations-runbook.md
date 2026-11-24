@@ -27,6 +27,13 @@ This runbook covers first response for a managed deployment. It does not replace
 
 The current worker processes cell jobs only. Find rows is not durable yet. A per-minute Vercel Cron schedule depends on an eligible Vercel plan.
 
+## Provider usage mismatch
+
+1. Use **Configuration → Provider usage** as a workspace admin to filter by provider, run status, time, member, sheet, or run ID. Each receipt carries a provider run/call ID when the upstream response supplied one.
+2. Compare app receipt costs with the provider's own billing/usage page. An absent cost means the provider did not report one in the receipt; it does not mean the run was free.
+3. Resolve uncertain or mismatched runs with the provider before retrying. Do not combine Monid and Treg totals or treat the app's product subscription as provider funds.
+4. New cell runs include attribution IDs after migration `021_provider_usage_attribution.sql`; older receipts are not backfilled.
+
 ## Stripe webhook or subscription mismatch
 
 1. Check Stripe's event delivery and the app's `stripe_webhook_events`/workspace subscription state.

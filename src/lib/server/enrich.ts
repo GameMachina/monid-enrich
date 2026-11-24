@@ -67,10 +67,11 @@ function tregCall(run: Run, endpoint: string, method: 'GET' | 'POST', input: Rec
 }
 
 /** Run one column operation for one row. Never throws: errors come back as { error }. */
-export async function runOp(access: ProviderAccess, op: ColumnOp, row: Row, options: { idempotencyKey?: string; signal?: AbortSignal } = {}): Promise<EnrichResponse> {
+export async function runOp(access: ProviderAccess, op: ColumnOp, row: Row, options: { idempotencyKey?: string; signal?: AbortSignal; runContext?: { sheetId: string; rowId: string; columnId: string } } = {}): Promise<EnrichResponse> {
 	const started = Date.now();
 	// Everything this run asks of a provider, company research included, is recorded here by the clients themselves.
 	const spend = new Spend();
+	spend.attribution = { ...(access.account ? { actorId: access.account.user.id } : {}), ...options.runContext };
 	const run: Run = { access: access.withSpend(spend), sources: new Set(), companyContext: '', tregMeta: {} };
 	try {
 		// Company context is currently researched through Monid in Settings. A Treg-selected run must never make that hidden Monid request.

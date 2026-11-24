@@ -26,6 +26,6 @@ export async function POST(request: Request) {
 			return jsonError(error instanceof Error ? error.message : 'Could not queue this enrichment.', error instanceof WorkspaceError ? error.status : 503);
 		}
 	}
-	const result = await runOp(prepared.access, prepared.input.op, prepared.input.row, { idempotencyKey: prepared.input.idempotencyKey, signal: request.signal });
+	const result = await runOp(prepared.access, prepared.input.op, prepared.input.row, { idempotencyKey: prepared.input.idempotencyKey, signal: request.signal, runContext: prepared.input.runContext });
 	return new Response(JSON.stringify(result), { status: 200, headers: NO_STORE_HEADERS });
 }

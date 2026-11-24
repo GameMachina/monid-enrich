@@ -3,7 +3,7 @@
 import Dexie from 'dexie';
 import { ExternalLink } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { accountHeaders, accountStorageKey } from '@/lib/account-storage';
 import { importMyLocalSheets } from '@/lib/db';
 import type { Settings } from '@/lib/keys';
@@ -33,6 +33,7 @@ export function SettingsPage() {
 			<AgentWebConnection />
 			<MonidWallet />
 			<TregWallet />
+			{!selfHosted && <ProviderUsage />}
 			{!selfHosted && <SubscriptionBilling />}
 			<MobilePhoneProviderSettings />
 			<Defaults />
@@ -41,6 +42,106 @@ export function SettingsPage() {
 			{!selfHosted && <LegacySheetsImport />}
 		</PageColumn>
 	);
+}
+
+type UsageRecord = {
+	provider: 'monid' | 'treg'; id: string; integration: string | null; operation: string; endpoint: string; status: string;
+	costUsd: number | null; billedUnits: number | null; costMicroUsd: number | null; actorId: string | null;
+	sheetId: string | null; sheetName: string | null; rowId: string | null; columnId: string | null; createdAt: number;
+};
+type UsageReport = {
+	page: number; pageSize: number; total: number; reportedCostUsd: number; unknownCostCount: number; truncated?: boolean;
+	byProvider: Array<{ provider: string; count: number; reportedCostCount: number; unknownCostCount: number; reportedCostUsd: number }>;
+	records: UsageRecord[];
+};
+
+function csvCell(value: unknown) {
+	let text = value === null || value === undefined ? '' : String(value);
+	if (/^[\s]*[=+\-@\t\r]/.test(text)) text = `'${text}`;
+	return `"${text.replaceAll('"', '""')}"`;
+}
+
+function ProviderUsage() {
+	const { workspaceAdmin } = useSettings();
+	const [provider, setProvider] = useState('all');
+	const [status, setStatus] = useState('');
+	const [search, setSearch] = useState('');
+	const [memberId, setMemberId] = useState('');
+	const [sheetId, setSheetId] = useState('');
+	const [fromDate, setFromDate] = useState('');
+	const [untilDate, setUntilDate] = useState('');
+	const [page, setPage] = useState(1);
+	const [report, setReport] = useState<UsageReport | null>(null);
+	const [busy, setBusy] = useState(false);
+	const [exporting, setExporting] = useState(false);
+	const [error, setError] = useState('');
+	const [notice, setNotice] = useState('');
+
+	const queryString = useCallback((exportAll = false) => {
+		const params = new URLSearchParams();
+		if (provider !== 'all') params.set('provider', provider);
+		if (status.trim()) params.set('status', status.trim());
+		if (search.trim()) params.set('q', search.trim());
+		if (memberId.trim()) params.set('actorId', memberId.trim());
+		if (sheetId.trim()) params.set('sheetId', sheetId.trim());
+		if (fromDate) params.set('from', String(new Date(`${fromDate}T00:00:00`).getTime()));
+		if (untilDate) params.set('until', String(new Date(`${untilDate}T00:00:00`).getTime() + 86_400_000));
+		if (exportAll) params.set('export', '1'); else params.set('page', String(page));
+		return params.toString();
+	}, [provider, status, search, memberId, sheetId, fromDate, untilDate, page]);
+
+	useEffect(() => {
+		if (!workspaceAdmin) return;
+		const controller = new AbortController();
+		const timer = setTimeout(() => {
+			setBusy(true); setError('');
+			fetch(`/api/usage?${queryString()}`, { headers: accountHeaders(), cache: 'no-store', signal: controller.signal }).then(async (response) => {
+				const data = await response.json().catch(() => null) as UsageReport & { error?: string } | null;
+				if (!response.ok || !data) throw new Error(data?.error || 'Could not load provider usage.');
+				setReport(data);
+			}).catch((cause: unknown) => { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'Could not load provider usage.'); }).finally(() => { if (!controller.signal.aborted) setBusy(false); });
+		}, 250);
+		return () => { clearTimeout(timer); controller.abort(); };
+	}, [workspaceAdmin, queryString]);
+
+	async function exportCsv() {
+		setExporting(true); setError(''); setNotice('');
+		try {
+			const response = await fetch(`/api/usage?${queryString(true)}`, { headers: accountHeaders(), cache: 'no-store' });
+			const data = await response.json().catch(() => null) as UsageReport & { error?: string } | null;
+			if (!response.ok || !data) throw new Error(data?.error || 'Could not export provider usage.');
+			const headers = ['Provider', 'Integration', 'Operation', 'Endpoint', 'Status', 'Reported cost USD', 'Monid billed units', 'Treg cost micro USD', 'Member ID', 'Sheet', 'Sheet ID', 'Row ID', 'Column ID', 'Provider run ID', 'Created at'];
+			const rows = data.records.map((item) => [item.provider, item.integration, item.operation, item.endpoint, item.status, item.costUsd, item.billedUnits, item.costMicroUsd, item.actorId, item.sheetName, item.sheetId, item.rowId, item.columnId, item.id, new Date(item.createdAt).toISOString()]);
+			const csv = [headers, ...rows].map((row) => row.map(csvCell).join(',')).join('\r\n');
+			const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+			const url = URL.createObjectURL(blob);
+			const link = document.createElement('a'); link.href = url; link.download = 'provider-usage.csv'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+			if (data.truncated) setNotice('The export reached the 10,000 receipt limit. Narrow the filters to export the rest.');
+			else setNotice(`${data.records.length.toLocaleString()} provider receipts exported. Costs are shown only when reported by the provider.`);
+		} catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not export provider usage.'); }
+		finally { setExporting(false); }
+	}
+
+	const monid = report?.byProvider.find((entry) => entry.provider === 'monid');
+	const treg = report?.byProvider.find((entry) => entry.provider === 'treg');
+	if (!workspaceAdmin) return <section aria-labelledby="provider-usage-title" className="glass-card flex flex-col gap-2 px-5 py-5"><h2 id="provider-usage-title" className="text-body text-fg">Provider usage</h2><p className="text-body-sm text-fg-muted">A workspace admin can review Monid and Treg usage. Each provider keeps a separate billing record.</p></section>;
+
+	return <section aria-labelledby="provider-usage-title" className="glass-card flex flex-col gap-4 px-5 py-5">
+		<div className="flex flex-wrap items-start justify-between gap-3"><div className="flex flex-col gap-1"><h2 id="provider-usage-title" className="text-body text-fg">Provider usage</h2><p className="text-body-sm text-fg-muted">Workspace receipts from Monid and Treg. Reported costs are not a substitute for provider-side billing reconciliation.</p></div><Button size="sm" loading={exporting} disabled={!report?.total} onClick={() => void exportCsv()}>Export CSV</Button></div>
+		<div className="grid gap-3 sm:grid-cols-2">{(['Monid', 'Treg'] as const).map((label) => { const item = label === 'Monid' ? monid : treg; return <div key={label} className="rounded-lg border border-line-subtle px-3 py-2.5"><p className="text-caption text-fg-subtle">{label} · separate provider billing</p><p className="text-body-sm text-fg">{item ? `${item.count.toLocaleString()} runs · $${item.reportedCostUsd.toFixed(4)} reported` : '0 runs · $0.0000 reported'}</p>{item?.unknownCostCount ? <p className="text-caption text-warning">Cost not reported for {item.unknownCostCount.toLocaleString()} runs</p> : null}</div>; })}</div>
+		<div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+			<Field label="Provider">{(id) => <Select id={id} value={provider} onValueChange={(value) => { setProvider(value); setPage(1); }}><option value="all">Monid and Treg</option><option value="monid">Monid</option><option value="treg">Treg</option></Select>}</Field>
+			<Field label="Status">{(id) => <Input id={id} value={status} onChange={(event) => { setStatus(event.target.value); setPage(1); }} placeholder="Any status" maxLength={40} />}</Field>
+			<Field label="Search">{(id) => <Input id={id} value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="Operation, sheet, run ID…" maxLength={100} />}</Field>
+			<Field label="Member ID">{(id) => <Input id={id} value={memberId} onChange={(event) => { setMemberId(event.target.value); setPage(1); }} placeholder="Filter by member" maxLength={128} />}</Field>
+			<Field label="Sheet ID">{(id) => <Input id={id} value={sheetId} onChange={(event) => { setSheetId(event.target.value); setPage(1); }} placeholder="Filter by sheet" maxLength={128} />}</Field>
+			<Field label="From">{(id) => <Input id={id} type="date" value={fromDate} onChange={(event) => { setFromDate(event.target.value); setPage(1); }} />}</Field>
+			<Field label="Through">{(id) => <Input id={id} type="date" value={untilDate} onChange={(event) => { setUntilDate(event.target.value); setPage(1); }} />}</Field>
+		</div>
+		{busy && <p role="status" className="text-caption text-fg-subtle">Loading provider receipts…</p>}{error && <p role="alert" className="text-caption text-danger">{error}</p>}{notice && <p role="status" className="text-caption text-success">{notice}</p>}
+		<div className="overflow-x-auto rounded-lg border border-line-subtle"><table className="w-full min-w-[900px] text-left text-caption"><thead className="bg-tint/[0.03] text-fg-subtle"><tr>{['Time', 'Provider', 'Operation', 'Status', 'Reported cost', 'Member', 'Sheet / cell', 'Run ID'].map((heading) => <th key={heading} className="px-3 py-2 font-medium">{heading}</th>)}</tr></thead><tbody>{report?.records.map((item) => <tr key={`${item.provider}:${item.id}`} className="border-t border-line-subtle"><td className="whitespace-nowrap px-3 py-2 text-fg-muted">{new Date(item.createdAt).toLocaleString()}</td><td className="px-3 py-2 font-medium text-fg">{item.provider === 'monid' ? 'Monid' : 'Treg'}{item.integration ? <span className="block font-normal text-fg-subtle">{item.integration}</span> : null}</td><td className="px-3 py-2 text-fg-muted" title={item.endpoint}>{item.operation}</td><td className="px-3 py-2 text-fg-muted">{item.status}</td><td className="px-3 py-2 text-fg-muted">{item.costUsd === null ? 'Not reported' : `$${item.costUsd.toFixed(4)}`}</td><td className="px-3 py-2 font-mono text-fg-subtle">{item.actorId ?? '—'}</td><td className="px-3 py-2 text-fg-muted">{item.sheetName ?? item.sheetId ?? '—'}{item.rowId && <span className="block text-fg-subtle">row {item.rowId} · column {item.columnId ?? '—'}</span>}</td><td className="max-w-44 truncate px-3 py-2 font-mono text-fg-subtle" title={item.id}>{item.id}</td></tr>)}</tbody></table>{report && !report.records.length && !busy && <p className="px-3 py-5 text-center text-body-sm text-fg-subtle">No provider receipts match these filters.</p>}</div>
+		<div className="flex flex-wrap items-center justify-between gap-2"><p className="text-caption text-fg-subtle">{report ? `${report.total.toLocaleString()} receipts · ${report.unknownCostCount.toLocaleString()} costs not reported` : 'Usage will appear after the first provider call.'} · Historical receipts may not have member or cell attribution.</p><div className="flex items-center gap-2"><Button size="sm" disabled={page <= 1 || busy} onClick={() => setPage((current) => Math.max(1, current - 1))}>Previous</Button><span className="text-caption text-fg-subtle">Page {page}</span><Button size="sm" disabled={!report || page * report.pageSize >= report.total || busy} onClick={() => setPage((current) => current + 1)}>Next</Button></div></div>
+	</section>;
 }
 
 function WorkspaceData() {
