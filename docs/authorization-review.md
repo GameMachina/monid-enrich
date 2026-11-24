@@ -20,6 +20,7 @@ Static source review performed 2026-11-24. This documents the current managed-ap
 | `/api/mcp-key` writes | Workspace owner/admin |
 | `/api/workspace/export`, `/api/workspace` delete | Workspace owner/admin |
 | `/api/usage` | Workspace owner/admin; provider receipts remain workspace-scoped |
+| `/api/audit` | Workspace owner/admin; returns at most 100 metadata-only activity records |
 
 Sheet reads/writes, row enrichment, job status/cancellation, member preferences, verification, and provider-backed search use a signed-in workspace member. Per-cell job cancellation additionally requires the job owner or an admin.
 

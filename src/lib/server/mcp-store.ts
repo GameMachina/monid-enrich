@@ -4,6 +4,7 @@ import type { Account } from '../auth-identity';
 import { WorkspaceError } from '../workspace';
 import { decryptSecret, encryptSecret } from './credentials';
 import { workspaceId, type Database } from './database';
+import { appendWorkspaceAuditEvent } from './workspace-audit';
 
 export const hashMcpSecret = (value: string) => createHash('sha256').update(value).digest('hex');
 export type McpKeyInfo = { prefix: string; version: string; createdAt: number; recoverable: boolean };
@@ -46,6 +47,7 @@ export class McpStore {
 			const secret = `enr_mcp_${randomBytes(32).toString('base64url')}`;
 			const info = { prefix: secret.slice(0, 16), version: randomUUID(), createdAt: Date.now(), recoverable: true };
 			await sql.query('INSERT INTO enrichable.mcp_keys (workspace_id,key_hash,prefix,version,created_at,encrypted_secret) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (workspace_id) DO UPDATE SET key_hash=excluded.key_hash,prefix=excluded.prefix,version=excluded.version,created_at=excluded.created_at,encrypted_secret=excluded.encrypted_secret', [id, hashMcpSecret(secret), info.prefix, info.version, info.createdAt, encryptSecret(this.encryptionKey(), secret, [id, info.version])]);
+   await appendWorkspaceAuditEvent(sql, id, actor.user.id, expectedVersion === undefined ? 'workspace.mcp_key.create' : 'workspace.mcp_key.rotate', { keyPrefix: info.prefix, version: info.version });
 			return { ...info, secret };
 		}, { workspace: actor });
 	}

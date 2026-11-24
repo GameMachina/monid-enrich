@@ -5,6 +5,7 @@ import { organizationPreferencesSchema, organizationSettingsPatchSchema, type Or
 import { parseInput, WorkspaceError } from '../workspace';
 import { decryptSecret, encryptSecret, ensureSafeEndpoint, safeBaseUrl } from './credentials';
 import type { Database, Sql } from './database';
+import { appendWorkspaceAuditEvent } from './workspace-audit';
 
 /** Signed-in organizations keep settings and connections on the server; production always does, so a missing database fails loudly. */
 export const organizationPersistenceEnabled = (actor: Account | null | undefined) => Boolean(actor && (actor.issuer !== SELF_HOSTED_ISSUER ? process.env.DATABASE_URL || process.env.NODE_ENV === 'production' : process.env.DATABASE_URL));
@@ -60,6 +61,10 @@ export class OrganizationStore {
    }
    await sql.query('UPDATE enrichable.organization_settings SET preferences=$2::jsonb,revision=revision+1 WHERE workspace_id=$1', [workspace, JSON.stringify(preferences)]);
    await this.audit(sql, workspace, actor, args.importOnly ? 'import' : 'update', [...Object.keys(args.preferences ?? {}), ...Object.keys(args.providers ?? {})]);
+   await appendWorkspaceAuditEvent(sql, workspace, actor.user.id, args.importOnly ? 'workspace.settings.import' : 'workspace.settings.update', {
+    preferenceFields: Object.keys(args.preferences ?? {}).sort().join(','),
+    providerFields: Object.keys(args.providers ?? {}).sort().join(','),
+   });
    return this.snapshot(sql, workspace);
   });
  }

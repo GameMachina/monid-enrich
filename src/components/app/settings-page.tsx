@@ -34,6 +34,7 @@ export function SettingsPage() {
 			<MonidWallet />
 			<TregWallet />
 			{!selfHosted && <ProviderUsage />}
+			{!selfHosted && <WorkspaceActivity />}
 			{!selfHosted && <SubscriptionBilling />}
 			<MobilePhoneProviderSettings />
 			<Defaults />
@@ -54,6 +55,34 @@ type UsageReport = {
 	byProvider: Array<{ provider: string; count: number; reportedCostCount: number; unknownCostCount: number; reportedCostUsd: number }>;
 	records: UsageRecord[];
 };
+
+type AuditEvent = { id: string; actorId: string; action: string; details: Record<string, string | number | boolean | null>; createdAt: string };
+
+function WorkspaceActivity() {
+	const { workspaceAdmin } = useSettings();
+	const [events, setEvents] = useState<AuditEvent[]>([]);
+	const [busy, setBusy] = useState(true);
+	const [error, setError] = useState('');
+
+	useEffect(() => {
+		if (!workspaceAdmin) return;
+		const controller = new AbortController();
+		fetch('/api/audit', { headers: accountHeaders(), cache: 'no-store', signal: controller.signal }).then(async (response) => {
+			const data = await response.json().catch(() => null) as { events?: AuditEvent[]; error?: string } | null;
+			if (!response.ok || !data) throw new Error(data?.error || 'Could not load workspace activity.');
+			setEvents(data.events ?? []);
+		}).catch((cause: unknown) => { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'Could not load workspace activity.'); }).finally(() => { if (!controller.signal.aborted) setBusy(false); });
+		return () => controller.abort();
+	}, [workspaceAdmin]);
+
+	if (!workspaceAdmin) return <section aria-labelledby="workspace-activity-title" className="glass-card flex flex-col gap-2 px-5 py-5"><h2 id="workspace-activity-title" className="text-body text-fg">Workspace activity</h2><p className="text-body-sm text-fg-muted">A workspace admin can review recent shared settings and key changes.</p></section>;
+	return <section aria-labelledby="workspace-activity-title" className="glass-card flex flex-col gap-3 px-5 py-5">
+		<div><h2 id="workspace-activity-title" className="text-body text-fg">Workspace activity</h2><p className="text-body-sm text-fg-muted">Recent administrative changes. Credential values and sheet contents are never included.</p></div>
+		{busy && <p role="status" className="text-caption text-fg-subtle">Loading activity…</p>}{error && <p role="alert" className="text-caption text-danger">{error}</p>}
+		<div className="overflow-x-auto rounded-lg border border-line-subtle"><table className="w-full min-w-[680px] text-left text-caption"><thead className="bg-tint/[0.03] text-fg-subtle"><tr>{['Time', 'Action', 'Member ID', 'Details'].map((heading) => <th key={heading} className="px-3 py-2 font-medium">{heading}</th>)}</tr></thead><tbody>{events.map((event) => <tr key={event.id} className="border-t border-line-subtle"><td className="whitespace-nowrap px-3 py-2 text-fg-muted">{new Date(event.createdAt).toLocaleString()}</td><td className="px-3 py-2 font-medium text-fg">{event.action}</td><td className="px-3 py-2 font-mono text-fg-subtle">{event.actorId}</td><td className="px-3 py-2 text-fg-muted">{Object.entries(event.details).map(([key, value]) => `${key}: ${String(value)}`).join(' · ') || '—'}</td></tr>)}</tbody></table>{!events.length && !busy && !error && <p className="px-3 py-5 text-center text-body-sm text-fg-subtle">No administrative activity recorded yet.</p>}</div>
+		<p className="text-caption text-fg-subtle">Showing the most recent 100 events. Member invitation and role changes are managed by Clerk and are not yet mirrored here.</p>
+	</section>;
+}
 
 function csvCell(value: unknown) {
 	let text = value === null || value === undefined ? '' : String(value);

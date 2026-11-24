@@ -72,7 +72,7 @@ Before a staged release:
 7. Export a synthetic workspace and close a disposable workspace; inspect the export and retention behavior.
 8. Confirm backup restore, rollback, alerts, and incident ownership before inviting real customers.
 
-Workspace owners and admins can review provider receipts in **Configuration → Provider usage**. The report keeps Monid and Treg charges separate, supports provider/status/date/member/sheet filters, and exports up to 10,000 matching rows. New cell runs include member and cell IDs; receipts from before migration `021_provider_usage_attribution.sql` are shown without attribution. Costs are only what a provider reported to the app; reconcile against each provider's billing records before treating them as settled totals.
+Workspace owners and admins can review provider receipts in **Configuration → Provider usage**. The report keeps Monid and Treg charges separate, supports provider/status/date/member/sheet filters, and exports up to 10,000 matching rows. New cell runs include member and cell IDs; receipts from before migration `021_provider_usage_attribution.sql` are shown without attribution. Costs are only what a provider reported to the app; reconcile against each provider's billing records before treating them as settled totals. **Configuration → Workspace activity** shows the latest 100 recorded exports, closure, shared-settings, and MCP-key changes; Clerk membership and billing/provider lifecycle events are not yet mirrored there.
 
 Health endpoints intentionally omit detailed infrastructure errors. Use Vercel, Neon, Stripe, and Clerk operator logs to investigate. See the [authorization review](authorization-review.md) for route boundaries and the [operations runbook](operations-runbook.md) for safe recovery guidance.
 
@@ -81,6 +81,7 @@ Health endpoints intentionally omit detailed infrastructure errors. Use Vercel, 
 - Find rows is still request/browser coordinated; only individual enrichment cells use the durable job table.
 - Request-rate limits do not enforce hard dollar spend caps, concurrent spend reservations, or budget alerts.
 - Provider usage reporting does not reconcile receipts with Monid/Treg billing ledgers or distinguish provider-specific estimated and settled cost states beyond the receipt status.
+- Workspace activity does not yet include Clerk membership changes or billing/provider connection lifecycle events.
 - There is no production backup/restore drill, centralized error monitoring, service SLO, status page, or staffed support process yet.
 - Workspace export excludes credentials and is capped at 50 MB. Workspace closure retains provider usage receipts and Stripe reconciliation records. Personal AgentWeb credentials do not belong to workspace deletion.
 - Privacy terms, customer terms, subprocessors/DPA, retention schedule, and legal hold policy must be reviewed and published by the operator.
