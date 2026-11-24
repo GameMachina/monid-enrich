@@ -89,4 +89,9 @@ export class McpStore {
 	async finish(actor: Account, id: string, result: Record<string, unknown>) {
 		await this.database.transaction(async (sql) => { await sql.query("UPDATE enrichable.mcp_attempts SET status='finished', result=$3::jsonb WHERE workspace_id=$1 AND id=$2 AND status='running'", [workspaceId(actor), id, JSON.stringify(result)]); });
 	}
+	async progress(actor: Account, id: string, result: Record<string, unknown>) {
+		await this.database.transaction(async (sql) => {
+			await sql.query("UPDATE enrichable.mcp_attempts SET result=$3::jsonb WHERE workspace_id=$1 AND id=$2 AND status='running'", [workspaceId(actor), id, JSON.stringify(result)]);
+		});
+	}
 }

@@ -321,7 +321,10 @@ export class McpOperations {
 		}
 		const outcomes: CellOutcome[] = [];
 		try {
-			for await (const outcome of this.enrichRows(args.sheetId, args.rowIds, args.columnId, args.overwrite, worstCase, args.idempotencyKey)) outcomes.push(outcome);
+			for await (const outcome of this.enrichRows(args.sheetId, args.rowIds, args.columnId, args.overwrite, worstCase, args.idempotencyKey)) {
+				outcomes.push(outcome);
+				await this.keys.progress(this.actor, args.idempotencyKey, { status: 'running', outcomes, completedRows: outcomes.length, totalRows: args.rowIds.length });
+			}
 			const result = { status: 'finished', outcomes, revision: (await this.sheets.get(this.actor, args.sheetId)).sheet.revision };
 			await this.keys.finish(this.actor, args.idempotencyKey, result);
 			return result;

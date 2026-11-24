@@ -81,7 +81,7 @@ Health endpoints intentionally omit detailed infrastructure errors. Use Vercel, 
 
 ## Known launch gaps
 
-- Managed Find rows and individual enrichment cells use durable Postgres jobs and a shared pool of up to 20 active provider workers. Self-hosted Find rows remains request-streamed. MCP bulk work does not yet use this durable queue.
+- Managed Find rows and individual enrichment cells use durable Postgres jobs and a shared pool of up to 20 active provider workers. Self-hosted Find rows remains request-streamed. MCP bulk calls persist completed cell progress for same-key polling, but do not have an independent worker and do not resume automatically after interruption.
 - Request-rate limits do not enforce hard dollar spend caps, concurrent spend reservations, or budget alerts.
 - Credential rotation code is staged and bounded, but no production rotation rehearsal has been performed. Keep the previous root available until the rotation endpoint reports zero remaining rows and a post-rotation connection check succeeds.
 - Provider usage reporting does not reconcile receipts with Monid/Treg billing ledgers or distinguish provider-specific estimated and settled cost states beyond the receipt status.
