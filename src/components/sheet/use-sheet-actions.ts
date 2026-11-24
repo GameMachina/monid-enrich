@@ -58,7 +58,7 @@ export function useSheetActions({ sheet, commands, content, selection, overlays,
 		if (plan.kind === 'nothing') { toast(NOTHING_TO_RUN[plan.reason], 'info'); return; }
 		const { estimate } = plan;
 		if (!asksFirst(estimate, seen)) { void plan.execute().catch(report('Could not queue these cells. Please try again.')); return; }
-		setConfirm({ title: `Run ${plural(estimate.cells, 'cell')}?`, description: `${estimate.message}. Each selected data provider bills its own balance: Monid usage goes to the workspace Monid wallet, Treg usage goes to the separate Treg team balance, and any OpenAI usage is billed separately. Actual provider cost appears in cell details.`, label: 'Run', action: plan.execute });
+		setConfirm({ title: `Run ${plural(estimate.cells, 'cell')}?`, description: `${estimate.message}. Each selected data provider bills its own balance: Monid usage goes to the workspace Monid wallet, Treg usage goes to the separate Treg team balance, and any OpenAI usage is billed separately. Exact dollar totals are not available as a pre-run quote; provider charges can vary by route and match, and a no-match may still cost money. Check each operation’s spend cap where available. Reported usage appears in cell details and Provider usage.`, label: 'Run', action: plan.execute });
 	};
 	const runCells = (targets: Row[], columns: Column[], mode: RunMode, options: { limitToRows?: boolean; optimistic?: boolean } = {}) => request(commands.plan(targets, columns, mode, { ready: providerReady, grid: content.grid, sheetColumns: sheet.columns, ...options }));
 	const confirmDeleteRows = (targets: Row[]) => setConfirm({

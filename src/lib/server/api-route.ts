@@ -53,10 +53,17 @@ export function provideRouteContext(next: ContextSource) {
 	return () => { source = previous; };
 }
 
+/** Next requires the route context parameter to be non-optional for its production route validator. Keep a one-argument
+    overload as a test seam for direct calls to static handlers; the implementation still tolerates an omitted context. */
+export type ApiRouteHandler<Params extends Record<string, string>> = {
+	(request: Request): Promise<Response>;
+	(request: Request, route: { params: Promise<Params> }): Promise<Response>;
+};
+
 /** A signed-in JSON route. The handler's result is the body (`{ ok: true }` when it has none); any error becomes
     failureOf's status and message. Nothing is cached, and every response names its request id. */
 export function apiRoute<Params extends Record<string, string> = Record<string, never>>(operation: string, handler: (context: RouteContext & { request: Request; params: Params }) => Promise<unknown>) {
-	return async (request: Request, route?: { params: Promise<Params> }): Promise<Response> => {
+	const wrapped = async (request: Request, route?: { params: Promise<Params> }): Promise<Response> => {
 		const trace: RequestTrace = { ...newTrace(operation), phase: 'authentication' };
 		try {
 			const data = await source(async (context) => {
@@ -66,6 +73,7 @@ export function apiRoute<Params extends Record<string, string> = Record<string, 
 			return Response.json(data ?? { ok: true }, { headers: { 'Cache-Control': 'no-store', 'x-request-id': trace.requestId } });
 		} catch (error) { return errorResponse(error, trace); }
 	};
+	return wrapped as ApiRouteHandler<Params>;
 }
 
 /** A request's JSON body, bounded; unreadable JSON is the caller's error. */

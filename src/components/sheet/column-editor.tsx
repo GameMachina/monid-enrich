@@ -324,7 +324,7 @@ function editorFooter({ submit, valid, editing, hint, run, onBack, onSave }: { s
 	const cells = plural(estimate.cells, 'cell');
 	return {
 		footer: <><Button size="sm" onClick={onBack}>Back</Button><Button size="sm" variant="primary" className="bg-black text-white" autoFocus onClick={() => onSave({ scope, seen: estimate })}>Run {cells}</Button></>,
-		footerNote: <span role="status" className="flex flex-col gap-0.5"><span className="text-body-sm text-fg">Run {cells}?</span><span>{estimate.message}</span></span>,
+		footerNote: <span role="status" className="flex flex-col gap-0.5"><span className="text-body-sm text-fg">Run {cells}?</span><span>{estimate.message}</span><span>Exact provider cost is not quoted before the run. Charges vary by provider route and match; check the selected provider and any route cap in this column.</span></span>,
 	};
 }
 

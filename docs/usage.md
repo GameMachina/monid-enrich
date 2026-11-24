@@ -34,7 +34,7 @@ While typing in an editor, the shortcuts undo text edits. Background enrichment 
 | Find social | Select LinkedIn, Instagram, Facebook, X, TikTok, or YouTube; search for a matching public profile through the selected provider. | Monid workspace wallet or separate Treg team balance |
 | Formula | **Formula** calculates locally with a 10-row preview. **Text template** combines columns. No API calls. | None |
 
-Runs of more than 50 cells, or roughly 100+ credits, ask for confirmation with a cost estimate first.
+The sheet library shows a first-run checklist when a workspace already has sheets: connect Monid or Treg, then use Find rows for a small search. Find rows is capped at five results per request while testing. Runs larger than 50 cells ask for confirmation. Provider routes and matches can have different prices, and a no-match can still be billable, so the app does not claim an exact pre-run dollar quote. Treg contact columns let you set a maximum route spend per cell; provider-reported usage appears in cell details and **Configuration → Provider usage**. Check the selected provider's wallet and operation settings before a live run.
 
 ## Spreadsheet formulas
 

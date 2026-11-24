@@ -82,7 +82,7 @@ Health endpoints intentionally omit detailed infrastructure errors. Use Vercel, 
 ## Known launch gaps
 
 - Managed Find rows and individual enrichment cells use durable Postgres jobs and a shared pool of up to 20 active provider workers. Self-hosted Find rows remains request-streamed. MCP bulk calls persist completed cell progress for same-key polling, but do not have an independent worker and do not resume automatically after interruption.
-- Request-rate limits do not enforce hard dollar spend caps, concurrent spend reservations, or budget alerts.
+- Request-rate and queue limits do not enforce app-side hard dollar spend caps, concurrent spend reservations, or budget alerts. Managed Monid/Treg usage is charged to the customer's selected provider wallet. Treg contact operations support an upstream route cap per cell; there is no exact app quote for other dynamic provider routes. Confirm wallet limits with the provider and review every run receipt.
 - Credential rotation code is staged and bounded, but no production rotation rehearsal has been performed. Keep the previous root available until the rotation endpoint reports zero remaining rows and a post-rotation connection check succeeds.
 - Provider usage reporting does not reconcile receipts with Monid/Treg billing ledgers or distinguish provider-specific estimated and settled cost states beyond the receipt status.
 - Workspace activity records provider connection updates and Stripe/Treg billing metadata. Personal AgentWeb connection events and provider-side billing reconciliation are not yet mirrored.

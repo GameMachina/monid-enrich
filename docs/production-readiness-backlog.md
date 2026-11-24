@@ -58,7 +58,7 @@ Create persisted jobs for Find rows, bulk cell runs, and other long work. Use a 
 
 Define workspace/member request limits, per-operation maximum cost, active-run limits, and daily/monthly spend caps. Apply server-side preflight checks before provider calls, reserve and settle known usage, retain uncertain charges for reconciliation, and add circuit breakers for exhausted balance, repeated provider failures, and abnormal spend. Keep Monid, Treg, OpenAI, and any future app-funded allowance ledgers separate. Decide whether Treg is user/workspace-owned or platform-funded before enabling a shared platform Treg key.
 
-**Status: Partial.** Atomic per-minute member/workspace request limits and durable-cell queue ceilings (100 active jobs per member, 500 per workspace) are implemented. They are abuse limits, not spend limits: no hard-dollar reservation/settlement or operator-budget alert exists. Keep platform-funded provider keys disabled until those controls are added.
+**Status: Partial.** Atomic per-minute member/workspace request limits and durable-cell queue ceilings (100 active jobs per member, 500 per workspace) are implemented. Treg contact operations can send a user-configured per-cell route spend cap, and runs over 50 cells require confirmation with explicit notice that provider prices are not known as an exact pre-run quote. These are not workspace-wide dollar reservations: Monid/Treg charge their connected customer wallets, provider costs can be absent/uncertain, and no app-side daily/monthly cap or mismatch alert exists. Managed mode accepts workspace-vault provider credentials only; platform-funded Monid/Treg credentials are not part of the managed access path. Provider-side wallet/spend limits remain the hard control until reliable quote/reservation semantics are available.
 
 **Done when:** concurrent requests cannot overspend a cap; every run records its selected provider, workspace, operation, cost/usage, status, and provider run ID where available; users can see a clear estimate/cap before execution and understand who is billed; alerts fire before an operator-funded budget is exhausted.
 
@@ -98,7 +98,7 @@ The app already returns request IDs and redacts unexpected server errors. Add ce
 
 Expand the current CI baseline with production-like staging checks for signup/auth, tenant isolation, paid workflow limits, migrations, provider failures, long jobs, and customer data export/deletion. Add dependency/security scanning and a release checklist. Create a support channel, issue severity definitions, response expectations, and customer-facing setup/troubleshooting docs before enabling public signup.
 
-**Status: Partial.** CI covers lint, types, tests, build, secret-history scanning, CodeQL, dependency update PRs, and a narrow browser smoke. Staging deployment checks, security review, support ownership, and rollback exercise remain launch gates.
+**Status: Partial.** CI covers lint, types, tests, build, secret-history scanning, CodeQL, dependency update PRs, and a narrow browser smoke. Next's production route validator now passes after making the shared API wrapper's route context required in its exported handler type; direct one-argument calls used by test seams remain supported. The production script pins the verified webpack builder because Turbopack stalled in the current workspace. The npm advisory report is now clean after fixing seven moderate development-tooling advisories. Staging deployment checks, security review, support ownership, and rollback exercise remain launch gates.
 
 **Done when:** every release passes staging smoke and migration checks; no test uses production data or paid customer credentials; a support request can be routed and tracked; a rollback and incident owner are named for each release.
 
@@ -124,7 +124,7 @@ Remaining: reconcile app receipts against each provider's billing data; clarify 
 
 ### P1.4 Onboarding and activation
 
-**Status: Partial.** The empty-workspace flow now offers a five-row fictional sample sheet using reserved `.example` domains, so users can inspect the grid without connecting a provider or incurring a data-provider charge. A guided workspace/provider setup checklist, expected-cost preview, safe five-row live trial, and support handoff remain open.
+**Status: Partial.** The empty-workspace flow offers a five-row fictional sample sheet using reserved `.example` domains. A first-run checklist now appears for workspaces with sheets, links to provider setup and a five-row search, and discloses that provider pricing varies and no exact pre-run quote is available. The safe search cap is in place. A provider-backed expected-cost quote and support handoff remain open because provider route prices and workspace support configuration are not available from the app today.
 
 Build a first-run path for workspace creation, imports, a sample sheet, provider connection, a safe five-row trial run, and expected-cost preview. Provide actionable connection and provider error guidance and a route to support. Make the free/sample experience usable without entering an OpenAI key.
 

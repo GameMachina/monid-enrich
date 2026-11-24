@@ -56,6 +56,8 @@ npm run build
 
 `npm test` covers browser-independent behavior and server operations, including SQL against embedded PGlite and mocked providers. It does not require a production database or paid provider keys. The production build downloads the Google fonts configured in `src/app/layout.tsx`, so it needs network access. CI runs these four checks from `npm ci` without deployment secrets. Separate CI jobs scan Git history for secrets and run `npm run test:browser:smoke`, self-hosted agent-access and own-key UI tests with mocked API endpoints and no database. This smoke check does not replace the full live database suite.
 
+`npm run build` pins Next.js to its webpack builder. The default Turbopack production build stalled without progress in the current workspace; Vercel calls this same npm script. The verified webpack build emits top-level-await compatibility warnings from the formula editor's WASM dependencies, so supported browser versions still need an explicit compatibility review.
+
 For browser tests:
 
 ```bash

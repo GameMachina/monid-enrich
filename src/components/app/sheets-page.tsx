@@ -8,10 +8,10 @@ import { ConfirmDialog, Dialog, NameDialog } from '@/components/ui/dialog';
 import { MenuButton } from '@/components/ui/menu';
 import { useToast } from '@/components/ui/toast';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { ArrowUpRight, Copy, MoreHorizontal, Pencil, Plus, Sparkles, Trash2 } from 'lucide-react';
+import { ArrowUpRight, Check, Copy, MoreHorizontal, Pencil, Plus, Sparkles, Trash2, X } from 'lucide-react';
 import Dexie from 'dexie';
 import { useRouter } from 'next/navigation';
-import { useRef, useState, useSyncExternalStore } from 'react';
+import { type ReactNode, useRef, useState, useSyncExternalStore } from 'react';
 import { PageColumn } from './page-header';
 import { useSettings } from './settings-context';
 import { ImportCsvDialog } from '@/components/sheet/import-csv-dialog';
@@ -20,6 +20,7 @@ import { FailureFix, type ConnectionIssue } from '@/components/sheet/halted-bann
 import { populateRunner } from '@/lib/populate-runner';
 import { sheetNameFromPrompt } from '@/lib/populate-limit';
 import { trackEvent } from '@/lib/analytics';
+import { accountStorageKey } from '@/lib/account-storage';
 
 // The sheet page still imports NameDialog from here.
 export { NameDialog };
@@ -135,6 +136,12 @@ export function SheetsPage() {
 					{!!count && <Button variant="brand" size="sm" onClick={() => setDialog('new')} className="max-sm:min-h-11"><Plus strokeWidth={1.75} /> New sheet</Button>}
 				</div>
 			</header>
+			{count > 0 && <FirstRunChecklist
+				hasSheet={count > 0}
+				hasProvider={providerReady('monid') || providerReady('treg')}
+				openSheet={() => setDialog('new')}
+				openConnections={() => openKeys()}
+			/>}
 			{sheets === undefined ? (
 				<div className="grid gap-5 sm:grid-cols-2">
 					{[0, 1, 2].map((index) => <div key={index} className="skeleton h-64 rounded-xl" />)}
@@ -210,6 +217,56 @@ export function SheetsPage() {
 			)}
 		</PageColumn>
 	);
+}
+
+const FIRST_RUN_DISMISSED = 'enrichable.first-run-checklist-dismissed.v1';
+const FIRST_RUN_DISMISSED_EVENT = 'enrichable:first-run-checklist-dismissed';
+
+function subscribeFirstRunDismissed(onChange: () => void) {
+	window.addEventListener(FIRST_RUN_DISMISSED_EVENT, onChange);
+	window.addEventListener('storage', onChange);
+	return () => { window.removeEventListener(FIRST_RUN_DISMISSED_EVENT, onChange); window.removeEventListener('storage', onChange); };
+}
+
+function firstRunDismissed() {
+	try { return window.localStorage.getItem(accountStorageKey(FIRST_RUN_DISMISSED)) === '1'; } catch { return false; }
+}
+
+function FirstRunChecklist({ hasSheet, hasProvider, openSheet, openConnections }: { hasSheet: boolean; hasProvider: boolean; openSheet: () => void; openConnections: () => void }) {
+	const dismissed = useSyncExternalStore(subscribeFirstRunDismissed, firstRunDismissed, () => false);
+	const [hidden, setHidden] = useState(false);
+	if (dismissed || hidden) return null;
+	const complete = Number(hasSheet) + Number(hasProvider);
+	return <section aria-labelledby="first-run-title" className="rounded-xl border border-line bg-surface px-5 py-4 shadow-[0_2px_3px_-2px_rgb(0_0_0/0.06)]">
+		<div className="flex items-start justify-between gap-4">
+			<div className="min-w-0">
+				<h2 id="first-run-title" className="text-body font-medium text-fg">A safe first run</h2>
+				<p className="mt-1 text-body-sm text-fg-muted">Start small. Find rows returns up to 5 per search while testing; review the selected provider before running a paid operation.</p>
+			</div>
+			<button type="button" aria-label="Hide first-run checklist" onClick={() => {
+				setHidden(true);
+				try { window.localStorage.setItem(accountStorageKey(FIRST_RUN_DISMISSED), '1'); window.dispatchEvent(new Event(FIRST_RUN_DISMISSED_EVENT)); } catch { /* Hiding lasts for this view. */ }
+			}} className="grid size-8 shrink-0 place-items-center rounded-lg text-fg-subtle hover:bg-tint/[0.05] hover:text-fg"><X aria-hidden="true" className="size-4" /></button>
+		</div>
+		<ol className="mt-4 grid gap-3 sm:grid-cols-3">
+			<SetupStep done={hasSheet} title="Create or import a sheet" detail={hasSheet ? 'Your workspace has a sheet.' : 'Use fictional sample data or import a file.'} action={!hasSheet ? <><Button size="sm" onClick={openSheet}>Start</Button></> : undefined} />
+			<SetupStep done={hasProvider} title="Connect a data provider" detail={hasProvider ? 'Monid or Treg is connected.' : 'Choose Monid or Treg; their billing stays separate.'} action={!hasProvider ? <Button size="sm" onClick={openConnections}>Connect</Button> : undefined} />
+			<SetupStep done={false} title="Try a small search" detail="A Find rows search is capped at 5 results while testing. The provider’s actual charge can vary by route and match." action={<Button size="sm" onClick={openSheet}>Find up to 5 rows</Button>} />
+		</ol>
+		<p className="mt-3 text-caption text-fg-subtle">Exact dollar totals are not available as a pre-run quote. Check the provider’s balance and operation settings first; reported usage appears in cell details and Provider usage.</p>
+		<span className="sr-only" aria-live="polite">{complete} of 2 setup items complete</span>
+	</section>;
+}
+
+function SetupStep({ done, title, detail, action }: { done: boolean; title: string; detail: string; action?: ReactNode }) {
+	return <li className="flex min-w-0 items-start gap-2.5 rounded-lg bg-canvas px-3 py-3">
+		<span aria-hidden="true" className={`mt-0.5 grid size-5 shrink-0 place-items-center rounded-full ${done ? 'bg-success-soft text-success' : 'border border-line-strong text-fg-subtle'}`}>{done ? <Check className="size-3.5" /> : <span className="size-1.5 rounded-full bg-current" />}</span>
+		<span className="min-w-0 flex-1">
+			<span className="block text-body-sm font-medium text-fg">{title}</span>
+			<span className="mt-0.5 block text-caption text-fg-muted">{detail}</span>
+			{action && <span className="mt-2 inline-flex">{action}</span>}
+		</span>
+	</li>;
 }
 
 /** A rejected Monid key found before a sheet exists for the search. A check that can't run never blocks. */
