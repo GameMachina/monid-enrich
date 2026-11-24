@@ -13,7 +13,7 @@ The article is a useful SaaS feature checklist: frontend and backend, customer i
 - Hosted customer sign-in now uses Clerk Organizations. The code is implemented, but Clerk application setup, organization settings, email recovery, role revocation, and signup flow still need a staging verification before public onboarding.
 - Stripe subscription checkout, portal, idempotent webhook recording, and active-subscription gating are implemented for one configured price. Product plans, taxes, invoices/support workflows, and end-to-end billing verification remain open.
 - Per-cell enrichment jobs persist in Postgres and a Vercel Cron route drains them. The natural-language Find rows workflow is not durable yet; bulk concurrency and queue capacity need measured staging/load work.
-- Per-minute request limits are implemented. They do not enforce a hard monetary workspace budget or safely reserve unknown provider charges; spend caps and reconciliation remain open.
+- Per-minute request limits and bounded active durable-cell queues are implemented. They do not enforce a hard monetary workspace budget or safely reserve unknown provider charges; spend caps and reconciliation remain open.
 - Workspace export and closure are implemented. Export excludes credentials and caps at 50 MB; closure retains usage receipts and Stripe reconciliation data, and personal AgentWeb credentials are outside the workspace deletion path. Retention, backup expiry, and legal holds are not implemented.
 - Treg and Monid retain separate connections, charges, and usage records. OAuth availability and supported capabilities depend on each provider's live catalog; see [Treg gaps](treg-provider.md).
 - CI checks are not a substitute for staging auth/billing/provider tests, a security review, a measured restore, or load testing. No production deployment or live paid integration test has been performed as part of this work.
@@ -58,7 +58,7 @@ Create persisted jobs for Find rows, bulk cell runs, and other long work. Use a 
 
 Define workspace/member request limits, per-operation maximum cost, active-run limits, and daily/monthly spend caps. Apply server-side preflight checks before provider calls, reserve and settle known usage, retain uncertain charges for reconciliation, and add circuit breakers for exhausted balance, repeated provider failures, and abnormal spend. Keep Monid, Treg, OpenAI, and any future app-funded allowance ledgers separate. Decide whether Treg is user/workspace-owned or platform-funded before enabling a shared platform Treg key.
 
-**Status: Partial.** Atomic per-minute member/workspace request limits are implemented. They are abuse limits, not spend limits: no hard-dollar reservation/settlement or operator-budget alert exists. Keep platform-funded provider keys disabled until those controls are added.
+**Status: Partial.** Atomic per-minute member/workspace request limits and durable-cell queue ceilings (100 active jobs per member, 500 per workspace) are implemented. They are abuse limits, not spend limits: no hard-dollar reservation/settlement or operator-budget alert exists. Keep platform-funded provider keys disabled until those controls are added.
 
 **Done when:** concurrent requests cannot overspend a cap; every run records its selected provider, workspace, operation, cost/usage, status, and provider run ID where available; users can see a clear estimate/cap before execution and understand who is billed; alerts fire before an operator-funded budget is exhausted.
 

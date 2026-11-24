@@ -19,6 +19,8 @@ This runbook covers first response for a managed deployment. It does not replace
 
 ## Enrichment queue stalled
 
+The application accepts at most 100 queued or running cell jobs per member and 500 per workspace. A `429` at that boundary is a queue-cap response; wait for active jobs to finish or cancel queued jobs before submitting more. These ceilings bound queue growth and do not represent a provider dollar budget.
+
 1. Check readiness, the Vercel Cron schedule, the production deployment, and that `CRON_SECRET` is configured for the cron environment.
 2. Inspect `enrichable.enrichment_jobs` status and `updated_at` with workspace-safe operator access. Never copy row contents into incident chat.
 3. Queued jobs should be picked up by the next worker run. Expired Monid jobs become `uncertain` if a paid request may have started; check Monid usage before any manual retry. Treg runs reuse their stored idempotency key according to the adapter behavior.

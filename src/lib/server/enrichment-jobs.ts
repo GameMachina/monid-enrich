@@ -15,6 +15,8 @@ import { logWorkspaceError } from './workspace-logging';
 
 const fingerprint = (value: string) => createHash('sha256').update(value).digest('hex');
 const terminal = new Set(['succeeded', 'failed', 'uncertain', 'cancelled']);
+const MAX_ACTIVE_JOBS_PER_MEMBER = 100;
+const MAX_ACTIVE_JOBS_PER_WORKSPACE = 500;
 
 export async function enqueueEnrichment(actor: Account, input: { op: unknown; row: Record<string, unknown>; idempotencyKey: string; context: { sheetId: string; rowId: string; columnId: string } }) {
 	return withDatabase(async (database) => {
@@ -30,6 +32,15 @@ export async function enqueueEnrichment(actor: Account, input: { op: unknown; ro
 		const id = randomUUID();
 		const retryable = 'dataProvider' in plan.op && plan.op.dataProvider === 'treg';
 		return database.transaction(async (sql, workspace) => {
+			const existing = (await sql.query('SELECT id,input_fingerprint,status FROM enrichable.enrichment_jobs WHERE workspace_id=$1 AND idempotency_key=$2', [workspace, input.idempotencyKey])).rows[0];
+			if (existing) {
+				if (String(existing.input_fingerprint) !== inputFingerprint) throw new WorkspaceError('This retry key was already used for different inputs. Run the cell again to create a new job.', 409);
+				return { jobId: String(existing.id), status: String(existing.status) };
+			}
+			const active = (await sql.query(`SELECT count(*)::int AS workspace_count, count(*) FILTER (WHERE actor_id=$2)::int AS member_count
+				FROM enrichable.enrichment_jobs WHERE workspace_id=$1 AND status IN ('queued','running')`, [workspace, actor.user.id])).rows[0];
+			if (Number(active?.member_count ?? 0) >= MAX_ACTIVE_JOBS_PER_MEMBER) throw new WorkspaceError('You already have 100 enrichment runs queued or running. Wait for some to finish before adding more.', 429);
+			if (Number(active?.workspace_count ?? 0) >= MAX_ACTIVE_JOBS_PER_WORKSPACE) throw new WorkspaceError('This workspace already has 500 enrichment runs queued or running. Wait for some to finish before adding more.', 429);
 			const inserted = await sql.query(`INSERT INTO enrichable.enrichment_jobs (workspace_id,id,idempotency_key,actor_id,sheet_id,row_id,column_id,input_fingerprint,retryable,status)
 				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'queued') ON CONFLICT (workspace_id,idempotency_key) DO NOTHING RETURNING id,input_fingerprint,status`, [workspace, id, input.idempotencyKey, actor.user.id, input.context.sheetId, input.context.rowId, input.context.columnId, inputFingerprint, retryable]);
 			const job = inserted.rows[0] ?? (await sql.query('SELECT id,input_fingerprint,status FROM enrichable.enrichment_jobs WHERE workspace_id=$1 AND idempotency_key=$2', [workspace, input.idempotencyKey])).rows[0];
