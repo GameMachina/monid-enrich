@@ -251,7 +251,7 @@ function FirstRunChecklist({ hasSheet, hasProvider, openSheet, openConnections }
 		<ol className="mt-4 grid gap-3 sm:grid-cols-3">
 			<SetupStep done={hasSheet} title="Create or import a sheet" detail={hasSheet ? 'Your workspace has a sheet.' : 'Use fictional sample data or import a file.'} action={!hasSheet ? <><Button size="sm" onClick={openSheet}>Start</Button></> : undefined} />
 			<SetupStep done={hasProvider} title="Connect a data provider" detail={hasProvider ? 'Monid or Treg is connected.' : 'Choose Monid or Treg; their billing stays separate.'} action={!hasProvider ? <Button size="sm" onClick={openConnections}>Connect</Button> : undefined} />
-			<SetupStep done={false} title="Try a small search" detail="A Find rows search is capped at 5 results while testing. The provider’s actual charge can vary by route and match." action={<Button size="sm" onClick={openSheet}>Find up to 5 rows</Button>} />
+			<SetupStep done={false} title="Try a small search" detail="Find rows returns up to 5 results while testing. Provider charges can vary by route and match." action={<Button size="sm" onClick={openSheet}>New search</Button>} />
 		</ol>
 		<p className="mt-3 text-caption text-fg-subtle">Exact dollar totals are not available as a pre-run quote. Check the provider’s balance and operation settings first; reported usage appears in cell details and Provider usage.</p>
 		<span className="sr-only" aria-live="polite">{complete} of 2 setup items complete</span>
