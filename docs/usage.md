@@ -1,11 +1,11 @@
-# Using Enrichable
+# Using Monid Enrich
 
 For installation, see the [README](../README.md#self-host-in-5-minutes).
 
 ## How a sheet works
 
 1. **Find rows.** "Every residential solar installer in the United States." Pick companies, people or websites and a target count. An OpenAI agent plans the queries, pages through the selected data provider's search, and streams de-duplicated rows into the sheet. The model only sees counts and cursors, never the records. Find rows is capped at five per request while testing; run another batch to add more.
-2. **Add an AI column.** Type what you want to know. Enrichable composes the right operation (or configure it by hand). Reference other columns as `{{Website}}`.
+2. **Add an AI column.** Type what you want to know. Monid Enrich composes the right operation (or configure it by hand). Reference other columns as `{{Website}}`.
 3. **Run.** Cells run in parallel with a configurable concurrency, retry on rate limits, and wait for the columns they reference. Every cell keeps its sources, probability or confidence, reasoning, credits and timing. Click a cell to see them, edit the value, or re-run it.
 4. **Filter, sort, export.** Filters per column (contains, is true, greater than, is empty, has an error…), sorting, search, row selection, CSV (with or without confidence and sources), Excel and JSON. Filters and sort are yours: they are kept in this browser for your account and never change what teammates see or export. Exports follow your current view.
 
@@ -42,7 +42,7 @@ Select a cell and type a formula in the formula bar, or enter one directly in a 
 
 Calculations use [IronCalc](https://github.com/ironcalc/IronCalc) (`@ironcalc/wasm`, MIT OR Apache-2.0) in a browser worker. Formulas and results are saved in Neon Postgres and cached in IndexedDB and recalculate when inputs or enrichment results change. Sorting and filtering are views: addresses continue to refer to the underlying row order, and hidden columns retain their letters. Inserting, moving, or deleting columns and deleting rows update references. CSV, JSON, and Excel exports contain calculated values. Imported and enriched strings are treated as literal data, including strings beginning with `=`.
 
-This integration supports formulas within one sheet. It does not connect separate Enrichable sheets or provide dynamic array spill output. Excel and Google Sheets function compatibility depends on IronCalc's supported functions. Formula calculation makes no API calls and requires no API keys.
+This integration supports formulas within one sheet. It does not connect separate Monid Enrich sheets or provide dynamic array spill output. Excel and Google Sheets function compatibility depends on IronCalc's supported functions. Formula calculation makes no API calls and requires no API keys.
 
 ### Formula editor assistance
 

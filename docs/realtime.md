@@ -1,6 +1,6 @@
 # Live sheet collaboration
 
-Enrichable uses the official `@neon/realtime` SDK for live updates from both browser edits and MCP writes. Existing authenticated API routes remain the only write path. Database credentials and the branch Realtime secret never go to the browser.
+Monid Enrich uses the official `@neon/realtime` SDK for live updates from both browser edits and MCP writes. Existing authenticated API routes remain the only write path. Database credentials and the branch Realtime secret never go to the browser.
 
 ## Enable
 

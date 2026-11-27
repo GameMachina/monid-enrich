@@ -16,6 +16,8 @@ Stripe's $37 product, one-time price, Payment Link, webhook endpoint, and produc
 
 ## Required services and settings
 
+The product name is **Monid Enrich**. Some environment variables retain the `ENRICHABLE_*` prefix from the original codebase as internal compatibility names; the app still reads those exact names.
+
 Use separate Clerk, Neon, Stripe, and Vercel environments for staging and production. Never attach a preview deployment to production customer data.
 
 | Service | Configure | Notes |
@@ -52,12 +54,13 @@ Do not put a platform Monid key into the deployment environment for customer use
 
 ## Clerk setup
 
-1. Create a dedicated Clerk application for staging and another for production.
-2. Enable Organizations and configure organization membership roles. Set invitation, verification, password recovery, and session policies for the target users.
-3. Add the exact production and staging origins to the Clerk application. Configure sign-in at `/sign-in` and sign-up at `/sign-up`.
-4. Create a Clerk webhook endpoint at `https://your-host/api/clerk/webhook`. Subscribe to `organization_membership.created`, `organization_membership.updated`, `organization_membership.deleted`, `organization_invitation.created`, `organization_invitation.accepted`, and `organization_invitation.revoked`. Save the endpoint signing secret as `CLERK_WEBHOOK_SIGNING_SECRET` in that Vercel environment.
-5. Set the environment-specific Clerk keys and webhook signing secret in Vercel. Confirm the Team page can create/select an organization and manage test members.
-6. Test that a removed member loses access to existing tabs and every API route, that invitation and role events appear in **Configuration → Workspace activity**, and that a personal workspace cannot see an organization workspace.
+1. In the [Clerk Dashboard](https://dashboard.clerk.com/), create an application named **Monid Enrich**. Use its Development instance for local/staging work and its Production instance for the customer domain, or maintain a separate staging application if you need stronger isolation.
+2. Enable Organizations with membership optional so a user can start in a personal workspace and later switch to a team. Allow users to create organizations if that matches the launch plan. Configure email verification, password recovery, invitations, and session policies.
+3. Add `monid-enrich.vercel.app` under the Production instance's domain settings. Configure sign-in at `/sign-in` and sign-up at `/sign-up`.
+4. On the Production instance's **API keys** page, copy the `pk_live_…` Publishable Key and `sk_live_…` Secret Key. These map to `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY`; never put the Secret Key in source control or a public variable.
+5. In the Clerk Dashboard's **Webhooks** page, create `https://monid-enrich.vercel.app/api/clerk/webhook`. Subscribe to `organization_membership.created`, `organization_membership.updated`, `organization_membership.deleted`, `organization_invitation.created`, `organization_invitation.accepted`, and `organization_invitation.revoked`. Copy the endpoint's `whsec_…` Signing Secret into `CLERK_WEBHOOK_SIGNING_SECRET`.
+6. In Vercel → Project Settings → Environment Variables, set Production `ENRICHABLE_AUTH_MODE=clerk` and those three Clerk values. Redeploy, then confirm the Team page can create/select an organization and manage test members.
+7. Test that a removed member loses access to existing tabs and every API route, that invitation and role events appear in **Configuration → Workspace activity**, and that a personal workspace cannot see an organization workspace.
 
 ## Stripe setup
 

@@ -1,6 +1,6 @@
 # Monid Enrich MCP
 
-Enrichable exposes a stateless Streamable HTTP MCP endpoint at `/mcp`. An external agent plans the workflow and requests successive batches. Enrichable validates operations, executes bounded calls, and persists results in the same workspace as the browser app. Hosted per-cell enrichments can be persisted as durable jobs when `ENRICHABLE_DURABLE_ENRICHMENT=true` and the worker is configured. The MCP endpoint remains synchronous and bounded; natural-language Find rows is not durable yet.
+Monid Enrich exposes a stateless Streamable HTTP MCP endpoint at `/mcp`. An external agent plans the workflow and requests successive batches. Monid Enrich validates operations, executes bounded calls, and persists results in the same workspace as the browser app. Hosted per-cell enrichments can be persisted as durable jobs when `ENRICHABLE_DURABLE_ENRICHMENT=true` and the worker is configured. The MCP endpoint remains synchronous and bounded; natural-language Find rows is not durable yet.
 
 ## Setup
 
@@ -14,7 +14,7 @@ For clients that accept an `mcpServers` configuration:
 ```json
 {
   "mcpServers": {
-    "enrichable": {
+    "monid-enrich": {
       "url": "https://your-host.example/mcp",
       "headers": {
         "Authorization": "Bearer enr_mcp_YOUR_ORGANIZATION_KEY",
@@ -65,7 +65,7 @@ A sheet saved by an older version is upgraded the first time an agent reads it, 
 
 ## Example workflow
 
-Prefer Enrichable’s specialized operations over implementing providers, scraping, or research yourself. Use company/person fields for supported facts, Hunter/Prospeo for contact data, scrape/search for web data, check/classify/score for decisions, email-draft for emails, and no-cost template for deterministic text. Reserve generic ai and deep-research answer for work specialized operations cannot handle. All operations use the same validation and execution paths as the browser app.
+Prefer Monid Enrich’s specialized operations over implementing providers, scraping, or research yourself. Use company/person fields for supported facts, Hunter/Prospeo for contact data, scrape/search for web data, check/classify/score for decisions, email-draft for emails, and no-cost template for deterministic text. Reserve generic ai and deep-research answer for work specialized operations cannot handle. All operations use the same validation and execution paths as the browser app.
 
 For additional research beyond these operations, use the Monid-backed operations supported by the sheet. Write confirmed profile URLs or company domains back into the sheet, then rerun affected enrichments in dependency order to persist results and provenance. Never guess missing identities or URLs.
 
@@ -99,7 +99,7 @@ Readiness follows the same plan as the browser. Referenced enrichment cells must
 
 `idempotencyKey` identifies one batch within an organization. Repeat the same normalized arguments and key to retrieve its outcome without spending again. Reusing the key with different arguments returns a conflict. A deliberate rerun, including retrying previously blocked/failed/not-started cells, uses a new key. Attempt records currently remain in Postgres; they are not automatically expired.
 
-Outcomes include `done`, `error`, `blocked`, `skipped` (with `outdated`), `conflict`, and `not_started`. A provider failure's outcome carries `failure`, decided by the same rule as browser runs. `failure.retryable` is true only when no provider did work for the cell: the request never reached the provider (DNS failed or the connection was refused), the provider refused it before processing (429), or Enrichable refused it first (the credit ledger's rate limit, or company research that is still running or just failed). It is false for anything after a request was sent (a timeout, a server error, a dropped connection, a truncated answer), and once the cell's enrichment paid for any provider request, company research included: the provider may have done and billed the work, so resubmitting can pay twice. Enrichable sends each provider request once, resending only one that was rate limited or never connected. A saved cell's `m` property contains available provenance and provider metadata. Structured content and a JSON text representation are both returned for MCP clients.
+Outcomes include `done`, `error`, `blocked`, `skipped` (with `outdated`), `conflict`, and `not_started`. A provider failure's outcome carries `failure`, decided by the same rule as browser runs. `failure.retryable` is true only when no provider did work for the cell: the request never reached the provider (DNS failed or the connection was refused), the provider refused it before processing (429), or Monid Enrich refused it first (the credit ledger's rate limit, or company research that is still running or just failed). It is false for anything after a request was sent (a timeout, a server error, a dropped connection, a truncated answer), and once the cell's enrichment paid for any provider request, company research included: the provider may have done and billed the work, so resubmitting can pay twice. Monid Enrich sends each provider request once, resending only one that was rate limited or never connected. A saved cell's `m` property contains available provenance and provider metadata. Structured content and a JSON text representation are both returned for MCP clients.
 
 Results are committed against current inputs, column definitions, and the target cell. A concurrent edit produces `conflict` instead of overwriting newer work. Independent browser runs are not coordinated by the MCP batch lock and may still spend provider credits; avoid intentionally running the same cells from both interfaces at once.
 

@@ -6,10 +6,10 @@ import { migrateDatabase } from './database-migrations';
 async function migrate() {
 	loadEnvConfig(process.cwd());
 	const connection = process.env.DATABASE_URL_UNPOOLED?.trim() || process.env.DATABASE_URL?.trim();
-	if (!connection) throw new Error('Set DATABASE_URL to the dedicated Enrichable Neon database.');
+	if (!connection) throw new Error('Set DATABASE_URL to the dedicated Monid Enrich Neon database.');
 	const sql = neon(connection);
 	await migrateDatabase((statements) => sql.transaction(statements.map((statement) => sql.query(statement))), join(process.cwd(), 'migrations'));
-	console.log('Enrichable workspace schema is ready.');
+	console.log('Monid Enrich workspace schema is ready.');
 }
 
 function safeErrorMessage(error: unknown) {

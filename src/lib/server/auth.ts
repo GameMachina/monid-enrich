@@ -34,7 +34,7 @@ export function sessionConfig() {
 }
 
 export function authConfig() {
-	if (!contextSignInEnabled()) throw new Error('Context.dev sign-in is only available on Enrichable.');
+	if (!contextSignInEnabled()) throw new Error('Context.dev sign-in is not available in Monid Enrich.');
 	const config = sessionConfig();
 	return { ...config, clientId: z.string().min(1).parse(process.env.CONTEXT_OAUTH_CLIENT_ID), clientSecret: z.string().min(32).parse(process.env.CONTEXT_OAUTH_CLIENT_SECRET), callback: `${config.origin}/api/auth/callback` };
 }
