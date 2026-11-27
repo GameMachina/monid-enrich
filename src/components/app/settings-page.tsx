@@ -34,7 +34,7 @@ export function SettingsPage() {
 			<MonidWallet />
 			{!selfHosted && <ProviderUsage />}
 			{!selfHosted && <WorkspaceActivity />}
-			{!selfHosted && <SubscriptionBilling />}
+			{!selfHosted && <AccessBilling />}
 			<MobilePhoneProviderSettings />
 			<Defaults />
 			<McpAccess />
@@ -229,7 +229,7 @@ function WorkspaceData() {
 		<div className="flex flex-col gap-3 border-t border-line-subtle pt-4">
 			{workspaceAdmin ? <><div className="flex flex-col gap-1">
 				<h3 className="text-body-sm font-medium text-danger">Close this workspace</h3>
-				<p className="text-caption text-fg-subtle">Removes sheets, connected provider credentials, workspace settings, agent keys, and queued jobs. Cancel the app subscription first. Billing records and provider usage receipts remain for accounting. This cannot be undone.</p>
+				<p className="text-caption text-fg-subtle">Removes sheets, connected provider credentials, workspace settings, agent keys, and queued jobs. Cancel any legacy recurring subscription first. Purchase records and provider usage receipts remain for accounting. This cannot be undone.</p>
 			</div>
 			<Field label={`Type “${workspaceName || 'workspace'}” to continue`}>
 				{(id) => <Input id={id} value={name} onChange={(event) => setName(event.target.value)} autoComplete="off" className="max-w-md" />}
@@ -237,28 +237,42 @@ function WorkspaceData() {
 			<Button size="sm" variant="danger" className="self-start" disabled={!workspaceName || name !== workspaceName || busy} onClick={() => { setError(''); setConfirming(true); }}>Close workspace…</Button>
 			{error && !confirming && <p role="alert" className="text-caption text-danger">{error}</p>}</> : <p className="text-caption text-fg-subtle">A workspace owner or admin can permanently close this workspace.</p>}
 		</div>
-		{confirming && <ConfirmDialog title="Permanently close this workspace?" description="This removes the workspace's sheets, credentials, settings, agent keys, and queued jobs. Cancel the app subscription first. Billing records and provider usage receipts are retained. The workspace cannot be reopened." confirmLabel="Close workspace" danger loading={busy} onClose={() => { if (!busy) setConfirming(false); }} onConfirm={closeWorkspace} />}
+		{confirming && <ConfirmDialog title="Permanently close this workspace?" description="This removes the workspace's sheets, credentials, settings, agent keys, and queued jobs. Cancel any legacy recurring subscription first. Purchase records and provider usage receipts are retained. The workspace cannot be reopened." confirmLabel="Close workspace" danger loading={busy} onClose={() => { if (!busy) setConfirming(false); }} onConfirm={closeWorkspace} />}
 	</section>;
 }
 
-type ProductBilling = { configured: boolean; required: boolean; subscription: null | { status: string; currentPeriodEnd: number | null; cancelAtPeriodEnd: boolean; active: boolean } };
+type ProductBilling = {
+	configured: boolean; required: boolean; priceUsd: number; hasAccess: boolean; purchaseStatus: string | null;
+	purchase: null | { status: 'paid'; amountUsd: number; currency: string; purchasedAt: string };
+	legacySubscription: null | { status: string; currentPeriodEnd: number | null; cancelAtPeriodEnd: boolean; active: boolean };
+};
 
-function SubscriptionBilling() {
+function AccessBilling() {
+	const { workspaceAdmin } = useSettings();
 	const [billing, setBilling] = useState<ProductBilling | null>(null);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState('');
 	const [notice, setNotice] = useState('');
 	useEffect(() => {
 		const query = new URLSearchParams(window.location.search);
-		const checkoutNotice = query.get('billing') === 'success'
-			? 'Checkout completed. Your workspace access updates when Stripe confirms the subscription.'
-			: query.get('billing') === 'cancelled' ? 'Checkout was cancelled. No subscription was started.' : '';
 		let stopped = false;
-		fetch('/api/billing', { headers: accountHeaders(), cache: 'no-store' }).then(async (response) => {
-			const data = await response.json().catch(() => null) as ProductBilling | { error?: string } | null;
-			if (!response.ok) throw new Error((data as { error?: string } | null)?.error || 'Could not load subscription status.');
-			if (!stopped) { setBilling(data as ProductBilling); if (checkoutNotice) setNotice(checkoutNotice); }
-		}).catch((cause: unknown) => { if (!stopped) { setError(cause instanceof Error ? cause.message : 'Could not load subscription status.'); if (checkoutNotice) setNotice(checkoutNotice); } });
+		void (async () => {
+			try {
+				const sessionId = query.get('session_id');
+				if (query.get('billing') === 'success' && sessionId) {
+					const claim = await fetch('/api/billing/claim', { method: 'POST', headers: { ...accountHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId }), cache: 'no-store' });
+					const result = await claim.json().catch(() => null) as { error?: string } | null;
+					if (!claim.ok) throw new Error(result?.error || 'Payment completed, but access could not be confirmed yet. Reload in a moment.');
+					if (!stopped) setNotice('Payment confirmed. Lifetime access is active for this workspace.');
+				} else if (query.get('billing') === 'cancelled' && !stopped) setNotice('Checkout was cancelled. No payment was made.');
+				const response = await fetch('/api/billing', { headers: accountHeaders(), cache: 'no-store' });
+				const data = await response.json().catch(() => null) as ProductBilling | { error?: string } | null;
+				if (!response.ok) throw new Error((data as { error?: string } | null)?.error || 'Could not load purchase status.');
+				if (!stopped) setBilling(data as ProductBilling);
+			} catch (cause) {
+				if (!stopped) setError(cause instanceof Error ? cause.message : 'Could not load purchase status.');
+			}
+		})();
 		return () => { stopped = true; };
 	}, []);
 	async function openBilling(path: '/api/billing' | '/api/billing/portal') {
@@ -270,16 +284,18 @@ function SubscriptionBilling() {
 			window.location.assign(data.url);
 		} catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not open Stripe billing.'); setBusy(false); }
 	}
-	const active = billing?.subscription?.active;
+	const purchased = Boolean(billing?.purchase);
+	const legacyActive = billing?.legacySubscription?.active;
 	return <section aria-labelledby="product-billing-title" className="glass-card flex flex-col gap-4 px-5 py-5 sm:flex-row sm:items-center sm:justify-between">
 		<div className="flex min-w-0 flex-col gap-1">
-			<h2 id="product-billing-title" className="text-body text-fg">Monid Enrich subscription</h2>
-			<p className="text-body-sm text-fg-muted">This subscription is for the app. Monid and optional OpenAI usage remain billed separately by their providers.</p>
-			{billing && <p className="text-caption text-fg-subtle">{!billing.configured ? 'Subscription billing is not configured for this deployment.' : active ? `Status: ${billing.subscription?.status}${billing.subscription?.cancelAtPeriodEnd ? ' · cancels at period end' : ''}${billing.subscription?.currentPeriodEnd ? ` · renews ${new Date(billing.subscription.currentPeriodEnd * 1000).toLocaleDateString()}` : ''}` : 'No active subscription for this workspace.'}</p>}
+			<h2 id="product-billing-title" className="text-body text-fg">Monid Enrich access</h2>
+			<p className="text-body-sm text-fg-muted">One payment of $37 USD gives this workspace lifetime access. Monid and optional OpenAI usage remain billed separately by their providers.</p>
+			{billing && <p className="text-caption text-fg-subtle">{!billing.configured ? 'Stripe payments are not configured for this deployment.' : purchased ? `Lifetime access purchased · $${billing.purchase?.amountUsd.toFixed(2)} USD` : legacyActive ? `Legacy subscription active${billing.legacySubscription?.currentPeriodEnd ? ` through ${new Date(billing.legacySubscription.currentPeriodEnd * 1000).toLocaleDateString()}` : ''}` : billing.purchaseStatus === 'refunded' ? 'The purchase was refunded; workspace access is inactive.' : billing.purchaseStatus === 'disputed' ? 'The purchase is in dispute; workspace access is inactive.' : 'No purchase is recorded for this workspace.'}</p>}
 			{notice && <p role="status" className="text-caption text-success">{notice}</p>}
 			{error && <p role="alert" className="text-caption text-danger">{error}</p>}
 		</div>
-		{billing?.configured && <Button size="sm" className="shrink-0 self-start sm:self-auto" loading={busy} onClick={() => void openBilling(active ? '/api/billing/portal' : '/api/billing')}>{active ? 'Manage subscription' : 'Start subscription'}</Button>}
+		{billing?.configured && workspaceAdmin && !billing.hasAccess && <Button size="sm" className="shrink-0 self-start sm:self-auto" loading={busy} onClick={() => void openBilling('/api/billing')}>Buy lifetime access · $37 once</Button>}
+		{billing?.configured && workspaceAdmin && legacyActive && !purchased && <Button size="sm" className="shrink-0 self-start sm:self-auto" loading={busy} onClick={() => void openBilling('/api/billing/portal')}>Manage legacy subscription</Button>}
 	</section>;
 }
 

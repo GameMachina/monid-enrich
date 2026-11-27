@@ -22,5 +22,6 @@ ALTER TABLE enrichable.workspace_audit_events ADD CONSTRAINT workspace_audit_eve
   'workspace.provider_billing.topup_started',
   'workspace.billing.checkout_started',
   'workspace.billing.portal_opened',
-  'workspace.billing.subscription_updated'
+  'workspace.billing.subscription_updated',
+  'workspace.billing.purchase_updated'
 ));

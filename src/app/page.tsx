@@ -4,6 +4,7 @@ import { ArrowRight } from 'lucide-react';
 import { GithubIcon, Logo } from '@/components/ui/logo';
 import { DOCS_URL, GITHUB_URL, PRODUCT_NAME, SITE_DESCRIPTION, SITE_LEDE, SITE_TITLE } from '@/lib/constants';
 import { siteUrl } from '@/lib/server/deployment';
+import { stripePaymentLinkUrl } from '@/lib/server/stripe-billing';
 
 export const metadata: Metadata = {
 	title: { absolute: SITE_TITLE },
@@ -33,6 +34,7 @@ const STEPS = [
 
 const FAQ = [
 	{ q: `What is ${PRODUCT_NAME}?`, a: `${PRODUCT_NAME} is a spreadsheet for company and people research. Find rows, enrich each row, review the evidence, and export the result.` },
+	{ q: 'How much does hosted access cost?', a: 'Hosted workspace access is a one-time $37 USD purchase. There is no recurring app subscription. Monid and optional OpenAI usage are billed separately by their providers.' },
 	{ q: 'Where does the data come from?', a: 'Monid handles supported research and enrichment operations. OpenAI is optional and only used when you connect your own key for reasoning features.' },
 	{ q: 'Can I use the app without an OpenAI key?', a: 'Yes. Spreadsheet editing, formulas, imports, exports, and supported Monid searches and enrichments remain available. Reasoning features explain when they need an OpenAI key.' },
 	{ q: 'Can I self-host it?', a: 'Yes. Run it locally with Node.js and connect Monid. Add your own OpenAI key only if you want reasoning features. See the repository README for setup.' },
@@ -49,7 +51,7 @@ function structuredData() {
 			{
 				'@type': 'SoftwareApplication', '@id': `${url}#app`, name: PRODUCT_NAME, url, description: SITE_DESCRIPTION, image: new URL('/opengraph-image.png', url).toString(),
 				applicationCategory: 'BusinessApplication', applicationSubCategory: 'Data enrichment', operatingSystem: 'Web', browserRequirements: 'Requires JavaScript',
-				isAccessibleForFree: true, license: 'https://opensource.org/licenses/MIT', offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
+				isAccessibleForFree: false, license: 'https://opensource.org/licenses/MIT', offers: { '@type': 'Offer', price: '37', priceCurrency: 'USD' },
 				featureList: FEATURES.map((feature) => feature.title), sameAs: [GITHUB_URL], publisher: { '@id': `${url}#organization` }, creator: { '@id': `${url}#organization` },
 			},
 			{ '@type': 'SoftwareSourceCode', name: PRODUCT_NAME, codeRepository: GITHUB_URL, programmingLanguage: 'TypeScript', runtimePlatform: 'Node.js', license: 'https://opensource.org/licenses/MIT', targetProduct: { '@id': `${url}#app` } },
@@ -67,6 +69,7 @@ const secondaryButton = 'inline-flex h-13 items-center justify-center gap-2 roun
 const inlineLink = 'font-medium text-fg underline decoration-line-strong underline-offset-[3px] transition-colors hover:decoration-fg';
 
 export default function Landing() {
+	const paymentLink = stripePaymentLinkUrl();
 	return (
 		<div className="bg-surface text-fg">
 			<script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(structuredData()).replace(/</g, '\\u003c') }} />
@@ -100,10 +103,11 @@ export default function Landing() {
 							<GithubIcon className="size-[17px]" /> View on GitHub
 						</a>
 					</div>
+					<p className="mt-3 text-caption text-fg-subtle">Hosted workspace access is $37 USD once. Self-hosting remains available under the MIT license.</p>
 				</main>
 
 				<div className="flex flex-col items-center justify-center gap-1.5 px-5 pb-7 text-body-sm text-fg-subtle sm:flex-row sm:gap-3.5 md:pb-8 short:pb-3">
-					<span>Free and open source (MIT)</span>
+					<span>Open source (MIT) · hosted access $37 once</span>
 					<span aria-hidden className="hidden h-3.5 w-px bg-line-strong sm:block" />
 					<PoweredByProviders />
 				</div>
@@ -149,8 +153,15 @@ export default function Landing() {
 						{PRODUCT_NAME} is an independent open-source product. Supported research and enrichment operations use Monid. OpenAI is optional and only uses a key supplied by the workspace owner.
 					</p>
 					<p>
-						Run it locally or self-host from the <a href={GITHUB_URL} target="_blank" rel="noopener noreferrer" className={inlineLink}>public repository</a>. Your spreadsheet data stays in the configured workspace storage.
+						Run it locally or self-host from the <a href={GITHUB_URL} target="_blank" rel="noopener noreferrer" className={inlineLink}>public repository</a>. Hosted workspace access is a single $37 USD payment with no recurring app subscription. Your spreadsheet data stays in the configured workspace storage.
 					</p>
+				</div>
+			</Section>
+
+			<Section id="pricing" title="One payment. Keep using your workspace.">
+				<div className="flex flex-col gap-5 rounded-2xl border border-line bg-surface p-6 sm:flex-row sm:items-center sm:justify-between md:p-8">
+					<div><p className="text-h2 font-medium tracking-[-0.03em]">$37 <span className="text-body font-normal tracking-normal text-fg-muted">USD · once</span></p><p className="mt-2 max-w-xl text-body-sm text-fg-muted">Lifetime access for one workspace. No recurring app subscription. Monid and optional OpenAI usage are billed separately.</p></div>
+					{paymentLink ? <a href="/purchase" className={primaryButton}>Buy lifetime access <ArrowRight aria-hidden className="size-4" /></a> : <p className="text-caption text-fg-subtle">Hosted checkout is being configured.</p>}
 				</div>
 			</Section>
 
@@ -169,7 +180,7 @@ export default function Landing() {
 				<div className="mx-auto flex w-full max-w-[1080px] flex-col items-start gap-6 px-5 py-16 md:flex-row md:items-center md:justify-between md:px-12 md:py-20">
 					<div>
 						<h2 id="try-enrichable" className="text-h3 font-medium tracking-[-0.02em]">Try it on a list you need this week.</h2>
-						<p className="mt-2 text-fg-muted">Free and open source. Use it here or run your own copy.</p>
+						<p className="mt-2 text-fg-muted">Hosted access is $37 once. The app is also available under the MIT license for self-hosting.</p>
 					</div>
 					<div className="flex w-full flex-col gap-2.5 sm:w-auto sm:flex-row sm:gap-3">
 						<Link href="/app" data-track="landing_cta" data-cta="footer_start" className={primaryButton}>

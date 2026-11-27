@@ -12,7 +12,7 @@ The article is a useful SaaS feature checklist: frontend and backend, customer i
 
 - **Customer production is still gated (verified 2026-11-27).** Vercel has a protected Preview at commit `da38087` (build and full replay migration passed on the isolated Preview Neon branch), an attached `monid-enrich.vercel.app` domain, and production Neon/Realtime, encryption, cron, and app URL variables. No production deployment is active. Production Clerk and Stripe credentials, a live plan, durable-worker enablement, staged verification, and recovery/operations evidence are still required. The Vercel build now fails closed until the production variables are complete. See [production setup](production-setup.md).
 - Hosted customer sign-in now uses Clerk Organizations. The code is implemented, but Clerk application setup, organization settings, email recovery, role revocation, and signup flow still need a staging verification before public onboarding.
-- Stripe subscription checkout, portal, idempotent webhook recording, and active-subscription gating are implemented for one configured price. Product plans, taxes, invoices/support workflows, and end-to-end billing verification remain open.
+- Stripe one-time Checkout, a shareable Payment Link claim flow, signed/deduplicated payment webhooks, and workspace purchase gating are implemented for a fixed $37 USD price. Live Stripe setup, refunds/disputes verification, and customer-facing billing support remain open.
 - Per-cell enrichment and managed natural-language Find rows jobs persist in Postgres. The Vercel worker uses a shared 20-slot lease pool across job types; queue capacity, recovery, and provider billing behavior still need staging/load verification.
 - Per-minute request limits, bounded active durable-job queues, and a 20-slot worker concurrency cap are implemented. They do not enforce a hard monetary workspace budget or safely reserve unknown provider charges; spend caps and reconciliation remain open.
 - Workspace export and closure are implemented. Export excludes credentials and caps at 50 MB; closure retains usage receipts and Stripe reconciliation data, and personal AgentWeb credentials are outside the workspace deletion path. Retention, backup expiry, and legal holds are not implemented.
@@ -39,13 +39,13 @@ Audit every page, API route, MCP tool, realtime subscription, connection-managem
 
 **Done when:** automated cross-workspace tests prove one workspace cannot read, edit, enrich, export, or spend from another workspace; every privileged action checks role on the server; cookie-authenticated writes reject hostile origins; provider secrets and raw upstream payloads never reach browser responses or logs.
 
-### P0.3 Add product plans, checkout, webhooks, and entitlements
+### P0.3 Configure one-time checkout, webhooks, and entitlements
 
-Add an application billing model if this will be a paid hosted SaaS: plans, trial/cancel/past-due states, checkout, customer portal, invoices, and server-enforced entitlements. Verify webhook signatures, persist and deduplicate event IDs, handle event reordering/retries, and reconcile provider state. Show the product subscription separately from Monid and user-supplied OpenAI charges; do not combine balances.
+For hosted access, charge a single $37 USD payment per workspace, with no new recurring plans. Verify webhook signatures, persist and deduplicate event IDs, handle payment retries/refunds/disputes, and grant access only from Stripe-verified state. Show product access separately from Monid and user-supplied OpenAI charges; do not combine balances.
 
-**Status: Partial.** One-price Checkout, customer portal, signed/deduplicated webhooks, and server-side subscription gating are implemented. Configure Stripe test mode and verify purchase, cancellation, webhook retry/reorder, portal, and access changes before production; multi-plan entitlements and tax/invoice support remain open.
+**Status: Partial.** A $37 one-time Checkout, Payment Link verified-email claim flow, signed/deduplicated webhooks, refund/dispute state, and server-side entitlement gate are implemented. Configure Stripe test and live credentials; verify successful and failed checkout, claim, webhook retry/reorder, refund, dispute, and workspace access before production. Tax configuration remains an explicit accounting decision.
 
-**Done when:** a test customer can subscribe, upgrade/downgrade, cancel, recover from failed payment, and see correct access after webhook retries; API and UI enforce the same plan limits; no app feature trusts a client-reported plan or payment status. If the product will remain free/self-hosted only, record that decision and remove this item from the launch gate.
+**Done when:** a test customer can pay once, claim hosted workspace access, receive a refund or dispute status change, and see correct access after webhook retries; API and UI enforce the same entitlement; no app feature trusts a client-reported payment status.
 
 ### P0.4 Move long and bulk enrichment to durable jobs
 

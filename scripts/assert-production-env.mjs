@@ -16,7 +16,11 @@ requireValue('CLERK_WEBHOOK_SIGNING_SECRET', (value) => value.startsWith('whsec_
 requireValue('ENRICHABLE_BILLING_REQUIRED', (value) => value === 'true');
 requireValue('STRIPE_SECRET_KEY', (value) => value.startsWith('sk_live_'));
 requireValue('STRIPE_WEBHOOK_SECRET', (value) => value.startsWith('whsec_'));
-requireValue('STRIPE_PRICE_ID', (value) => value.startsWith('price_'));
+requireValue('STRIPE_ONE_TIME_PRICE_ID', (value) => value.startsWith('price_'));
+requireValue('STRIPE_PAYMENT_LINK_ID', (value) => value.startsWith('plink_'));
+requireValue('STRIPE_PAYMENT_LINK_URL', (value) => {
+	try { const url = new URL(value); return url.protocol === 'https:' && url.hostname === 'buy.stripe.com'; } catch { return false; }
+});
 requireValue('ENRICHABLE_APP_URL', (value) => {
 	try { return new URL(value).protocol === 'https:'; } catch { return false; }
 });

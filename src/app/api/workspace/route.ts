@@ -13,7 +13,7 @@ export const DELETE = apiRoute('workspace.close', async ({ account, database, re
 	const workspace = workspaceId(account);
 	return database.transaction(async (sql) => {
 		const subscription = (await sql.query('SELECT status FROM enrichable.workspace_subscriptions WHERE workspace_id=$1 FOR UPDATE', [workspace])).rows[0];
-		if (subscription && String(subscription.status) !== 'canceled') throw new WorkspaceError('Cancel the Monid Enrich subscription in Configuration first, then wait for Stripe to confirm it is canceled before closing this workspace.', 409);
+		if (subscription && String(subscription.status) !== 'canceled') throw new WorkspaceError('Cancel the legacy Monid Enrich subscription in Configuration first, then wait for Stripe to confirm it is canceled before closing this workspace.', 409);
 		const active = await sql.query("SELECT count(*)::int AS count FROM enrichable.enrichment_jobs WHERE workspace_id=$1 AND status='running'", [workspace]);
 		if (Number(active.rows[0]?.count ?? 0) > 0) throw new WorkspaceError('Wait for active enrichment jobs to finish before closing this workspace.', 409);
 		await sql.query("INSERT INTO enrichable.workspace_audit_events (workspace_id,id,actor_id,action,details) VALUES ($1,$2,$3,'workspace.close','{}'::jsonb)", [workspace, randomUUID(), account.user.id]);

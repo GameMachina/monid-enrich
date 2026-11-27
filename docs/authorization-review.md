@@ -15,7 +15,7 @@ Static source review performed 2026-11-24. This documents the current managed-ap
 | --- | --- |
 | `/api/organization-settings` writes | Workspace owner/admin |
 | `/api/treg/**` | Retired routes return `410 Gone`; there are no active Treg actions |
-| `/api/billing/**` mutations | Workspace owner/admin; app subscription only |
+| `/api/billing/**` mutations | Workspace owner/admin; payment claim also requires matching workspace metadata or verified buyer email |
 | `/api/mcp-key` writes | Workspace owner/admin |
 | `/api/workspace/export`, `/api/workspace` delete | Workspace owner/admin |
 | `/api/usage` | Workspace owner/admin; provider receipts remain workspace-scoped |

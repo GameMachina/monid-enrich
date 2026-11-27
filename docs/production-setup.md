@@ -6,13 +6,13 @@ This guide prepares a managed Monid Enrich deployment on Vercel. It does not dep
 
 Audited 2026-11-27: the `monid-enrich` Vercel project is linked to `GameMachina/monid-enrich`. The protected Preview deployment for commit `da38087` is ready at `https://monid-enrich-e6cwmct5g-jalens-projects-5f6738d0.vercel.app`. Its build and full migration replay succeeded against the isolated, schema-only Neon `vercel-preview` branch. Preview uses self-hosted single-operator auth behind Vercel SSO and a preview-only encryption secret. Realtime, billing enforcement, and durable enrichment are disabled in this preview. The verified Vercel domain `https://monid-enrich.vercel.app` is attached to the project. No production deployment has been promoted or created.
 
-Neon Postgres and Realtime are provisioned on the `production` branch and migrations have been applied. The branch's Realtime allowlist contains `http://localhost:3000` and `https://monid-enrich.vercel.app`. Vercel's Production environment has the production database URLs, Realtime endpoint and secret, stable vault encryption root, cron secret, app URL, and Realtime enable flag. Secret values are stored as sensitive Vercel variables. Customer identity and subscription billing remain unconfigured, so no customer-facing production deployment is ready.
+Neon Postgres and Realtime are provisioned on the `production` branch and migrations have been applied. The branch's Realtime allowlist contains `http://localhost:3000` and `https://monid-enrich.vercel.app`. Vercel's Production environment has the production database URLs, Realtime endpoint and secret, stable vault encryption root, cron secret, app URL, and Realtime enable flag. Secret values are stored as sensitive Vercel variables. Customer identity and one-time purchase billing remain unconfigured, so no customer-facing production deployment is ready.
 
 The worker is scheduled every minute in `vercel.json`. Vercel Pro or Enterprise supports the required schedule; verify the deployed cron after launch. [Vercel’s Cron limits](https://vercel.com/docs/cron-jobs/usage-and-pricing) document the schedule constraints.
 
-The production build command runs `check:production-config` before migrations. It rejects a production deploy unless live Clerk and Stripe credentials, a live Stripe Price, the stable app URL, Neon, the vault key, and durable worker settings are present. Preview builds skip this production-only gate. This prevents an incomplete deployment from being promoted while account setup is pending.
+The production build command runs `check:production-config` before migrations. It rejects a production deploy unless live Clerk and Stripe credentials, the live $37 one-time Stripe Price and Payment Link, the stable app URL, Neon, the vault key, and durable worker settings are present. Preview builds skip this production-only gate. This prevents an incomplete deployment from being promoted while account setup is pending.
 
-Clerk and Stripe are not configured, and customer-mode auth/billing are not enabled. Production intentionally has no `ENRICHABLE_AUTH_MODE`, Clerk keys, Stripe keys/price, billing enforcement flag, or durable-worker flag yet. Configure separate staging accounts first, add the required Clerk and Stripe settings, and run the staging verification below. The preview is for internal review, not customer use.
+Clerk and Stripe are not configured, and customer-mode auth/billing are not enabled. Production intentionally has no `ENRICHABLE_AUTH_MODE`, Clerk keys, Stripe keys/one-time price/payment link, billing enforcement flag, or durable-worker flag yet. Configure separate staging accounts first, add the required Clerk and Stripe settings, and run the staging verification below. The preview is for internal review, not customer use.
 
 ## Required services and settings
 
@@ -23,7 +23,7 @@ Use separate Clerk, Neon, Stripe, and Vercel environments for staging and produc
 | Vercel | Node.js 22.23.4; project variables listed below | `vercel.json` checks production configuration, runs migrations, then builds and schedules `/api/internal/jobs/run` once a minute. This worker schedule requires Vercel Pro or Enterprise; Hobby supports only daily Cron schedules. See [Vercel Cron limits](https://vercel.com/docs/cron-jobs/usage-and-pricing). |
 | Neon/Postgres | Pooled `DATABASE_URL` for runtime; migration access available during build | Keep production, staging, and preview on separate branches/databases. Apply and review migrations on staging first. |
 | Clerk | Publishable and secret keys; enable Organizations and configure sign-in/up | The Team screen uses Clerk's organization management UI. Verify invite, role, removal, recovery, and session behavior with test users. |
-| Stripe | Secret key, webhook signing secret, one recurring Price ID, public app URL | Start in test mode. Configure the customer portal and the webhook events below. App subscriptions are separate from Monid wallet usage. |
+| Stripe | Secret key, webhook signing secret, active $37 USD one-time Price ID, Payment Link ID and URL, public app URL | Start in test mode. New purchases are one-time lifetime access; do not configure a recurring price or automatic tax unless separately required. Monid usage remains separate. |
 | Vercel Cron | `CRON_SECRET` | Use a high-entropy secret of at least 32 characters. Vercel sends it as a bearer token to the worker route. |
 
 Set these project variables in each relevant Vercel environment. `.env.example` is the local template; never commit actual values.
@@ -40,7 +40,9 @@ ENRICHABLE_APP_URL=https://your-production-host
 ENRICHABLE_BILLING_REQUIRED=true
 STRIPE_SECRET_KEY=sk_…
 STRIPE_WEBHOOK_SECRET=whsec_…
-STRIPE_PRICE_ID=price_…
+STRIPE_ONE_TIME_PRICE_ID=price_…
+STRIPE_PAYMENT_LINK_ID=plink_…
+STRIPE_PAYMENT_LINK_URL=https://buy.stripe.com/…
 ENRICHABLE_DURABLE_ENRICHMENT=true
 CRON_SECRET=<stable random secret, 32+ characters>
 ```
@@ -60,13 +62,13 @@ Do not put a platform Monid key into the deployment environment for customer use
 
 ## Stripe setup
 
-1. In Stripe test mode, create the first recurring product/price and customer portal configuration.
-2. Add a webhook endpoint at `https://your-host/api/stripe/webhook` and subscribe to `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`, and `customer.subscription.deleted`.
-3. Set the test secret, endpoint signing secret, price ID, and `ENRICHABLE_APP_URL` in the staging Vercel environment.
-4. Verify checkout, portal return, cancellation, failed payment, webhook retries, and access after each subscription-state change.
+1. In Stripe test mode, create a $37 USD one-time product and Price. Do not enable recurring billing or automatic tax unless a separate tax review calls for it.
+2. Add a webhook endpoint at `https://your-host/api/stripe/webhook` and subscribe to `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`, `charge.refunded`, `charge.dispute.created`, `charge.dispute.closed`, and the legacy subscription events if existing subscribers remain.
+3. Set the test secret, endpoint signing secret, one-time price ID, Payment Link ID and URL, and `ENRICHABLE_APP_URL` in the staging Vercel environment.
+4. Verify one-time checkout, payment-link email claim, successful and failed asynchronous payments, refunds, disputes, webhook retries, and workspace access after each state change. Confirm Stripe shows a non-recurring $37 USD Price.
 5. Repeat with production Stripe objects only after staging passes. Never reuse test keys or test database records in production.
 
-The current implementation supports one configured recurring price. It does not yet model multiple plans, usage tiers, tax policy, invoice workflows, or self-serve plan changes. Keep those as explicit product work before offering them.
+The hosted product currently has one $37 USD one-time lifetime-access purchase. The app does not configure automatic tax, subscriptions for new customers, usage tiers, or multiple plans. Existing legacy subscriptions remain visible and manageable until they are canceled in Stripe.
 
 ## Database, migrations, and previews
 
@@ -87,7 +89,7 @@ Before a staged release:
 7. Export a synthetic workspace and close a disposable workspace; inspect the export and retention behavior.
 8. Confirm backup restore, rollback, alerts, and incident ownership before inviting real customers.
 
-Workspace owners and admins can review provider receipts in **Configuration → Provider usage**. New Monid runs include member and cell IDs; receipts from before migration `021_provider_usage_attribution.sql` are shown without attribution. Historical Treg receipts are retained for audit/export only and cannot be used for new runs. Costs are only what a provider reported to the app; reconcile against Monid's billing records before treating them as settled totals. **Configuration → Workspace activity** shows the latest 100 recorded exports, closure, shared-settings, provider connection updates, MCP-key and credential rotation, Clerk membership, invitations, and Stripe subscription events. It stores metadata only and never records provider credentials, OAuth state, checkout URLs, or row contents.
+Workspace owners and admins can review provider receipts in **Configuration → Provider usage**. New Monid runs include member and cell IDs; receipts from before migration `021_provider_usage_attribution.sql` are shown without attribution. Historical Treg receipts are retained for audit/export only and cannot be used for new runs. Costs are only what a provider reported to the app; reconcile against Monid's billing records before treating them as settled totals. **Configuration → Workspace activity** shows the latest 100 recorded exports, closure, shared-settings, provider connection updates, MCP-key and credential rotation, Clerk membership, invitations, and Stripe purchase/refund events (plus any legacy subscription events). It stores metadata only and never records provider credentials, OAuth state, checkout URLs, or row contents.
 
 Health endpoints intentionally omit detailed infrastructure errors. Use Vercel, Neon, Stripe, and Clerk operator logs to investigate. See the [authorization review](authorization-review.md) for route boundaries and the [operations runbook](operations-runbook.md) for safe recovery guidance.
 

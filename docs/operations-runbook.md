@@ -48,11 +48,11 @@ The cron worker claims the oldest queued cell or Find rows job and processes one
 - If a credential or encryption root may be exposed, restrict deployment access and revoke affected upstream keys. Rotate the stable encryption root only with a rehearsed re-encryption procedure.
 - If the encryption root is lost, restore the matching secret from the approved secret manager backup. Do not generate a replacement and overwrite the old value; saved provider credentials will no longer decrypt.
 - For a planned managed-vault rotation, follow the staged steps in [production setup](production-setup.md): deploy dual-key code with the current root, set new current plus old previous root, redeploy, and call `POST /api/internal/credentials/rotate` with the cron bearer credential until all three remaining counts are zero. Keep the previous root until old deployment instances are drained and a connection check succeeds. The endpoint never returns credential material.
-- Rotate compromised Clerk, Stripe, database, cron, Monid, OpenAI, AgentWeb, and MCP credentials at their source. Keep provider and app subscription billing separate.
+- Rotate compromised Clerk, Stripe, database, cron, Monid, OpenAI, AgentWeb, and MCP credentials at their source. Keep provider billing separate from the app's one-time workspace purchase.
 
 ## Workspace export and closure
 
-Workspace export is bounded to 50 MB and excludes credentials. Workspace closure requires a canceled app subscription and no running provider jobs, then soft-deletes the workspace while retaining provider usage receipts and Stripe reconciliation records; personal AgentWeb credentials are outside the workspace. Do not use this route as a legally complete account-erasure mechanism until backup and third-party retention procedures are defined.
+Workspace export is bounded to 50 MB and excludes credentials. Workspace closure requires any legacy recurring subscription to be canceled and no running provider jobs, then soft-deletes the workspace while retaining provider usage receipts and Stripe purchase records; personal AgentWeb credentials are outside the workspace. Do not use this route as a legally complete account-erasure mechanism until backup and third-party retention procedures are defined.
 
 ## Security incident
 

@@ -20,7 +20,7 @@ import { DEFAULT_ALLOWED_PHONE_PROVIDERS, type PhoneProvider } from '../phone-st
 import { assertWorkspaceActive, withDatabase } from './database';
 import { OrganizationStore, organizationPersistenceEnabled } from './organization-store';
 import { localCredentialVault } from './local-credential-store';
-import { subscriptionGate } from './stripe-billing';
+import { purchaseGate } from './stripe-billing';
 
 /* Provider access resolves only an explicit verification key or the encrypted workspace vault. */
 
@@ -344,7 +344,7 @@ export async function routeInput<S extends z.ZodType>(request: Request, schema: 
 	if (!parsed.success) return jsonError(`Invalid request: ${parsed.error.issues[0]?.message ?? 'bad input'}`, 400, failure('input_invalid'));
 	const access = await routeAccess(request);
 	if (access instanceof Response) return access;
-	const billingBlock = await subscriptionGate(access.account);
+	const billingBlock = await purchaseGate(access.account);
 	if (billingBlock) return billingBlock;
 	if (access.account && !await reservePaidRequest(access.account)) {
 		return new Response(JSON.stringify({ error: 'This workspace reached its enrichment request limit. Wait a minute and try again.' }), { status: 429, headers: { ...NO_STORE_HEADERS, 'retry-after': '60' } });
