@@ -23,11 +23,11 @@ const everyKey = (sources: Offering[]): AccessInputs => ({
 	server: { unlocked: sources.includes('server'), keys: offered('server'), trial: false },
 });
 
-test('key precedence per policy: request, vault, connection (Context.dev only), unlocked server', () => {
+test('only request and vault credentials are available to browser and MCP callers', () => {
 	const table: Array<[string, AccessPolicy, Offering[], (provider: Provider) => string | undefined]> = [
 		['browser: request overrides win', BROWSER_POLICY, ['request', 'vault', 'connection', 'server'], (p) => `request-${p}`],
 		['browser: vault beats connection and server', BROWSER_POLICY, ['vault', 'connection', 'server'], (p) => `vault-${p}`],
-		['browser: connection beats server for Context.dev', BROWSER_POLICY, ['connection', 'server'], (p) => p === 'context' ? 'connection-context' : `server-${p}`],
+		['browser: retired connection cookie and deployment keys are ignored', BROWSER_POLICY, ['connection', 'server'], () => undefined],
 		['browser: unlocked server keys', BROWSER_POLICY, ['server'], (p) => `server-${p}`],
 		['browser: locked server keys are never used', BROWSER_POLICY, [], () => undefined],
 		['mcp: request overrides win', MCP_POLICY, ['request', 'vault', 'connection', 'server'], (p) => `request-${p}`],
@@ -39,7 +39,7 @@ test('key precedence per policy: request, vault, connection (Context.dev only), 
 		assert.deepEqual(Object.fromEntries(PROVIDERS.map((p) => [p, keys[p]])), Object.fromEntries(PROVIDERS.map((p) => [p, winner(p)])), name);
 	}
 	const withVault = { ...everyKey(['connection', 'server']), vault: { keys: {}, preferences: {} } };
-	assert.equal(resolveGrant(BROWSER_POLICY, withVault).keys.context, 'server-context', 'a vault disables the legacy connection cookie');
+	assert.equal(resolveGrant(BROWSER_POLICY, withVault).keys.monid, undefined, 'a vault with no Monid key does not use retired connection cookies');
 });
 
 test('settings precedence per policy: model, classifier, endpoint and decider preference', () => {
@@ -134,7 +134,7 @@ test('redaction covers every provider in the list', () => {
 });
 
 test('availability reports every provider in the list from server-side sources only', async (t) => {
-	const env: Record<Provider, string> = { openai: 'OPENAI_API_KEY', monid: 'MONID_API_KEY', treg: 'TREG_API_KEY', context: 'CONTEXT_DEV_API_KEY', typesafe: 'TYPESAFE_API_KEY', hunter: 'HUNTER_API_KEY', prospeo: 'PROSPEO_API_KEY', quickenrich: 'QUICKENRICH_API_KEY', apollo: 'APOLLO_API_KEY', contactout: 'CONTACTOUT_API_KEY' };
+	const env: Record<Provider, string> = { openai: 'OPENAI_API_KEY', monid: 'MONID_API_KEY' };
 	setEnv(t, { ENRICHABLE_PASSWORD: '', ENRICHABLE_ALLOW_SERVER_KEYS_WITHOUT_PASSWORD: 'true', ENRICHABLE_OPENAI_TRIAL_ENABLED: 'false', ...Object.fromEntries(PROVIDERS.map((provider) => [env[provider], `server-${provider}`])) });
 	const request = () => new Request('http://localhost/api/keys/verify', { headers: { 'x-hunter-key': 'request-only' } });
 	const open = await serverKeyAvailability(request());

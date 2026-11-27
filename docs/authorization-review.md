@@ -14,8 +14,7 @@ Static source review performed 2026-11-24. This documents the current managed-ap
 | Route family | Server-side role/action check |
 | --- | --- |
 | `/api/organization-settings` writes | Workspace owner/admin |
-| `/api/treg/billing`, `/api/treg/topup` | Workspace owner/admin; charges the separate Treg balance |
-| `/api/treg/connections/**` mutations and OAuth start | Workspace owner/admin |
+| `/api/treg/**` | Retired routes return `410 Gone`; there are no active Treg actions |
 | `/api/billing/**` mutations | Workspace owner/admin; app subscription only |
 | `/api/mcp-key` writes | Workspace owner/admin |
 | `/api/workspace/export`, `/api/workspace` delete | Workspace owner/admin |
@@ -40,7 +39,7 @@ Sheet reads/writes, row enrichment, job status/cancellation, member preferences,
 
 - User-selected OpenAI endpoints pass through the DNS/IP and protocol guard in `credentials.ts` before connection/use.
 - Company-context research only uses the verified, saved workspace company domain and same-origin pages discovered from it.
-- External research/enrichment calls go through the Monid or Treg adapter. Treg requests are fixed to `https://treg.to`; no request-supplied host is accepted.
+- External research/enrichment calls go through the server-side Monid adapter. Monid requests use a fixed host; no request-supplied provider host is accepted.
 - The web-scraping/search transport is provider-side Monid, so the app does not fetch an arbitrary row-provided URL directly. Review this again if a direct fetcher or new provider adapter is added.
 
 ## Remaining verification

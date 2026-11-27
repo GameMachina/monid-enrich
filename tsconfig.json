@@ -35,8 +35,6 @@
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts",
     "**/*.mts",
-    ".next-browser/types/**/*.ts",
-    ".next-browser/dev/types/**/*.ts",
     ".next-self-hosted-test/types/**/*.ts",
     ".next-self-hosted-test/dev/types/**/*.ts",
     ".next-mobile-test/types/**/*.ts",

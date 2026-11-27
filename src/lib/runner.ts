@@ -97,7 +97,7 @@ interface Task {
 	readonly basis?: string;
 	/** Queued by "Run unfinished": a finished cell is never run. */
 	readonly unfinished?: boolean;
-	/** Stable across transport retries; Treg stores the result for this key to prevent duplicate charges. */
+	/** Stable across transport retries and used to reconcile this cell's current execution. */
 	idempotencyKey?: string;
 	idempotencyFingerprint?: string;
 	state: TaskState;
@@ -658,16 +658,14 @@ export class Runner {
 		}
 		if (plan.local) { await finish(resultCell(plan, evaluate(op, plan.record))); return; }
 		const startedCell = startCell(plan, this.owner, this.now());
-		const usesTreg = (op.kind === 'email-enrichment' || op.kind === 'phone-enrichment' || op.kind === 'social-enrichment') && op.dataProvider === 'treg';
 		const currentFingerprint = inputFingerprint(plan.version);
 		const priorMeta = plan.cell?.m;
 		const reusablePriorRun = plan.cell?.s === 'error' && priorMeta?.inputFingerprint === currentFingerprint;
 		if (task.idempotencyFingerprint && task.idempotencyFingerprint !== currentFingerprint) task.idempotencyKey = nanoid(32);
 		else if (!task.idempotencyFingerprint && reusablePriorRun && priorMeta?.jobIdempotencyKey && priorMeta.jobIdempotencyCreatedAt && this.now() - priorMeta.jobIdempotencyCreatedAt <= 24 * 60 * 60 * 1000) task.idempotencyKey = priorMeta.jobIdempotencyKey;
-		if (usesTreg && !task.idempotencyFingerprint && reusablePriorRun && priorMeta?.tregIdempotencyKey && priorMeta.tregIdempotencyCreatedAt && this.now() - priorMeta.tregIdempotencyCreatedAt <= 24 * 60 * 60 * 1000) task.idempotencyKey = priorMeta.tregIdempotencyKey;
 		task.idempotencyFingerprint = currentFingerprint;
 		const selectedDataProvider = op.kind === 'email-enrichment' || op.kind === 'phone-enrichment' || op.kind === 'social-enrichment' ? op.dataProvider : undefined;
-		const marker = { ...startedCell, m: { ...(startedCell.m ?? {}), ...(selectedDataProvider ? { dataProvider: selectedDataProvider } : {}), inputFingerprint: currentFingerprint, jobIdempotencyKey: task.idempotencyKey, jobIdempotencyCreatedAt: this.now(), ...(usesTreg && task.idempotencyKey ? { tregIdempotencyKey: task.idempotencyKey, tregIdempotencyCreatedAt: this.now() } : {}) } };
+		const marker = { ...startedCell, m: { ...(startedCell.m ?? {}), ...(selectedDataProvider ? { dataProvider: selectedDataProvider } : {}), inputFingerprint: currentFingerprint, jobIdempotencyKey: task.idempotencyKey, jobIdempotencyCreatedAt: this.now() } };
 		const started = await commit(marker, 'start');
 		if (started !== 'applied') {
 			// Inputs moved, or someone else changed the cell first: plan it again rather than fail, so a run started

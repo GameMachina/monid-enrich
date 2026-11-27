@@ -1,4 +1,4 @@
-# Enrichable MCP
+# Monid Enrich MCP
 
 Enrichable exposes a stateless Streamable HTTP MCP endpoint at `/mcp`. An external agent plans the workflow and requests successive batches. Enrichable validates operations, executes bounded calls, and persists results in the same workspace as the browser app. Hosted per-cell enrichments can be persisted as durable jobs when `ENRICHABLE_DURABLE_ENRICHMENT=true` and the worker is configured. The MCP endpoint remains synchronous and bounded; natural-language Find rows is not durable yet.
 
@@ -7,7 +7,7 @@ Enrichable exposes a stateless Streamable HTTP MCP endpoint at `/mcp`. An extern
 1. Apply the database migrations with `npm run db:migrate`. Migration `003_mcp.sql` adds organization keys and request bookkeeping; `004_mcp_recoverable_keys.sql` adds encrypted key storage. Set `ENRICHABLE_MCP_ENCRYPTION_SECRET` to a stable random secret of at least 32 characters, identical on every server sharing the database, before creating or rotating keys. Keep a secure backup; changing it requires re-encrypting existing keys.
 2. Open **Configuration → Agent access → Create agent key**.
 3. Use **Copy MCP config** (the key is embedded) or **Show key** in Configuration at any time, including after reload and from another signed-in organization member’s account. The secret is encrypted at rest with AES-256-GCM, bound to the workspace and key version; authentication still uses its SHA-256 hash. Secrets are returned only by the authenticated reveal endpoint with `Cache-Control: no-store`, and are never saved to browser storage.
-4. Paste the config into your MCP client. It uses your deployment's `/mcp` URL and an `Authorization: Bearer …` header. For a self-hosted client that does not have the workspace vault, pass the provider keys it needs with `x-openai-key`, `x-monid-key`, and/or `x-treg-key` headers. Monid and Treg keys remain separate.
+4. Paste the config into your MCP client. It uses your deployment's `/mcp` URL and an `Authorization: Bearer …` header. For a self-hosted client that does not have the workspace vault, pass the keys it needs with `x-openai-key` and/or `x-monid-key` headers.
 
 For clients that accept an `mcpServers` configuration:
 
@@ -19,8 +19,7 @@ For clients that accept an `mcpServers` configuration:
       "headers": {
         "Authorization": "Bearer enr_mcp_YOUR_ORGANIZATION_KEY",
         "x-openai-key": "YOUR_OPENAI_KEY",
-        "x-monid-key": "YOUR_MONID_KEY",
-        "x-treg-key": "YOUR_TREG_KEY"
+        "x-monid-key": "YOUR_MONID_KEY"
       }
     }
   }
@@ -35,9 +34,9 @@ The shared key grants access to Monid Enrich and its saved workspace provider co
 
 Migration `006_organization_settings.sql` adds organization preferences, encrypted provider records, and metadata-only audit events. Organization settings are keyed by verified identity issuer and organization ID. They are shared by every signed-in member and device, and can be managed in Configuration. Save new keys there; browsers receive only connection status and masked prefixes. Existing account-local keys/settings require explicit import, which refuses to overwrite existing organization configuration.
 
-Managed SaaS sign-in uses Clerk. Workspace members save Monid/Treg credentials in the server-side encrypted vault; logging out does not disconnect provider credentials. Self-hosted mode keeps its existing browser-workspace access model.
+Managed SaaS sign-in uses Clerk. Workspace admins save the Monid credential in the server-side encrypted vault; logging out does not disconnect it. Self-hosted mode keeps its existing browser-workspace access model.
 
-Optional headers: `x-openai-key`, `x-monid-key`, `x-treg-key`, `x-openai-model`, and `x-openai-base-url`. Supported data operations explicitly select Monid or Treg in their column definition. A Treg selection does not use the Monid key or wallet, and unsupported Treg operations do not fall back to Monid. Base URL overrides use the same URL and DNS validation as browser enrichment. Overriding the saved OpenAI endpoint requires an explicit `x-openai-key`; a stored organization key is never forwarded to a different request-supplied endpoint.
+Optional headers: `x-openai-key`, `x-monid-key`, `x-openai-model`, and `x-openai-base-url`. All external data operations use Monid; the app does not make direct calls to Monid's routed vendors. Base URL overrides use the same URL and DNS validation as browser enrichment. Overriding the saved OpenAI endpoint requires an explicit `x-openai-key`; a stored organization key is never forwarded to a different request-supplied endpoint.
 
 ## People lists
 
@@ -68,7 +67,7 @@ A sheet saved by an older version is upgraded the first time an agent reads it, 
 
 Prefer Enrichable’s specialized operations over implementing providers, scraping, or research yourself. Use company/person fields for supported facts, Hunter/Prospeo for contact data, scrape/search for web data, check/classify/score for decisions, email-draft for emails, and no-cost template for deterministic text. Reserve generic ai and deep-research answer for work specialized operations cannot handle. All operations use the same validation and execution paths as the browser app.
 
-For additional research beyond these operations, use the explicitly selected Monid or Treg-backed operations supported by the sheet. Write confirmed profile URLs or company domains back into the sheet, then rerun affected enrichments in dependency order to persist results and provenance. Never guess missing identities or URLs. Do not treat an unsupported Treg capability as permission to route the request to Monid.
+For additional research beyond these operations, use the Monid-backed operations supported by the sheet. Write confirmed profile URLs or company domains back into the sheet, then rerun affected enrichments in dependency order to persist results and provenance. Never guess missing identities or URLs.
 
 A single `create_sheet` call can create the app’s Companies layout with an existing column configured for enrichment:
 

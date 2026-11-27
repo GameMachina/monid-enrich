@@ -11,7 +11,7 @@ npm install
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). The app creates a workspace automatically and persists it in an embedded, disk-backed database under `.data/database`. Connect Monid or Treg from **Configuration → Connections** to use that provider's supported data operations. Spreadsheet editing, formulas, templates, imports, and exports work without provider keys. OpenAI is optional; connect your own key to enable reasoning-dependent features.
+Open [http://localhost:3000](http://localhost:3000). The app creates a workspace automatically and persists it in an embedded, disk-backed database under `.data/database`. Connect Monid from **Configuration → Connections** to use research and enrichment operations. Spreadsheet editing, formulas, templates, imports, and exports work without provider keys. OpenAI is optional; connect your own key to enable reasoning-dependent features.
 
 On a persistent self-hosted server, the app creates a private encryption key file under `.data/` when no secret is configured. Set a stable `ENRICHABLE_LOCAL_VAULT_SECRET` (at least 32 characters) to manage that key yourself. Ephemeral/serverless deployments require an explicit stable secret, or `DATABASE_URL` plus `ENRICHABLE_MCP_ENCRYPTION_SECRET` for the shared credential vault. A PostgreSQL `DATABASE_URL` is optional for a single self-hosted instance; the default embedded database is single-process and is not for multi-instance sharing. Set `DATABASE_URL` for a shared deployment and apply its schema with `npm run db:migrate`. `ENRICHABLE_LOCAL_DATABASE_PATH` changes the embedded database directory. See [.env.example](.env.example) for deployment settings.
 
@@ -19,13 +19,12 @@ The embedded store uses PGlite rather than SQLite because the workspace schema a
 
 ## Provider boundaries
 
-- Monid and Treg are distinct, explicit data providers. Supported data columns choose Monid or Treg before they run; unsupported Treg operations stop with a clear message and never fall back to Monid.
+- Monid is the sole external data provider. Research and enrichment requests run through Monid's API; configured route waterfalls stay inside Monid. The app does not call upstream data vendors directly or fall back to another provider.
 - OpenAI is only used when a workspace member supplies an OpenAI key. It supports reasoning, classification, scoring, and natural-language row discovery. The app does not fall back to a different model provider.
 - In managed mode, provider keys are encrypted in the server-side workspace vault. The browser receives connection status and masked metadata, never the saved key. Self-hosted browser mode has separate local-storage behavior; see [security](SECURITY.md).
-- Monid and Treg keep separate connection, billing, usage, and run receipts. Cell provenance records the selected provider, run status, sources, and returned cost/usage where available. Uncertain Treg submissions reuse their saved idempotency key; they are never submitted as a new call automatically.
+- Monid credentials are workspace-scoped and stored in the encrypted server-side vault in managed mode. Monid bills the connected workspace wallet. Cell provenance records run status, sources, and returned cost/usage where available. Historical Treg receipts remain viewable/exportable but cannot be used for new runs.
 - Mobile phone enrichment supports LeadMagic and Clay through Monid, with workspace route access, each member's default strategy, and per-column overrides. Workspace Monid credentials bill the workspace wallet; actual costs are attached to the cell.
-- Treg supports company and people discovery, company/person data, company funding events, web search and page reading, email and phone lookup, email verification, and public profile search across LinkedIn, Instagram, Facebook, X, TikTok, and YouTube. Some person fields, certain scrape modes, website country filters, and social actions are not supported; these gaps are reported without provider fallback.
-- See [docs/treg-provider.md](docs/treg-provider.md) for Treg endpoint behavior, separate billing, and the current gap list.
+- See [docs/rebuild-status.md](docs/rebuild-status.md) for the visible workflow inventory, Monid API boundary, architecture, and known gaps.
 
 ## Spreadsheet features
 
@@ -39,7 +38,7 @@ The embedded store uses PGlite rather than SQLite because the workspace schema a
 
 See [docs/rebuild-status.md](docs/rebuild-status.md) for the public UI and workflow inventory, visual specification, data model, architecture, provider operations reviewed, implementation stages, and known gaps.
 
-The managed SaaS foundations are implemented, but the repository is not launch-ready until Clerk, Neon, Stripe, Vercel Cron, backups, monitoring, legal policy, and staging verification are configured. Track the remaining launch gates in the [production-readiness backlog](docs/production-readiness-backlog.md); see [production setup](docs/production-setup.md) before deploying.
+The managed SaaS foundations are implemented, but the repository is not launch-ready until Clerk, Neon, Stripe, Vercel Cron, backups, monitoring, legal policy, and staging verification are configured. This app uses Clerk Organizations for tenancy; it does not implement multi-tenant provider OAuth. Monid connects with a workspace API key. Track the remaining launch gates in the [production-readiness backlog](docs/production-readiness-backlog.md); see [production setup](docs/production-setup.md) before deploying.
 
 ## Development checks
 

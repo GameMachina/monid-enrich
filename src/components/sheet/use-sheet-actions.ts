@@ -1,7 +1,7 @@
 'use client';
 
 import { useSettings } from '@/components/app/settings-context';
-import { DATA_PROVIDER_IDS, PROVIDER_INFO } from '@/components/app/providers';
+import { PROVIDER_INFO } from '@/components/app/providers';
 import { announce } from '@/components/ui/announcer';
 import { useToast } from '@/components/ui/toast';
 import { trackEvent } from '@/lib/analytics';
@@ -50,7 +50,7 @@ export function useSheetActions({ sheet, commands, content, selection, overlays,
 	const request = (plan: RunPlan | null, seen?: RunEstimate) => {
 		if (!plan) return;
 		if (plan.kind === 'needs-keys') {
-			if (plan.providers.length === 1 && DATA_PROVIDER_IDS.includes(plan.providers[0] as 'monid' | 'treg')) { openKeys(plan.providers[0] as 'monid' | 'treg'); return; }
+			if (plan.providers.length === 1 && plan.providers[0] === 'monid') { openKeys('monid'); return; }
 			const names = plan.providers.map((provider) => PROVIDER_INFO[provider].name).join(' and ');
 			setConfirm({ title: `Connect ${names}`, description: `This column runs on ${names}. Add ${plan.providers.length === 1 ? 'its key' : 'their keys'} in Configuration → Connections, then run it again.`, label: 'Open Connections', action: async () => { router.push('/app/settings'); } });
 			return;
@@ -58,7 +58,7 @@ export function useSheetActions({ sheet, commands, content, selection, overlays,
 		if (plan.kind === 'nothing') { toast(NOTHING_TO_RUN[plan.reason], 'info'); return; }
 		const { estimate } = plan;
 		if (!asksFirst(estimate, seen)) { void plan.execute().catch(report('Could not queue these cells. Please try again.')); return; }
-		setConfirm({ title: `Run ${plural(estimate.cells, 'cell')}?`, description: `${estimate.message}. Each selected data provider bills its own balance: Monid usage goes to the workspace Monid wallet, Treg usage goes to the separate Treg team balance, and any OpenAI usage is billed separately. Exact dollar totals are not available as a pre-run quote; provider charges can vary by route and match, and a no-match may still cost money. Check each operation’s spend cap where available. Reported usage appears in cell details and Provider usage.`, label: 'Run', action: plan.execute });
+		setConfirm({ title: `Run ${plural(estimate.cells, 'cell')}?`, description: `${estimate.message}. Monid usage is billed to the workspace Monid wallet; any OpenAI usage is billed separately. Exact dollar totals are not available as a pre-run quote, and a no-match may still cost money. Reported usage appears in cell details and Provider usage.`, label: 'Run', action: plan.execute });
 	};
 	const runCells = (targets: Row[], columns: Column[], mode: RunMode, options: { limitToRows?: boolean; optimistic?: boolean } = {}) => request(commands.plan(targets, columns, mode, { ready: providerReady, grid: content.grid, sheetColumns: sheet.columns, ...options }));
 	const confirmDeleteRows = (targets: Row[]) => setConfirm({

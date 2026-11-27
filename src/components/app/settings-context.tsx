@@ -35,8 +35,8 @@ interface SettingsContextValue {
 	providerReady: (provider: Provider) => boolean;
 	hasJev: boolean;
 	keysOpen: boolean;
-	openKeys: (provider?: 'monid' | 'treg') => void;
-	keysRequiredProvider?: 'monid' | 'treg';
+	openKeys: (provider?: 'monid') => void;
+	keysRequiredProvider?: 'monid';
 	closeKeys: () => void;
 }
 
@@ -62,7 +62,7 @@ export function SettingsProvider({ children, logolinkPublicId, selfHosted = fals
 	const [server, setServer] = useState<ServerKeys | null>(null);
 	const [ready, setReady] = useState(false);
 	const [keysOpen, setKeysOpen] = useState(false);
-	const [keysRequiredProvider, setKeysRequiredProvider] = useState<'monid' | 'treg' | undefined>();
+	const [keysRequiredProvider, setKeysRequiredProvider] = useState<'monid' | undefined>();
 	const [trialLimitMessage, setTrialLimitMessage] = useState<string | null>(null);
 	const promptedLimit = useRef<string | null>(null);
 	const reportTrialLimit = useCallback((message: string) => {
@@ -130,10 +130,10 @@ export function SettingsProvider({ children, logolinkPublicId, selfHosted = fals
 	const connections = useMemo(() => deriveConnections({ settings, organization, server, selfHosted, trialLimited: Boolean(trialLimitMessage) }), [settings, organization, server, selfHosted, trialLimitMessage]);
 	// A key of the member's own replaces the trial, so its limit no longer applies.
 	const activeTrialLimit = connections.openai.state === 'connected' || connections.openai.state === 'saved' ? null : trialLimitMessage;
-	const hasKeys = isReady(connections.monid) || isReady(connections.treg);
+	const hasKeys = isReady(connections.monid);
 	const providerReady = useCallback((provider: Provider) => isReady(connections[provider]), [connections]);
 	const hasJev = false;
-	const openKeys = useCallback((provider?: 'monid' | 'treg') => { setKeysRequiredProvider(provider); setKeysOpen(true); }, []);
+	const openKeys = useCallback((provider?: 'monid') => { setKeysRequiredProvider(provider); setKeysOpen(true); }, []);
 	const closeKeys = useCallback(() => { setKeysOpen(false); setKeysRequiredProvider(undefined); }, []);
 	const value = useMemo<SettingsContextValue>(() => ({ selfHosted, workspaceAdmin, contextSignIn, workspaceName, settings, update, organization, memberPreferences: memberSettings.preferences, memberPreferencesError, updateMemberPreferences, settingsError, retrySettings, disconnectProvider, server, connections, ready, hasKeys, providerReady, hasJev, logolinkPublicId, keysOpen, keysRequiredProvider, trialLimitMessage: activeTrialLimit, reportTrialLimit, openKeys, closeKeys }), [selfHosted, workspaceAdmin, contextSignIn, workspaceName, settings, update, organization, memberSettings.preferences, memberPreferencesError, updateMemberPreferences, settingsError, retrySettings, disconnectProvider, server, connections, ready, hasKeys, providerReady, hasJev, logolinkPublicId, keysOpen, keysRequiredProvider, activeTrialLimit, reportTrialLimit, openKeys, closeKeys]);
 	return <SettingsContext.Provider value={value}>{children}</SettingsContext.Provider>;

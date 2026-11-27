@@ -112,8 +112,6 @@ export interface ServerKeys {
 	openai: boolean;
 	monid?: boolean;
 	monidSaved?: boolean;
-	treg?: boolean;
-	tregSaved?: boolean;
 	openaiSaved?: boolean;
 	context?: boolean;
 	typesafe?: boolean;

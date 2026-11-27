@@ -40,9 +40,13 @@ export const EmailDraftSchema = z.object({
 export type EmailDraft = z.infer<typeof EmailDraftSchema>;
 
 export const EMAIL_PROVIDERS = ['quickenrich', 'hunter', 'apollo', 'prospeo', 'contactout'] as const;
-export const DATA_PROVIDERS = ['monid', 'treg'] as const;
-export const DataProviderSchema = z.enum(DATA_PROVIDERS);
+/** Only Monid is a supported data provider. Keep accepting legacy Treg values in stored/imported sheets,
+ * but normalize them to Monid at every schema boundary so old columns cannot call Treg. */
+export const DATA_PROVIDERS = ['monid'] as const;
 export type DataProvider = typeof DATA_PROVIDERS[number];
+export type HistoricalDataProvider = DataProvider | 'treg';
+/** Migrate old Treg column definitions to Monid when reading persisted sheets or legacy clients. */
+export const DataProviderSchema = z.preprocess((value) => value === 'treg' ? 'monid' : value, z.enum(DATA_PROVIDERS));
 export type EmailProvider = typeof EMAIL_PROVIDERS[number] | 'monid';
 const STORED_EMAIL_PROVIDERS = ['monid', ...EMAIL_PROVIDERS] as const;
 export const PHONE_LOOKUP_PROVIDERS = ['leadmagic', 'clay', 'ai_ark', 'reversecontact', 'prospeo'] as const;
@@ -57,8 +61,6 @@ export const ColumnOpSchema = z.discriminatedUnion('kind', [
   domain: z.string().trim().max(500).default(''),
   profileUrl: z.string().max(500).default(''),
   providers: z.array(z.enum(STORED_EMAIL_PROVIDERS)).min(1).max(5).default([...EMAIL_PROVIDERS]).refine(items => new Set(items).size === items.length, 'Each provider can appear only once.'),
-  tregRouteWaterfall: z.boolean().optional(),
-  tregRouteMaxCostUsd: z.number().finite().min(0.001).max(1).optional(),
  }),
  z.object({
   kind: z.literal('phone-enrichment'),
@@ -69,8 +71,6 @@ export const ColumnOpSchema = z.discriminatedUnion('kind', [
   profileUrl: z.string().max(500).default(''),
   email: z.string().max(320).default(''),
   providers: z.array(PhoneLookupProviderSchema).min(1).max(5).default(['ai_ark', 'reversecontact']).refine(items => new Set(items).size === items.length, 'Each provider can appear only once.'),
-  tregRouteWaterfall: z.boolean().optional(),
-  tregRouteMaxCostUsd: z.number().finite().min(0.001).max(1).optional(),
  }),
  z.object({
   kind: z.literal('social-enrichment'),
@@ -82,8 +82,6 @@ export const ColumnOpSchema = z.discriminatedUnion('kind', [
   email: z.string().max(320).default(''),
   platform: SocialPlatformSchema.default('linkedin'),
   providers: z.array(SocialProviderSchema).min(1).max(5).default(['people_enrich', 'web_search']).refine(items => new Set(items).size === items.length, 'Each provider can appear only once.'),
-  tregRouteWaterfall: z.boolean().optional(),
-  tregRouteMaxCostUsd: z.number().finite().min(0.001).max(1).optional(),
  }),
  z.object({
   kind: z.literal('email-draft'),
@@ -259,7 +257,7 @@ export interface CellMeta {
 	/** Provider-specific usage; Monid and Treg records are kept separate. */
 	provider?: EmailProvider | PhoneLookupProvider;
 	/** Explicit data provider selected for this operation; separate from any waterfall's internal source. */
-	dataProvider?: DataProvider;
+	dataProvider?: HistoricalDataProvider;
 	enrichment?: { verified?: boolean; verificationStatus?: string; costUsd: number; attempts: Array<{ provider: EmailProvider; source: 'own-key' | 'included' | 'monid-workspace'; status: string; costUsd: number }> };
 	providerCredits?: number;
 	providerCreditUnit?: string;
@@ -341,7 +339,7 @@ export const PopulateRequestSchema = z.object({
 	query: z.string().min(3).max(2000),
 	entity: z.enum(ENTITY_KINDS),
 	dataProvider: DataProviderSchema.default('monid'),
-	/** For Treg people searches, retrieve education, skills and work history from the selected LinkedIn full-profile route. */
+	/** Ignored legacy setting; retained only so old saved Find rows requests remain readable. */
 	enrichFullProfiles: z.boolean().default(false),
 	/** Stable only for retries of this Find rows submission. */
 	idempotencyKey: z.string().min(8).max(128).optional(),
@@ -447,7 +445,7 @@ export const ComposeColumnRequestSchema = z.object({
 	excludeFormula: z.boolean().optional(),
 	model: z.string().max(100).optional(),
 });
-export type ComposeColumnRequest = z.input<typeof ComposeColumnRequestSchema>;
+export type ComposeColumnRequest = Omit<z.input<typeof ComposeColumnRequestSchema>, 'dataProvider'> & { dataProvider?: DataProvider };
 
 export type FormulaSuggestion = { kind: 'formula'; request: string };
 
@@ -463,7 +461,6 @@ export interface KeyVerification {
 	openai: { ok: boolean; message?: string; issue?: 'key' | 'billing' | 'model' | 'rate-limit' | 'connection'; inference?: boolean };
 	context: { ok: boolean; message?: string; credits?: number; issue?: 'key' | 'credits' };
 	monid?: { ok: boolean; message?: string; balanceUsd?: number; issue?: 'key' | 'balance' };
-	treg?: { ok: boolean; message?: string; balanceUsd?: number; issue?: 'key' | 'balance' | 'connection' };
 	typesafe: { ok: boolean; message?: string; configured: boolean };
 }
 

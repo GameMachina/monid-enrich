@@ -1,9 +1,8 @@
 import type { Metadata } from 'next';
-import { TregConnectionsPage } from '@/components/app/treg-connections-page';
+import { redirect } from 'next/navigation';
 
-export const metadata: Metadata = { title: 'Treg connections' };
-export const instant = false;
+export const metadata: Metadata = { title: 'Connections' };
 
 export default function Page() {
-	return <TregConnectionsPage />;
+	redirect('/app/settings');
 }

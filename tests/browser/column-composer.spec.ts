@@ -11,7 +11,7 @@ for (const width of [1360, 390]) {
   await page.route('**/api/organization-settings', route => route.fulfill({ json: { local: true } }));
   await page.route('**/api/context/usage*', route => route.fulfill({ json: { credits: 25000, used: 0 } }));
   await page.route('**/api/openai/usage*', route => route.fulfill({ json: { enabled: false } }));
-  await page.route('**/api/keys/verify*', route => route.fulfill({ json: { openai: true, context: true, typesafe: false, passwordRequired: false } }));
+  await page.route('**/api/keys/verify*', route => route.fulfill({ json: { openai: true, monid: true, passwordRequired: false } }));
   await page.route('**/api/enrich', route => { throw new Error(`Unexpected enrichment: ${route.request().url()}`); });
   await page.route('**/api/sheets**', async route => {
    if (route.request().method() === 'PATCH') {
@@ -37,8 +37,6 @@ for (const width of [1360, 390]) {
   const dialog = page.getByRole('dialog', { name: 'Add AI column', exact: true });
   const prompt = dialog.getByRole('textbox', { name: 'Describe the column', exact: true });
   const compose = dialog.getByRole('button', { name: 'Create column', exact: true });
-  await dialog.getByRole('combobox', { name: 'Data provider for this AI column' }).selectOption('treg');
-  await expect(compose).toBeDisabled();
   await prompt.fill('Write a personalized proposal for /company');
   await page.getByRole('option').filter({ hasText: 'Company' }).click();
   await expect(prompt.locator('.column-prompt-pill')).toHaveText('Company');
@@ -67,8 +65,7 @@ for (const width of [1360, 390]) {
   expect(composed).toBe('Write a personalized proposal for {{Company}}');
   await expect(dialog.getByRole('textbox', { name: 'Question', exact: true }).locator('.column-prompt-pill')).toHaveText('Company');
   await expect(dialog.getByRole('combobox', { name: 'Answer type', exact: true })).toContainText('Document');
-  expect(composedProvider).toBe('treg');
-  await expect(dialog.getByRole('combobox', { name: 'Data provider', exact: true })).toHaveValue('treg');
+  expect(composedProvider).toBe('monid');
   await dialog.getByLabel('Column name', { exact: true }).fill('Company');
   await expect(dialog.getByText('Another column already has this name', { exact: true })).toBeVisible();
   await expect(dialog.getByRole('button', { name: 'Add without running', exact: true })).toBeDisabled();

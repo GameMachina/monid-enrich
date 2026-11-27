@@ -4,6 +4,6 @@ Add → Add column → Email enrichment maps name, company domain, and optional 
 
 ## Choose the data provider
 
-The column has a separate **Data provider** choice. Monid keeps its ordered provider waterfall and charges the workspace Monid wallet. Treg runs through Treg's own lookup endpoint and charges the connected Treg team's balance. Treg misses may have different billing behavior by operation; the column explains the cost rules before a run. Switching this choice does not move credentials, balances, or run history between providers.
+The column uses Monid's ordered provider waterfall and charges the connected workspace Monid wallet. The app does not call upstream email vendors directly; each selected route is submitted through Monid.
 
-Provider requests use server-side credentials. The browser receives connection status and masked metadata, never the saved key. The cell detail records the selected provider, returned sources/confidence, run status, and cost/usage when available. See [Treg provider support](treg-provider.md) for supported operations, billing, and current gaps.
+Provider requests use server-side credentials. The browser receives connection status and masked metadata, never the saved key. The cell detail records the selected route, returned sources/confidence, Monid run status, and cost/usage when available. Historical Treg receipts remain read-only.

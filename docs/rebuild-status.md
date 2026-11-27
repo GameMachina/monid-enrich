@@ -15,9 +15,9 @@ The reference is a spreadsheet-first research app. Its strongest visual cues are
 | Add/edit column | Natural-language column composer, operation-specific fields, referenced-column templates, dependency previews, formula and enrichment configuration | `column-editor.tsx`, `column-op-fields.tsx`, `column-operations.ts` |
 | Find rows | Company or people prompt, country/size filters, target amount, streaming progress, deduplication, cancel and continue | `company-editor.tsx`, `populate-client.ts`, `/api/populate` |
 | Import/export | CSV, TSV, JSON, and XLSX import; CSV, XLSX, and JSON export; create from blank or template | `import-csv-dialog.tsx`, `src/lib/xlsx.ts`, export actions |
-| Configuration | Workspace and separate Monid/Treg connection and billing status, optional OpenAI key, model/preferences, MCP access | `settings-page.tsx`, `connections.tsx`, `keys-dialog.tsx` |
+| Configuration | Workspace Monid connection and billing status, optional OpenAI key, model/preferences, MCP access | `settings-page.tsx`, `connections.tsx`, `keys-dialog.tsx` |
 | Mobile provider strategy | Workspace route allowlist, member default strategy, column-level strategy or no-match waterfall; run costs still belong to the workspace Monid wallet | `settings-page.tsx`, `member-settings-store.ts`, `column-op-fields.tsx`, `contact-providers.ts` |
-| First-use connection dialog | Requires either Monid or Treg, offers the other provider and OpenAI as optional connections, explains encrypted saves, verifies keys, and names unsupported features | `keys-dialog.tsx` |
+| First-use connection dialog | Connects Monid and optionally OpenAI, explains encrypted saves, verifies keys, and names unsupported features | `keys-dialog.tsx` |
 | Login/session boundary | Standalone local workspace initialization; no upstream OAuth in this fork | `src/proxy.ts`, `session-boundary.tsx` |
 
 ### Visual and interaction specification
@@ -32,14 +32,14 @@ The reference is a spreadsheet-first research app. Its strongest visual cues are
 
 ## Data model and invariants
 
-- A workspace owns its sheets, columns, rows, settings, encrypted provider credentials, separate Monid and Treg run records, and usage metadata.
+- A workspace owns its sheets, columns, rows, settings, encrypted Monid/OpenAI credentials, Monid run records, and usage metadata. Legacy Treg receipts are read-only history.
 - The workspace controls which Monid mobile routes are allowed. Each member has a private default strategy, and a saved mobile column snapshots its own strategy. Monid requests use the workspace credential and are billed to that workspace.
-- Supported data operations explicitly record Monid or Treg. Their encrypted credentials, billing balances, usage records, run statuses, and provenance stay separate; Treg does not fall back to Monid.
+- Monid is the only external data provider. Its API key is workspace-scoped, route waterfalls are explicit in operation definitions, and run status/provenance is preserved. OpenAI is an optional user-provided reasoning key.
 - Columns are either source data, formulas, or enriched operations. An operation records its definition and referenced-column dependencies.
 - Each cell stores its value plus status, update time, errors, source URLs, confidence/reasoning, the selected provider, provider-specific run receipts, and an input/operation fingerprint. Editing an input marks affected dependent results outdated; a rerun is explicit.
 - Sheet and row edits use revision-aware writes and app-side idempotency keys. Duplicate requests with the same key resolve to the recorded operation; stale revisions produce a conflict for safe refresh/retry.
 - The local standalone workspace partitions data by a hashed workspace identity and persists sheets/rows in embedded PGlite at `.data/database`; saved API keys remain in the encrypted local vault. Hosted and multi-instance deployments use the shared workspace schema and database vault through PostgreSQL.
-- Monid run persistence stores its run ID, endpoint, status, cost/usage, result count, error summary, timestamp, and a hash of inputs rather than duplicating row prompts in the run ledger. Treg receipts are stored in a separate workspace table and deduplicated by Treg idempotency key.
+- Monid run persistence stores its run ID, endpoint, status, cost/usage, result count, error summary, timestamp, and a hash of inputs rather than duplicating row prompts in the run ledger. Retired Treg receipts remain in their legacy table for audit/export only.
 
 ## Proposed architecture and implementation stages
 
@@ -47,14 +47,10 @@ The default local backend is disk-backed embedded PGlite, using the same Postgre
 
 1. **Reference and shell:** inventory the public screens and preserve the compact spreadsheet visual system while replacing product copy, links, and logos.
 2. **Standalone workspace:** initialize a local workspace without upstream identity services; retain workspace scoping for sheets, rows, columns, operations, settings, and run metadata.
-3. **Provider boundary:** keep typed server-only Monid and Treg adapters. Every supported data operation explicitly chooses its provider; each adapter sends requests only to its own API, and saved API keys never leave the server. The only optional model path is the workspace member's own OpenAI key.
-4. **Run lifecycle:** persist provider-specific receipts and poll asynchronous runs by their returned ID. Treg retries reuse the same idempotency key within its supported retention window; uncertain submissions are not automatically resubmitted as new calls. Cell and sheet actions keep revision and idempotency checks.
+3. **Provider boundary:** use a typed server-only Monid adapter for every external data operation. The app submits research and routed vendor calls only to Monid's API; saved API keys never leave the server. The only optional model path is the workspace member's own OpenAI key.
+4. **Run lifecycle:** persist Monid receipts and poll asynchronous runs by their returned ID. Uncertain submissions are not automatically resubmitted as new calls. Cell and sheet actions keep revision and idempotency checks.
 5. **Spreadsheet workflow:** retain import/export, formulas, templates, filters, sorting, cell editing, dependency-aware enrichment, provenance, and reruns.
 6. **Verification and gap review:** typecheck, lint, unit/server checks, production build, then a local browser walkthrough of first-use setup, sheet grid, a cell detail view, and import/settings. Review Monid API and unsupported-operation gaps before adding new enrichment operations.
-
-## Treg API review
-
-Treg is a separate workspace-connected provider, with its own API key, team balance, hosted top-up checkout, run ledger, and cell provenance. The server adapter uses `X-Treg-Token` for REST calls and Treg's `/call/{endpoint}` API. Run ID, status, usage cost, served-via metadata, and source/confidence fields are retained when Treg returns them. Async calls are polled through `/calls/{call_id}/result`; uncertain retries reuse the same `Idempotency-Key` within Treg's documented 24-hour replay window. Top-ups use Treg's `POST /billing/topup` and continue in Treg-hosted checkout. See [docs/treg-provider.md](treg-provider.md) and the [Treg API documentation](https://treg.to/docs).
 
 ## Monid API review
 
@@ -95,13 +91,13 @@ Catalog prices and endpoint schemas can change. Mobile endpoint details and list
 | Priority | Stage | Status |
 | --- | --- | --- |
 | P0 | Standalone identity/workspace, branding, secure server-side Monid and optional OpenAI connections | Implemented |
-| P0 | Distinct Monid/Treg provider paths, explicit contact-column selection, separate billing and receipts, async polling, provenance, safe retries | Implemented; live calls and billing flows remain unverified |
+| P0 | Monid-only provider boundary, explicit contact-column selection, async polling, provenance, safe handling of uncertain runs | Implemented; live calls and billing flows remain unverified |
 | P0 | Spreadsheet shell, edit/import/export, natural-language company/people search, operation columns, cell details | Implemented; local visual review remains |
 | P1 | Close reference match for all menus/dialogs, responsiveness, formula/filter/sort behavior, and templates | Existing reference-derived components retained; verify during browser walkthrough |
 | P1 | Dedicated email, phone, and social columns with ordered Monid provider waterfalls | Implemented; live paid runs remain unverified |
 | P1 | Workspace mobile route allowlist, member default, per-column override for legacy person columns, and safe LeadMagic/Clay no-match waterfall | Implemented; verify against a live workspace key before production use |
-| P1 | Treg support for discovery, company/person enrichment, web research, contacts, and social-profile lookup with separate team billing | Implemented against inspected routes; live paid operation runs remain unverified |
-| P1 | Reconcile the starter tests with the standalone provider boundary and remove stale provider-specific assumptions | In progress |
+| P1 | Keep the Monid route catalog, credential lifecycle, and provider error handling current | Live paid operation runs remain unverified |
+| P1 | Retire Treg execution/configuration paths while preserving read-only receipt history | Implemented in the local worktree; migration and final verification remain |
 | P2 | Improve XLSX compatibility beyond the first worksheet/basic cell values and document round-trip limits | Gap |
 | P2 | Add expanded formula coverage and more reference templates after core workflow review | Gap / review after walkthrough |
 | P2 | Add Monid endpoints only after catalog discovery and endpoint inspection | Ongoing operational requirement |
@@ -109,10 +105,10 @@ Catalog prices and endpoint schemas can change. Mobile endpoint details and list
 ## Known gaps and limitations
 
 - XLSX import currently reads the first worksheet and common cell values; workbook formulas, formatting, merged cells, and multi-sheet fidelity are not fully preserved.
-- Treg currently backs company/people discovery, company/person data, funding, public company phone and ticker lookups, web search and page reading, email/phone lookup, email verification, and public-profile search across LinkedIn, Instagram, Facebook, X, TikTok, and YouTube. Some person fields, country-filtered website discovery, and some scrape modes remain unsupported. Its social publishing and advertising catalog routes are not yet wired into this app's action/ad workflows. Selecting Treg for an unsupported data operation produces a clear error; it never routes through Monid.
+- Company, people, web, email, phone, and social capabilities are submitted through Monid's API. Monid's routed vendors are configuration details inside Monid; the app does not call those vendor APIs directly.
 - Some saved legacy operation names remain for compatibility. Monid retains the existing company, people, web, and contact workflows. The dedicated phone column supports the configured Monid waterfall; social lookup exposes LinkedIn, Instagram, Facebook, X, TikTok, and YouTube through its Monid path.
-- The Treg wallet and hosted top-up depend on Treg's current billing API and Stripe-hosted checkout. The application does not accept card details or merge Treg and Monid funds.
 - Monid does not expose a documented idempotency token on the run request in the API reviewed. Therefore an uncertain POST is not automatically repeated; the user may need to reconcile it in Monid run history.
-- Natural-language discovery without an OpenAI key uses the explicitly selected data provider. The optional OpenAI path can plan/paginate a query, but its reasoning and token charges are separate from Monid or Treg data usage.
-- API/provider failures are mapped into cell and connection statuses; exact upstream latency and cost depend on the selected provider and returned result.
+- Natural-language discovery without an OpenAI key uses Monid's people/company/web search paths where supported. Optional OpenAI planning and reasoning use only the user's own OpenAI key and are billed separately by OpenAI.
+- API/provider failures are mapped into cell and connection statuses; exact latency and cost depend on Monid's selected route and returned result.
+- Clerk Organizations provide workspace tenancy, but the app does not implement multi-tenant provider OAuth. Monid connects with a workspace API key; social-network OAuth is not part of the data-provider integration.
 - The fork has not been deployed or published. Its app name is Monid Enrich and its source link points to this fork.

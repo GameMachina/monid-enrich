@@ -1,7 +1,6 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import Link from 'next/link';
 import { MoreHorizontal } from 'lucide-react';
 import clsx from 'clsx';
 import type { Provider } from '@/lib/organization-settings';
@@ -17,7 +16,7 @@ import { providerCheck, useVerification, type ProviderCheck } from './use-verifi
 const TONE = { success: 'text-success', danger: 'text-danger', warning: 'text-warning', muted: 'text-fg-subtle' } as const;
 
 function status(provider: Provider, connection: Connection, check?: ProviderCheck, hasDataProvider = false): { text: string; tone: keyof typeof TONE } {
-	if (connection.state === 'missing') return { text: connection.detail ?? 'Not connected', tone: DATA_PROVIDER_IDS.includes(provider as 'monid' | 'treg') && !hasDataProvider ? 'warning' : 'muted' };
+	if (connection.state === 'missing') return { text: connection.detail ?? 'Not connected', tone: provider === 'monid' && !hasDataProvider ? 'warning' : 'muted' };
 	if (connection.state === 'expired') return { text: 'Expired', tone: 'danger' };
 	if (check && !check.ok) return { text: check.message ?? 'Needs attention', tone: 'danger' };
 	if (connection.state === 'included') return { text: 'Included trial', tone: 'muted' };
@@ -64,13 +63,12 @@ export function Connections() {
 						<li key={provider} className="flex items-center gap-3 py-3">
 							<ProviderLogo provider={provider} />
 							<div className="flex min-w-0 flex-1 flex-col gap-0.5">
-								{provider === 'treg' ? <Link href="/app/settings/connections/treg" className="w-fit text-body-sm text-fg hover:text-brand">{PROVIDER_INFO[provider].name}</Link> : <span className="text-body-sm text-fg">{PROVIDER_INFO[provider].name}</span>}
+								<span className="text-body-sm text-fg">{PROVIDER_INFO[provider].name}</span>
 								<span className="truncate text-caption text-fg-subtle">{detail(provider, connection)}</span>
 							</div>
 							<span className={clsx('max-w-[45%] text-right text-caption break-words', TONE[label.tone])}>
 								{label.text}
 							</span>
-							{provider === 'treg' && <Link href="/app/settings/connections/treg" className="shrink-0 rounded-md border border-line px-2.5 py-1 text-caption text-fg-muted transition-colors hover:border-line-strong hover:text-fg">Manage providers</Link>}
 							{connection.state === 'missing'
 				? <Button size="xs" onClick={() => setEditing({ provider })}>Connect</Button>
 								: <MenuButton label={`${PROVIDER_INFO[provider].name} actions`} align="right" items={actions(provider, connection)} className="grid size-7 shrink-0 place-items-center rounded-md text-fg-subtle transition-colors hover:bg-tint/[0.05] hover:text-fg max-md:size-11"><MoreHorizontal aria-hidden="true" className="size-4" /></MenuButton>}

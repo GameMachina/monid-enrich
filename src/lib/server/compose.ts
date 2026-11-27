@@ -8,7 +8,7 @@ import { ColumnOpInputSchema, instructionField, instructionText, OP_KINDS, OPERA
 import { SOCIAL_PLATFORMS } from '../social-platform';
 import type { ProviderAccess } from './provider-access';
 
-const GUIDE = `You turn a plain-language request into one spreadsheet column definition. Pick the best supported operation that answers it well. External research and enrichment must use the explicitly selected data provider (Monid or Treg); credentials, charges, and run receipts are separate, and there is no provider fallback. Actual provider usage is shown in cell details. OpenAI reasoning requires the workspace member’s own connected key. Never call another provider directly or fall back to another model:
+const GUIDE = `You turn a plain-language request into one spreadsheet column definition. Pick the best supported operation that answers it well. External research and enrichment must use Monid. Actual provider usage is shown in cell details. OpenAI reasoning requires the workspace member’s own connected key. Never call another provider directly or fall back to another model:
 - email-draft: when asked to draft, write or compose an email (e.g. draft an email to xyz). Set text to the drafting instructions and emailFields to recipient templates and any supplied subject/body. Use emailMode ai for writing, template for deterministic text from columns. Never use ai for an email draft.
 - formula: prefer for basic manipulation of existing data: arithmetic, text cleanup, splitting, joining, extracting parts, dates, conditional logic, and building URLs or combining literal text with column values. For text assembly, request readable formulas using the single & concatenation operator with spaces, e.g. ="Hi " & A1 & ", welcome!"; never &&. Set text to instructions for the formula builder, preserving column names and references. No external data or subjective reasoning. The client builds and tests a spreadsheet formula on up to 10 rows before applying it.
 - company: one of exactly these supported firmographic fields for a domain column: description, title, slogan, industry, employees, city, country, address, email, phone, ticker, linkedin, twitter, pricing_url, careers_url, blog_url, contact_url, logo_url, primary_color, language, funding_total, funding_stage, funding_latest_round, funding_latest_date, funding_latest_amount, funding_round_count. Unsupported fields require ai with the user supplied OpenAI key and Monid web research.
@@ -140,8 +140,8 @@ function withDataProvider(op: ComposeColumnResponse['op'], dataProvider: DataPro
 
 export async function composeColumn(access: ProviderAccess, request: ComposeColumnRequest): Promise<ComposeColumnResponse> {
 	const model = access.openai(request.model);
-	const dataProvider = request.dataProvider ?? 'monid';
-	const companyContext = dataProvider === 'monid' ? await companyContextForQuery(access, request.ask) : '';
+	const dataProvider: DataProvider = 'monid';
+	const companyContext = await companyContextForQuery(access, request.ask);
 	const columns = request.columns.map((column) => `- {{${column.name}}} (${column.type}${column.sample ? `, e.g. "${column.sample.slice(0, 60)}"` : ''})`).join('\n');
 	const decider = 'openai' as const;
 	const schema = request.excludeFormula ? FlatSchema.extend({ kind: FlatSchema.shape.kind.exclude(['formula']) }) : FlatSchema;

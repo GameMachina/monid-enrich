@@ -124,7 +124,7 @@ export function SheetsPage() {
 		router.push(`/app/sheets/${sheet.id}?find=1&entity=${request.entity}`);
 	}
 
-	const starts = { onFind: findRows, providerReady, onNeedKeys: (provider: 'monid' | 'treg') => openKeys(provider), onImport: () => setDialog('import'), onBlank: () => { setDialog(null); void createBlank(); }, onSample: () => { setDialog(null); void createSample(); } };
+	const starts = { onFind: findRows, providerReady, onNeedKeys: () => openKeys('monid'), onImport: () => setDialog('import'), onBlank: () => { setDialog(null); void createBlank(); }, onSample: () => { setDialog(null); void createSample(); } };
 
 	return (
 		<PageColumn>
@@ -138,7 +138,7 @@ export function SheetsPage() {
 			</header>
 			{count > 0 && <FirstRunChecklist
 				hasSheet={count > 0}
-				hasProvider={providerReady('monid') || providerReady('treg')}
+				hasProvider={providerReady('monid')}
 				openSheet={() => setDialog('new')}
 				openConnections={() => openKeys()}
 			/>}
@@ -250,7 +250,7 @@ function FirstRunChecklist({ hasSheet, hasProvider, openSheet, openConnections }
 		</div>
 		<ol className="mt-4 grid gap-3 sm:grid-cols-3">
 			<SetupStep done={hasSheet} title="Create or import a sheet" detail={hasSheet ? 'Your workspace has a sheet.' : 'Use fictional sample data or import a file.'} action={!hasSheet ? <><Button size="sm" onClick={openSheet}>Start</Button></> : undefined} />
-			<SetupStep done={hasProvider} title="Connect a data provider" detail={hasProvider ? 'Monid or Treg is connected.' : 'Choose Monid or Treg; their billing stays separate.'} action={!hasProvider ? <Button size="sm" onClick={openConnections}>Connect</Button> : undefined} />
+		<SetupStep done={hasProvider} title="Connect Monid" detail={hasProvider ? 'Your workspace Monid wallet is connected.' : 'Connect your workspace Monid wallet to search and enrich data.'} action={!hasProvider ? <Button size="sm" onClick={openConnections}>Connect</Button> : undefined} />
 			<SetupStep done={false} title="Try a small search" detail="Find rows returns up to 5 results while testing. Provider charges can vary by route and match." action={<Button size="sm" onClick={openSheet}>New search</Button>} />
 		</ol>
 		<p className="mt-3 text-caption text-fg-subtle">Exact dollar totals are not available as a pre-run quote. Check the provider’s balance and operation settings first; reported usage appears in cell details and Provider usage.</p>
@@ -270,29 +270,28 @@ function SetupStep({ done, title, detail, action }: { done: boolean; title: stri
 }
 
 /** A rejected Monid key found before a sheet exists for the search. A check that can't run never blocks. */
-async function requiredKeyIssue(provider: 'monid' | 'treg'): Promise<{ error: string; issue: ConnectionIssue } | null> {
+async function requiredKeyIssue(): Promise<{ error: string; issue: ConnectionIssue } | null> {
 	try {
-		const result = await verifyKeys({ only: [provider] });
-		const checked = result[provider];
-		if (checked && !checked.ok && checked.issue) return { error: checked.message ?? `${provider === 'treg' ? 'Treg' : 'Monid'} rejected the API key.`, issue: { reason: checked.issue === 'key' ? 'credential_invalid' : checked.issue === 'balance' ? 'credits_exhausted' : 'provider_error', provider } };
+		const result = await verifyKeys({ only: ['monid'] });
+		const checked = result.monid;
+		if (checked && !checked.ok && checked.issue) return { error: checked.message ?? 'Monid rejected the API key.', issue: { reason: checked.issue === 'key' ? 'credential_invalid' : checked.issue === 'balance' ? 'credits_exhausted' : 'provider_error', provider: 'monid' } };
 	} catch { /* The search reports the same problem with its fix. */ }
 	return null;
 }
 
 /** Find rows into a new sheet, or start from a CSV or a blank sheet. */
-function NewSheet({ onFind, providerReady, onNeedKeys, onImport, onBlank, onSample, onClose, autoFocus }: { onFind: (request: PopulateRequest) => Promise<void>; providerReady: (provider: 'monid' | 'treg') => boolean; onNeedKeys: (provider: 'monid' | 'treg') => void; onImport: () => void; onBlank: () => void; onSample: () => void; onClose?: () => void; autoFocus?: boolean }) {
-	const [draft, setDraft] = useState<FindRowsDraft>({ entity: 'companies', query: '', countries: [], dataProvider: 'monid' });
+function NewSheet({ onFind, providerReady, onNeedKeys, onImport, onBlank, onSample, onClose, autoFocus }: { onFind: (request: PopulateRequest) => Promise<void>; providerReady: (provider: 'monid') => boolean; onNeedKeys: () => void; onImport: () => void; onBlank: () => void; onSample: () => void; onClose?: () => void; autoFocus?: boolean }) {
+	const [draft, setDraft] = useState<FindRowsDraft>({ entity: 'companies', query: '', countries: [] });
 	const [state, setState] = useState<{ status: 'idle' | 'creating' } | { status: 'failed'; error: string; issue?: ConnectionIssue }>({ status: 'idle' });
 	// One sheet per submit, even if Cmd+Enter and a click land before the busy state renders.
 	const inFlight = useRef(false);
 	async function submit(request: PopulateRequest) {
 		if (inFlight.current) return;
-		const provider = request.dataProvider ?? 'monid';
-		if (!providerReady(provider)) { onNeedKeys(provider); return; }
+		if (!providerReady('monid')) { onNeedKeys(); return; }
 		inFlight.current = true;
 		setState({ status: 'creating' });
 		try {
-			const problem = await requiredKeyIssue(provider);
+			const problem = await requiredKeyIssue();
 			if (problem) { setState({ status: 'failed', ...problem }); inFlight.current = false; return; }
 			await onFind(request);
 		} catch (error) { setState({ status: 'failed', error: message(error, 'Could not create the sheet. Try again.') }); inFlight.current = false; }

@@ -41,10 +41,9 @@ export interface Operation<K extends OpKind = OpKind> {
 }
 
 const MONID: ProviderNeed = ['monid'];
-const TREG: ProviderNeed = ['treg'];
 const OPENAI: ProviderNeed = ['openai'];
 const DECIDER: ProviderNeed = ['openai'];
-const providerNeed = (provider?: DataProvider): ProviderNeed => provider === 'treg' ? TREG : MONID;
+const providerNeed = (_provider?: DataProvider): ProviderNeed => MONID;
 const pageNeeds = (page: PageSource | undefined, provider?: DataProvider): ProviderNeed[] => page ? [providerNeed(provider)] : [];
 const pageCredits = (page?: PageSource) => !page ? 0 : page.type === 'find' ? 2 : 1;
 const remote = () => false;
@@ -63,11 +62,8 @@ const mobileDefinitionIssue = (op: { name?: string; company?: string; domain?: s
 	if (providers.includes('clay') && providers.length === 1) return { field: 'profileUrl', message: 'Clay needs a full name, current company, and LinkedIn profile URL.' };
 	return { field: 'profileUrl', message: 'Add a LinkedIn profile or email for LeadMagic, or a full name, current company, and LinkedIn profile for Clay.' };
 };
-const tregPersonMobileIssue = (op: { name?: string; company?: string; domain?: string; email?: string; profileUrl?: string }) =>
-	op.profileUrl?.trim() || op.email?.trim() || op.name?.trim() && (op.domain?.trim() || op.company?.trim()) ? null : { field: 'profileUrl', message: 'Treg needs a LinkedIn URL, email, or a person name and company to look up a mobile number.' };
-const phoneWaterfallIssue = (op: { name: string; company: string; domain: string; profileUrl: string; email: string; providers: readonly string[]; dataProvider?: 'monid' | 'treg' }) => {
+const phoneWaterfallIssue = (op: { name: string; company: string; domain: string; profileUrl: string; email: string; providers: readonly string[]; dataProvider?: DataProvider }) => {
 	const name = Boolean(op.name.trim()), company = Boolean(op.company.trim()), domain = Boolean(op.domain.trim()), profile = Boolean(op.profileUrl.trim()), email = Boolean(op.email.trim());
-	if (op.dataProvider === 'treg') return profile || email || name && domain ? null : { field: 'profileUrl', message: 'Treg needs a LinkedIn URL, email, or a person name and company domain.' };
 	const usable = op.providers.some((provider) => {
 		switch (provider) {
 			case 'leadmagic': return profile || email;
@@ -81,35 +77,29 @@ const phoneWaterfallIssue = (op: { name: string; company: string; domain: string
 };
 const phoneWaterfallWorstCase = (op: { providers: readonly string[] }) => op.providers.reduce((sum, provider) => sum + (provider === 'clay' ? 180_000 : provider === 'prospeo' ? 90_000 : 60_000), 0);
 const socialWaterfallWorstCase = (op: { providers: readonly string[] }) => op.providers.reduce((sum, provider) => sum + (provider === 'apify' ? 180_000 : provider === 'ploid' ? 60_000 : 45_000), 0);
-const hasTreg = (op: { dataProvider?: DataProvider }) => op.dataProvider === 'treg';
-const tregPersonFields = new Set(['full_name', 'title', 'company', 'company_domain', 'location', 'linkedin', 'email', 'mobile']);
-const tregScrapeModes = new Set(['extract', 'markdown', 'title', 'url']);
 
 export const OPERATIONS: { readonly [K in OpKind]: Operation<K> } = {
 	'email-enrichment': {
 		label: 'Find email', short: 'Email', columnName: 'Work email',
-		description: 'Find a work email from the selected data provider and its separate billing balance.',
+		description: 'Find a work email using Monid and its workspace billing balance.',
 		references: ['name', 'company', 'domain', 'profileUrl'], rowContext: references, local: remote,
-		requires: (op) => [op.dataProvider === 'treg' ? TREG : MONID], credits: free, worstCaseMs: () => 120_000, bills: 'monid',
-		issue: (op) => op.dataProvider === 'treg'
-			? (!op.profileUrl.trim() && (!op.name.trim() || !op.domain.trim()) ? { field: !op.name.trim() ? 'name' : 'domain', message: 'Treg email lookup needs a LinkedIn URL or both a person name and company domain.' } : null)
-			: (!op.name.trim() || !op.domain.trim() ? { field: !op.name.trim() ? 'name' : 'domain', message: 'Monid email lookup needs a person name and company domain.' } : null),
+		requires: () => [MONID], credits: free, worstCaseMs: () => 120_000, bills: 'monid',
+		issue: (op) => !op.name.trim() || !op.domain.trim() ? { field: !op.name.trim() ? 'name' : 'domain', message: 'Monid email lookup needs a person name and company domain.' } : null,
 	},
 	'phone-enrichment': {
 		label: 'Find phone number', short: 'Phone', columnName: 'Mobile Number',
 		description: 'Find a person’s phone number with the selected data provider.',
 		references: ['name', 'company', 'domain', 'profileUrl', 'email'], rowContext: references, local: remote,
-		requires: (op) => [op.dataProvider === 'treg' ? TREG : MONID], credits: free, worstCaseMs: (op) => op.dataProvider === 'treg' ? 120_000 : phoneWaterfallWorstCase(op), bills: 'monid',
+		requires: () => [MONID], credits: free, worstCaseMs: phoneWaterfallWorstCase, bills: 'monid',
 		issue: phoneWaterfallIssue,
 	},
 	'social-enrichment': {
 		label: 'Find social', short: 'Social', columnName: 'Social profile',
 		description: 'Find one person’s public profile on a selected social network using the selected data provider.',
 		references: ['name', 'company', 'domain', 'profileUrl', 'email'], rowContext: references, local: remote,
-		requires: (op) => [op.dataProvider === 'treg' ? TREG : MONID], credits: free, worstCaseMs: (op) => op.dataProvider === 'treg' ? 90_000 : socialWaterfallWorstCase(op), bills: 'monid',
+		requires: () => [MONID], credits: free, worstCaseMs: socialWaterfallWorstCase, bills: 'monid',
 		issue: (op) => {
 			if (!op.name.trim()) return { field: 'name', message: 'Add a person’s name to find their social profile.' };
-			if (op.dataProvider === 'treg') return null;
 			const supported = SOCIAL_WATERFALL_PROVIDERS[op.platform] as readonly string[];
 			if (op.providers.some((provider) => !supported.includes(provider))) return { field: 'providers', message: `Choose providers that support ${op.platform}.` };
 			return null;
@@ -152,7 +142,7 @@ export const OPERATIONS: { readonly [K in OpKind]: Operation<K> } = {
 		description: 'Fetch a page through the selected data provider and keep its text, relevant passages, links or extracted fields.',
 		references: ['page', 'query'], rowContext: references, local: remote,
 		requires: (op) => [...pageNeeds(op.page, op.dataProvider), ...(op.mode === 'extract' ? [OPENAI] : [])], credits: (op) => Math.max(1, pageCredits(op.page)), worstCaseMs: typical, bills: 'monid',
-		issue: (op) => op.dataProvider === 'treg' && !tregScrapeModes.has(op.mode) ? { field: 'mode', message: `Treg page extraction does not support ${op.mode} mode. Choose extracted fields, Markdown, title, or URL, or explicitly switch this column to Monid.` } : op.mode === 'extract' && !op.fields?.length && !op.query?.trim() ? { field: 'fields', message: 'Add a field or instructions to extract.' } : null,
+		issue: (op) => op.mode === 'extract' && !op.fields?.length && !op.query?.trim() ? { field: 'fields', message: 'Add a field or instructions to extract.' } : null,
 	},
 	search: {
 		label: 'Web search', short: 'Search', columnName: 'Search result',
@@ -171,8 +161,8 @@ export const OPERATIONS: { readonly [K in OpKind]: Operation<K> } = {
 		label: 'Person data', short: 'Person', columnName: 'Person info',
 		description: 'Person facts from the selected data provider.',
 		references: ['name', 'company', 'email', 'profileUrl'], rowContext: references, local: remote,
-		requires: (op) => [providerNeed(op.dataProvider)], credits: () => 1, worstCaseMs: (op) => op.field === 'mobile' && op.dataProvider !== 'treg' ? mobileWorstCase(op.phoneStrategy) : 90_000, bills: 'monid',
-		issue: (op) => op.dataProvider === 'treg' && !tregPersonFields.has(op.field) ? { field: 'field', message: `Treg person enrichment currently supports full name, title, company, company domain, location, LinkedIn, email, and mobile. ${op.field} is unsupported by Treg.` } : op.field === 'mobile' ? op.dataProvider === 'treg' ? tregPersonMobileIssue(op) : mobileDefinitionIssue(op) : null,
+		requires: () => [MONID], credits: () => 1, worstCaseMs: (op) => op.field === 'mobile' ? mobileWorstCase(op.phoneStrategy) : 90_000, bills: 'monid',
+		issue: (op) => op.field === 'mobile' ? mobileDefinitionIssue(op) : null,
 	},
 	hunter: {
 		label: 'Email lookup', short: 'Email', columnName: 'Email status',
@@ -184,8 +174,8 @@ export const OPERATIONS: { readonly [K in OpKind]: Operation<K> } = {
 		label: 'Contact profile', short: 'Profile', columnName: 'Contact info',
 		description: 'Enrich supported person details, including mobile-phone lookups, through the selected data provider.',
 		references: ['name', 'domain', 'email', 'profileUrl'], rowContext: references, local: remote,
-		requires: (op) => [providerNeed(op.dataProvider)], credits: free, worstCaseMs: (op) => op.field === 'mobile' && op.dataProvider !== 'treg' ? mobileWorstCase(op.phoneStrategy) : typical(), bills: 'monid',
-		issue: (op) => op.dataProvider === 'treg' && !tregPersonFields.has(op.field) ? { field: 'field', message: `Treg person enrichment currently supports full name, title, company, company domain, location, LinkedIn, email, and mobile. ${op.field} is unsupported by Treg.` } : op.field === 'mobile' ? op.dataProvider === 'treg' ? tregPersonMobileIssue(op) : mobileDefinitionIssue(op) : null,
+		requires: () => [MONID], credits: free, worstCaseMs: (op) => op.field === 'mobile' ? mobileWorstCase(op.phoneStrategy) : typical(), bills: 'monid',
+		issue: (op) => op.field === 'mobile' ? mobileDefinitionIssue(op) : null,
 	},
 	answer: {
 		label: 'Deep research', short: 'Research', columnName: 'Research',
@@ -259,7 +249,7 @@ export const requiredProviders = (op: ColumnOp) => operation(op.kind).requires(o
 );
 export const creditsPerCell = (op: ColumnOp) => operation(op.kind).credits(op);
 export const worstCaseMs = (op: ColumnOp) => operation(op.kind).worstCaseMs(op);
-export const billingProvider = (op: ColumnOp) => 'dataProvider' in op && hasTreg(op) && operation(op.kind).bills === 'monid' ? 'treg' : operation(op.kind).bills;
+export const billingProvider = (op: ColumnOp) => operation(op.kind).bills;
 
 /** The first provider of each unmet need; empty when the operation can run. */
 export function missingProviders(op: ColumnOp, ready: (provider: Provider) => boolean): Provider[] {

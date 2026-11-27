@@ -50,22 +50,6 @@ test('column composer routes existing-data manipulation to the formula builder',
  assert.deepEqual(result.op, { kind: 'formula', request: 'Uppercase the Name column' });
 });
 
-test('column composer keeps the explicit Treg choice and skips Monid company context research', async (t) => {
-	const { composeColumn } = await import('../../src/lib/server/compose');
-	const fetch = t.mock.method(globalThis, 'fetch', async (url: string | URL | Request, init?: RequestInit) => {
-		assert.equal(String(url), 'https://api.openai.com/v1/responses');
-		const body = JSON.parse(String(init?.body));
-		assert.ok(JSON.stringify(body.input).includes('Data provider: treg'));
-		const output = Object.fromEntries(Object.keys(body.text.format.schema.properties).map((key) => [key, null]));
-		Object.assign(output, { name: 'Target customer', kind: 'ai', text: 'Who does our company target?', output: 'text', research: 'web', rationale: 'Research the target customer.' });
-		return Response.json({ id: 'resp_compose_treg', created_at: 1, model: body.model, status: 'completed', output: [{ id: 'msg_treg', type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: JSON.stringify(output), annotations: [] }] }], usage: { input_tokens: 10, output_tokens: 10, total_tokens: 20 } });
-	});
-	const result = await composeColumn(testAccess({ keys: { openai: 'test-key', treg: 'treg-secret', monid: 'monid-secret' }, model: 'configured-default' }), { ask: 'Who does our company example.com target?', dataProvider: 'treg', columns: [{ name: 'Company', type: 'source' }], hasJev: false });
-	assert.equal(fetch.mock.callCount(), 1);
-	assert.equal(result.op.kind, 'ai');
-	assert.equal('dataProvider' in result.op ? result.op.dataProvider : undefined, 'treg');
-});
-
 test('fallback composer excludes formulas and retains the original request', async (t) => {
  const { composeColumn } = await import('../../src/lib/server/compose');
  t.mock.method(globalThis, 'fetch', async (_url: unknown, init?: RequestInit) => {

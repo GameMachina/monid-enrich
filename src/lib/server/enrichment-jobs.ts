@@ -31,7 +31,7 @@ export async function enqueueEnrichment(actor: Account, input: { op: unknown; ro
 		if (canonicalJson(plan.record) !== canonicalJson(input.row)) throw new WorkspaceError('This row changed before the run started. Refresh and run it again.', 409);
 		const inputFingerprint = inputFingerprintOf(plan);
 		const id = randomUUID();
-		const retryable = 'dataProvider' in plan.op && plan.op.dataProvider === 'treg';
+		const retryable = false;
 		return database.transaction(async (sql, workspace) => {
 			const existing = (await sql.query('SELECT id,input_fingerprint,status FROM enrichable.enrichment_jobs WHERE workspace_id=$1 AND idempotency_key=$2', [workspace, input.idempotencyKey])).rows[0];
 			if (existing) {
@@ -150,8 +150,7 @@ export async function processOneEnrichmentJob(recoverExpired = true) {
 		try { await processClaimed(database, job); }
 		catch (error) {
 			logWorkspaceError(error, { requestId: job.id, operation: 'enrichment.worker', phase: 'execute', durationMs: 0 });
-			// Keep a lease after an unknown failure; expiration moves non-idempotent runs to uncertain,
-			// while Treg runs reuse their stable idempotency key.
+			// Keep a lease after an unknown failure; expiration moves runs to uncertain for reconciliation.
 		}
 		return true;
 	});

@@ -19,11 +19,6 @@ const parseMonidBalance = (value: unknown): Balance | null => {
 	if (!monid || typeof monid.credits !== 'number' || !Number.isFinite(monid.credits) || monid.credits < 0) return null;
 	return { amount: monid.credits, ...(typeof monid.used === 'number' && Number.isFinite(monid.used) && monid.used >= 0 ? { used: monid.used } : {}) };
 };
-const parseTregBalance = (value: unknown): Balance | null => {
-	const billing = value as { connected?: unknown; balanceUsd?: unknown } | null;
-	if (!billing || billing.connected !== true) return null;
-	return { amount: typeof billing.balanceUsd === 'number' && Number.isFinite(billing.balanceUsd) && billing.balanceUsd >= 0 ? billing.balanceUsd : null };
-};
 const parseTrial = (value: unknown): Trial | null => {
 	const trial = value as (Partial<Trial> & { enabled?: boolean }) | null;
 	if (!trial?.enabled || !Number.isFinite(trial.remainingUsd)) return null;
@@ -31,7 +26,6 @@ const parseTrial = (value: unknown): Trial | null => {
 };
 const usd = (value: number) => `$${value.toFixed(2)}`;
 const contextUsage = usageResource('/api/context/usage', parseMonidBalance, { events: [CONTEXT_REQUEST_EVENT] });
-const tregBalanceUsage = usageResource('/api/treg/billing', parseTregBalance, { intervalMs: 30_000, minGapMs: 5_000, events: [CONTEXT_REQUEST_EVENT] });
 
 /** The share of the plan left, when the API reports usage; low at 10% or no credits. */
 function balanceMeter(balance: Balance | undefined) {
@@ -56,28 +50,23 @@ function Meter({ label, percent, low }: { label: string; percent?: number; low?:
 	);
 }
 
-/** Each connected data provider gets its own wallet status and billing link. */
+/** Monid wallet status remains separate from the application subscription and OpenAI usage. */
 export function CreditsRemaining() {
 	const { server, ready, selfHosted, connections } = useSettings();
 	const hasTrials = !selfHosted && Boolean(server?.openaiTrial || server?.typesafeTrial || server?.enrichmentTrial);
 	const monidConnected = isReady(connections.monid);
-	const tregConnected = isReady(connections.treg);
-	const showMonid = !ready || monidConnected || !tregConnected;
-	const showTreg = ready && tregConnected;
 	const monid = useUsage(contextUsage, { enabled: ready && monidConnected, identity: JSON.stringify([connections.monid.state, server?.monidSaved]) });
-	const treg = useUsage(tregBalanceUsage, { enabled: ready && tregConnected, identity: JSON.stringify([connections.treg.state, server?.tregSaved]) });
 	return (
 		<div className="flex flex-col">
-			{showMonid && <WalletStatus provider="Monid" connection={connections.monid} ready={ready} balance={monid.data} error={monid.error} topupUrl={TOP_UP_URL} />}
-			{showTreg && <WalletStatus provider="Treg" connection={connections.treg} ready={ready} balance={treg.data} error={treg.error} topupUrl="/app/settings" />}
+			<WalletStatus provider="Monid" connection={connections.monid} ready={ready} balance={monid.data} error={monid.error} topupUrl={TOP_UP_URL} />
 			{hasTrials && <IncludedTrials />}
 		</div>
 	);
 }
 
-function WalletStatus({ provider, connection, ready, balance, error, topupUrl }: { provider: 'Monid' | 'Treg'; connection: Connection; ready: boolean; balance?: Balance; error: boolean; topupUrl: string }) {
+function WalletStatus({ provider, connection, ready, balance, error, topupUrl }: { provider: 'Monid'; connection: Connection; ready: boolean; balance?: Balance; error: boolean; topupUrl: string }) {
 	const { percent, low } = balanceMeter(balance);
-	const displayName = provider === 'Treg' ? 'Treg team balance' : 'Monid wallet balance';
+	const displayName = 'Monid wallet balance';
 	return <div className="px-3 py-2">
 		<div className="flex items-center justify-between gap-2 text-caption">
 			<span className="text-fg-subtle">{provider}</span>
@@ -85,7 +74,7 @@ function WalletStatus({ provider, connection, ready, balance, error, topupUrl }:
 		</div>
 		<p className={clsx('mt-1 text-caption font-medium tabular', low || (ready && !isReady(connection)) ? 'text-warning' : 'text-fg-muted')} title={error ? `Could not refresh the ${provider} balance. Check your ${provider} connection.` : undefined}>
 			{creditsLabel({ ready, connection, balance, error })}{balance && error ? ' · stale' : ''}
-			{low && <> · {provider === 'Monid' ? <a href={topupUrl} target="_blank" rel="noopener noreferrer" className="text-brand hover:underline">Top up</a> : <Link href={topupUrl} className="text-brand hover:underline">Top up</Link>}</>}
+			{low && <> · <a href={topupUrl} target="_blank" rel="noopener noreferrer" className="text-brand hover:underline">Top up</a></>}
 		</p>
 		<Meter label={`${displayName} remaining`} percent={percent} low={low} />
 	</div>;

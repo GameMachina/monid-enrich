@@ -10,12 +10,13 @@ The article is a useful SaaS feature checklist: frontend and backend, customer i
 
 ### Current constraints
 
+- **Customer production is still gated (verified 2026-11-27).** Vercel has a protected preview, an attached `monid-enrich.vercel.app` domain, and production Neon/Realtime, encryption, cron, and app URL variables. No production deployment is active. Production Clerk and Stripe credentials, a live plan, durable-worker enablement, staged verification, and recovery/operations evidence are still required. The Vercel build now fails closed until the production variables are complete. See [production setup](production-setup.md).
 - Hosted customer sign-in now uses Clerk Organizations. The code is implemented, but Clerk application setup, organization settings, email recovery, role revocation, and signup flow still need a staging verification before public onboarding.
 - Stripe subscription checkout, portal, idempotent webhook recording, and active-subscription gating are implemented for one configured price. Product plans, taxes, invoices/support workflows, and end-to-end billing verification remain open.
 - Per-cell enrichment and managed natural-language Find rows jobs persist in Postgres. The Vercel worker uses a shared 20-slot lease pool across job types; queue capacity, recovery, and provider billing behavior still need staging/load verification.
 - Per-minute request limits, bounded active durable-job queues, and a 20-slot worker concurrency cap are implemented. They do not enforce a hard monetary workspace budget or safely reserve unknown provider charges; spend caps and reconciliation remain open.
 - Workspace export and closure are implemented. Export excludes credentials and caps at 50 MB; closure retains usage receipts and Stripe reconciliation data, and personal AgentWeb credentials are outside the workspace deletion path. Retention, backup expiry, and legal holds are not implemented.
-- Treg and Monid retain separate connections, charges, and usage records. OAuth availability and supported capabilities depend on each provider's live catalog; see [Treg gaps](treg-provider.md).
+- Monid is the sole external data provider. Workspace admins connect a Monid API key; provider OAuth is not implemented. Legacy Treg receipts remain read-only for audit/export.
 - CI checks are not a substitute for staging auth/billing/provider tests, a security review, a measured restore, or load testing. No production deployment or live paid integration test has been performed as part of this work.
 
 ## P0 — required before onboarding paying customers
@@ -34,13 +35,13 @@ Implement customer-facing identity for this product rather than assuming the off
 
 Audit every page, API route, MCP tool, realtime subscription, connection-management endpoint, and usage report for workspace scoping. Define which credentials are personal, workspace-shared, or operator-owned. Enforce role checks for billing, member management, secret changes, and destructive operations. Add explicit CSRF/origin protections for cookie-authenticated mutations and abuse limits for unauthenticated or expensive entry points. Review server-side URL fetching for SSRF protections.
 
-**Status: Partial.** Admin checks now protect billing, workspace export/closure, shared settings, Treg billing/connections, usage reports, and MCP key management. Existing workspace-scoped stores remain the authorization boundary; managed/self-hosted write requests have same-origin checks and provider-backed routes have request limits. A static route/fetch boundary review is recorded in [authorization review](authorization-review.md). Cross-workspace, stale-session, OAuth replay, and hostile-origin staging tests plus an independent SSRF review remain launch gates.
+**Status: Partial.** Admin checks now protect billing, workspace export/closure, shared settings, provider connections, usage reports, and MCP key management. Existing workspace-scoped stores remain the authorization boundary; managed/self-hosted write requests have same-origin checks and provider-backed routes have request limits. A static route/fetch boundary review is recorded in [authorization review](authorization-review.md). Cross-workspace, stale or revoked membership, Clerk webhook replay, hostile-origin staging checks, and an independent SSRF review remain launch gates.
 
 **Done when:** automated cross-workspace tests prove one workspace cannot read, edit, enrich, export, or spend from another workspace; every privileged action checks role on the server; cookie-authenticated writes reject hostile origins; provider secrets and raw upstream payloads never reach browser responses or logs.
 
 ### P0.3 Add product plans, checkout, webhooks, and entitlements
 
-Add an application billing model if this will be a paid hosted SaaS: plans, trial/cancel/past-due states, checkout, customer portal, invoices, and server-enforced entitlements. Verify webhook signatures, persist and deduplicate event IDs, handle event reordering/retries, and reconcile provider state. Show the product subscription separately from Monid, Treg, and user-supplied OpenAI charges; do not combine balances.
+Add an application billing model if this will be a paid hosted SaaS: plans, trial/cancel/past-due states, checkout, customer portal, invoices, and server-enforced entitlements. Verify webhook signatures, persist and deduplicate event IDs, handle event reordering/retries, and reconcile provider state. Show the product subscription separately from Monid and user-supplied OpenAI charges; do not combine balances.
 
 **Status: Partial.** One-price Checkout, customer portal, signed/deduplicated webhooks, and server-side subscription gating are implemented. Configure Stripe test mode and verify purchase, cancellation, webhook retry/reorder, portal, and access changes before production; multi-plan entitlements and tax/invoice support remain open.
 
@@ -56,9 +57,9 @@ Create persisted jobs for Find rows, bulk cell runs, and other long work. Use a 
 
 ### P0.5 Put hard spend and abuse controls around every paid path
 
-Define workspace/member request limits, per-operation maximum cost, active-run limits, and daily/monthly spend caps. Apply server-side preflight checks before provider calls, reserve and settle known usage, retain uncertain charges for reconciliation, and add circuit breakers for exhausted balance, repeated provider failures, and abnormal spend. Keep Monid, Treg, OpenAI, and any future app-funded allowance ledgers separate. Decide whether Treg is user/workspace-owned or platform-funded before enabling a shared platform Treg key.
+Define workspace/member request limits, per-operation maximum cost, active-run limits, and daily/monthly spend caps. Apply server-side preflight checks before provider calls, reserve and settle known usage, retain uncertain charges for reconciliation, and add circuit breakers for exhausted balance, repeated provider failures, and abnormal spend. Keep Monid, OpenAI, and any future app-funded allowance ledgers separate.
 
-**Status: Partial.** Atomic per-minute member/workspace request limits and durable-cell queue ceilings (100 active jobs per member, 500 per workspace) are implemented. Treg contact operations can send a user-configured per-cell route spend cap, and runs over 50 cells require confirmation with explicit notice that provider prices are not known as an exact pre-run quote. These are not workspace-wide dollar reservations: Monid/Treg charge their connected customer wallets, provider costs can be absent/uncertain, and no app-side daily/monthly cap or mismatch alert exists. Managed mode accepts workspace-vault provider credentials only; platform-funded Monid/Treg credentials are not part of the managed access path. Provider-side wallet/spend limits remain the hard control until reliable quote/reservation semantics are available.
+**Status: Partial.** Atomic per-minute member/workspace request limits and durable-cell queue ceilings (100 active jobs per member, 500 per workspace) are implemented. Runs over 50 cells require confirmation with explicit notice that provider prices are not known as an exact pre-run quote. These are not workspace-wide dollar reservations: Monid charges the connected workspace wallet, provider costs can be absent/uncertain, and no app-side daily/monthly cap or mismatch alert exists. Managed mode accepts workspace-vault provider credentials only. Provider-side wallet/spend limits remain the hard control until reliable quote/reservation semantics are available.
 
 **Done when:** concurrent requests cannot overspend a cap; every run records its selected provider, workspace, operation, cost/usage, status, and provider run ID where available; users can see a clear estimate/cap before execution and understand who is billed; alerts fire before an operator-funded budget is exhausted.
 
@@ -106,21 +107,21 @@ Expand the current CI baseline with production-like staging checks for signup/au
 
 ### P1.1 Team administration and auditability
 
-**Status: Partial.** Clerk OrganizationProfile supplies member management. Workspace export/closure, shared-settings changes, MCP-key create/rotation, credential re-encryption, Monid/Treg workspace connection updates, Treg API-key/OAuth-start and top-up initiation events, signed/deduplicated Clerk membership and invitation webhooks, and Stripe subscription lifecycle webhooks are recorded as metadata-only events; workspace admins can review the latest 100 in Configuration. Personal AgentWeb connection events and Clerk/Stripe webhook delivery verification remain staging gates.
+**Status: Partial.** Clerk OrganizationProfile supplies member management. Workspace export/closure, shared-settings changes, MCP-key create/rotation, credential re-encryption, Monid workspace connection updates, signed/deduplicated Clerk membership and invitation webhooks, and Stripe subscription lifecycle webhooks are recorded as metadata-only events; workspace admins can review the latest 100 in Configuration. Personal AgentWeb connection events and Clerk/Stripe webhook delivery verification remain staging gates.
 
 Add workspace member/role management, invitation expiry/revocation, credential change history, and audit events for membership, billing, provider connections, exports, and destructive actions. Keep audit payloads free of raw secrets and unnecessary prospect data.
 
 ### P1.2 Provider capability and connection reliability
 
-**Status: Partial.** Monid and Treg are explicit and separately billed; Treg catalog-based capability notes exist. Add automated live-catalog drift checks and staging OAuth/API-key lifecycle verification.
+**Status: Partial.** Monid operations are explicit and routed through its API; live-catalog drift checks and staging API-key lifecycle verification remain.
 
-Maintain a capability matrix derived from current Monid/Treg catalogs and OAuth/API-key support. Make unsupported operations clear before a column is run; test OAuth start/callback, state/PKCE, callback allowlists, secret save/revoke, provider-directory changes, and upstream 401/403/429/5xx behavior. For each provider, document billing owner, usage visibility, idempotency semantics, and recovery from uncertain runs.
+Maintain a capability matrix derived from Monid's current catalog and API-key support. Make unsupported operations clear before a column is run; test key save/revoke, catalog changes, and upstream 401/403/429/5xx behavior. Document workspace billing, usage visibility, idempotency semantics, and recovery from uncertain runs.
 
 ### P1.3 Usage and cost reporting
 
-**Status: Partial.** Workspace-admin usage reports now filter by provider, operation/search text, member, sheet, time, and status, paginate receipts, and export up to 10,000 matching rows to CSV. Monid and Treg totals stay separate. Migration `021_provider_usage_attribution.sql` associates new cell receipts with member/sheet/row/column IDs without copying row data or prompts. Older receipts remain unattributed. Provider-reported cost is labeled separately from unknown cost; provider-side reconciliation and settled-versus-estimated semantics remain open.
+**Status: Partial.** Workspace-admin usage reports now filter by provider, operation/search text, member, sheet, time, and status, paginate receipts, and export up to 10,000 matching rows to CSV. Monid totals are separate from optional OpenAI usage; historical Treg receipts are labeled and read-only. Migration `021_provider_usage_attribution.sql` associates new cell receipts with member/sheet/row/column IDs without copying row data or prompts. Older receipts remain unattributed. Provider-reported cost is labeled separately from unknown cost; provider-side reconciliation and settled-versus-estimated semantics remain open.
 
-Remaining: reconcile app receipts against each provider's billing data; clarify which amounts are estimates, settled charges, or uncertain; and add automated mismatch alerts. Do not show Treg balance as Monid balance or app subscription as provider credits.
+Remaining: reconcile app receipts against Monid billing data; clarify which amounts are estimates, settled charges, or uncertain; and add automated mismatch alerts. Do not show Monid balance as the app subscription balance.
 
 ### P1.4 Onboarding and activation
 
@@ -138,7 +139,7 @@ Set supported sheet, row, column, import, and export sizes based on measured per
 
 **Status: Open.**
 
-Run keyboard-only and screen-reader reviews for the grid, menus, dialogs, connection/OAuth flows, and status details. Check contrast and reduced-motion behavior. Publish supported browser/device versions and verify the core workflow on mobile/tablet if those are in scope.
+Run keyboard-only and screen-reader reviews for the grid, menus, dialogs, connection and sign-in flows, and status details. Check contrast and reduced-motion behavior. Publish supported browser/device versions and verify the core workflow on mobile/tablet if those are in scope.
 
 ### P1.7 Service and customer documentation
 
@@ -170,5 +171,5 @@ Document account setup, provider billing boundaries, supported operations, impor
 - [Data handling inventory](data-handling.md)
 - [Operations runbook](operations-runbook.md)
 - [Development architecture and checks](development.md)
-- [Treg provider behavior and current gaps](treg-provider.md)
+- [Treg retirement note](treg-provider.md)
 - [Security policy and current operating assumptions](../SECURITY.md)

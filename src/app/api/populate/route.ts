@@ -14,8 +14,7 @@ export async function POST(request: Request) {
 	const prepared = await routeInput(request, FindRowsRequestSchema);
 	if (prepared instanceof Response) return prepared;
 	const { input, access } = prepared;
-	if (!access.key(input.dataProvider)) return jsonError(`Connect ${input.dataProvider === 'treg' ? 'Treg' : 'Monid'} in Configuration to find rows.`, 401, failure('credential_missing', input.dataProvider));
-	if (input.dataProvider === 'treg' && input.entity === 'websites' && input.countries?.length) return jsonError('Treg web search does not expose a country filter for website discovery. Remove the country selection or choose Monid explicitly.', 400, failure('provider_error', 'treg'));
+	if (!access.key('monid')) return jsonError('Connect Monid in Configuration to find rows.', 401, failure('credential_missing', 'monid'));
 	if (managedAuthEnabled()) {
 		if (!durableEnrichmentEnabled()) return jsonError('Managed Find rows needs the durable worker enabled. Configure DATABASE_URL, ENRICHABLE_DURABLE_ENRICHMENT=true, and CRON_SECRET before running provider searches.', 503, failure('provider_error', input.dataProvider, true));
 		if (!input.sheetId || !input.idempotencyKey || !access.account) return jsonError('A saved sheet and stable retry key are required for managed Find rows.', 400, failure('input_invalid'));

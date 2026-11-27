@@ -7,7 +7,7 @@ This runbook covers first response for a managed deployment. It does not replace
 - `/api/health/live` reports that the Next.js process can answer.
 - `/api/health/ready` checks database schema, hosted identity configuration, credential encryption, Stripe billing, and durable worker readiness. A `503` is expected if production setup is incomplete.
 - API error responses include an `x-request-id`. Use the hosting logs and request ID to investigate; do not paste customer rows, credentials, tokens, or raw provider responses into public issues.
-- Health output intentionally avoids connection strings and provider details. Check Vercel, Neon, Clerk, Stripe, Monid, or Treg operator dashboards as appropriate.
+- Health output intentionally avoids connection strings and provider details. Check Vercel, Neon, Clerk, Stripe, or Monid operator dashboards as appropriate.
 
 ## Database or migration failure
 
@@ -23,7 +23,7 @@ The application accepts at most 100 queued or running cell and Find rows jobs pe
 
 1. Check readiness, the Vercel Cron schedule, the production deployment, and that `CRON_SECRET` is configured for the cron environment.
 2. Inspect `enrichable.enrichment_jobs` and `enrichable.populate_jobs` status and `updated_at` with workspace-safe operator access. Never copy row contents into incident chat.
-3. Queued jobs should be picked up by the next worker run. Expired non-idempotent cell jobs and all expired multi-step Find rows jobs become `uncertain` if provider work may have started; check provider usage before any manual retry. Treg cell retries reuse their stored idempotency key according to the adapter behavior.
+3. Queued jobs should be picked up by the next worker run. Expired provider jobs become `uncertain` if provider work may have started; check Monid usage before any manual retry.
 4. Do not reset a running lease or mark an uncertain job queued just to clear the dashboard. Reconcile provider status first; this can otherwise cause duplicate charges.
 5. Jobs can be cancelled only before their provider request starts. Running work must finish or reach its timeout/error state.
 
@@ -33,7 +33,7 @@ The cron worker claims the oldest queued cell or Find rows job and processes one
 
 1. Use **Configuration → Provider usage** as a workspace admin to filter by provider, run status, time, member, sheet, or run ID. Each receipt carries a provider run/call ID when the upstream response supplied one.
 2. Compare app receipt costs with the provider's own billing/usage page. An absent cost means the provider did not report one in the receipt; it does not mean the run was free.
-3. Resolve uncertain or mismatched runs with the provider before retrying. Do not combine Monid and Treg totals or treat the app's product subscription as provider funds.
+3. Resolve uncertain or mismatched runs with Monid before retrying. Historical Treg receipts are audit-only and are not retryable.
 4. New cell runs include attribution IDs after migration `021_provider_usage_attribution.sql`; older receipts are not backfilled.
 
 ## Stripe webhook or subscription mismatch
@@ -48,7 +48,7 @@ The cron worker claims the oldest queued cell or Find rows job and processes one
 - If a credential or encryption root may be exposed, restrict deployment access and revoke affected upstream keys. Rotate the stable encryption root only with a rehearsed re-encryption procedure.
 - If the encryption root is lost, restore the matching secret from the approved secret manager backup. Do not generate a replacement and overwrite the old value; saved provider credentials will no longer decrypt.
 - For a planned managed-vault rotation, follow the staged steps in [production setup](production-setup.md): deploy dual-key code with the current root, set new current plus old previous root, redeploy, and call `POST /api/internal/credentials/rotate` with the cron bearer credential until all three remaining counts are zero. Keep the previous root until old deployment instances are drained and a connection check succeeds. The endpoint never returns credential material.
-- Rotate compromised Clerk, Stripe, database, cron, Monid, Treg, OpenAI, AgentWeb, and MCP credentials at their source. Keep each provider and member/workspace billing record separate.
+- Rotate compromised Clerk, Stripe, database, cron, Monid, OpenAI, AgentWeb, and MCP credentials at their source. Keep provider and app subscription billing separate.
 
 ## Workspace export and closure
 
