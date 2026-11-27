@@ -202,6 +202,8 @@ export default function Landing() {
 						<a href={GITHUB_URL} target="_blank" rel="noopener noreferrer" className="hover:text-fg">GitHub</a>
 						<a href={DOCS_URL} target="_blank" rel="noopener noreferrer" className="hover:text-fg">Docs</a>
 						<a href={`${GITHUB_URL}/blob/main/docs/mcp.md`} target="_blank" rel="noopener noreferrer" className="hover:text-fg">MCP</a>
+						<Link href="/privacy" className="hover:text-fg">Privacy</Link>
+						<Link href="/terms" className="hover:text-fg">Terms</Link>
 						<PoweredByProviders />
 					</div>
 				</div>
