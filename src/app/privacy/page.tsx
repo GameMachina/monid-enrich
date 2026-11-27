@@ -12,7 +12,7 @@ export const metadata: Metadata = {
 const updated = 'November 27, 2026';
 
 export default function PrivacyPolicyPage() {
-	return <LegalPage title="Privacy Policy" updated={updated} intro={`${PRODUCT_NAME} is a spreadsheet for company and people research. This policy describes the hosted service at monid-enrich.vercel.app. If you run a self-hosted copy, its operator controls its data handling and hosting configuration.`} sections={[
+	return <LegalPage title="Privacy Policy" updated={updated} intro={`${PRODUCT_NAME} is a spreadsheet for company and people research. This policy describes the hosted service at ${siteUrl().origin}. If you run a self-hosted copy, its operator controls its data handling and hosting configuration.`} sections={[
 		{ title: 'Information the service handles', paragraphs: [
 			<>When you create an account or join a workspace, the service receives account and organization details from its sign-in provider, including information such as your name and email address.</>,
 			<>Workspace content can include sheets, rows, column definitions, prompts, imported files, research results, source references, and contact or company information you choose to enter or obtain. Workspace administrators can export workspace data from the app.</>,
