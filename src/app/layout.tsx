@@ -26,7 +26,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 	return (
 		<html lang="en" className={rethinkSans.variable} suppressHydrationWarning>
 			<body>
-				{managedAuthEnabled() ? <ClerkProvider signInUrl="/sign-in" signUpUrl="/sign-up">{app}</ClerkProvider> : app}
+				{managedAuthEnabled() ? <ClerkProvider proxyUrl={process.env.NEXT_PUBLIC_CLERK_PROXY_URL} signInUrl="/sign-in" signUpUrl="/sign-up">{app}</ClerkProvider> : app}
 			</body>
 		</html>
 	);

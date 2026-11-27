@@ -5,7 +5,7 @@ import { credentialEncryptionConfigured } from '@/lib/server/credential-keyring'
 
 export async function GET() {
 	const production = process.env.NODE_ENV === 'production';
-	const checks = { database: false, credentialEncryption: false, credentialKeyVersions: true, identity: false, clerkWebhook: true, clerkWebhookSchema: false, billing: true, billingPurchaseSchema: false, durableJobs: true, providerUsageAttribution: false, workspaceAudit: false, workspaceAuditActions: false };
+	const checks = { database: false, credentialEncryption: false, credentialKeyVersions: true, identity: false, clerkFrontendProxy: true, clerkWebhook: true, clerkWebhookSchema: false, billing: true, billingPurchaseSchema: false, durableJobs: true, providerUsageAttribution: false, workspaceAudit: false, workspaceAuditActions: false };
 	try {
 		if (production && !process.env.DATABASE_URL?.trim()) throw new Error('Postgres is required in production.');
 		const result = await withDatabase((database) => database.read(`SELECT to_regclass('enrichable.workspaces') AS workspaces, to_regclass('enrichable.enrichment_jobs') AS enrichment_jobs, to_regclass('enrichable.populate_jobs') AS populate_jobs, to_regclass('enrichable.durable_worker_slots') AS durable_worker_slots, (SELECT count(*)::int FROM enrichable.durable_worker_slots) AS worker_slot_count, to_regclass('enrichable.workspace_audit_events') AS workspace_audit_events, to_regclass('enrichable.clerk_webhook_events') AS clerk_webhook_events, to_regclass('enrichable.stripe_one_time_purchases') AS stripe_one_time_purchases,
@@ -23,6 +23,12 @@ export async function GET() {
 	} catch { checks.database = false; }
 	checks.credentialEncryption = !production || !managedAuthEnabled() || credentialEncryptionConfigured() && checks.credentialKeyVersions;
 	checks.clerkWebhook = !production || !managedAuthEnabled() || Boolean(process.env.CLERK_WEBHOOK_SIGNING_SECRET?.startsWith('whsec_'));
+	if (production && managedAuthEnabled()) {
+		try {
+			const proxyUrl = new URL(process.env.NEXT_PUBLIC_CLERK_PROXY_URL || '');
+			checks.clerkFrontendProxy = proxyUrl.protocol === 'https:' && proxyUrl.pathname.replace(/\/$/, '') === '/__clerk';
+		} catch { checks.clerkFrontendProxy = false; }
+	}
 	try {
 		const mode = authMode();
 		checks.identity = mode !== 'unconfigured' && (mode !== 'clerk' || Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY && process.env.CLERK_SECRET_KEY));

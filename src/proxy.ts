@@ -24,7 +24,7 @@ const clerkProxy = clerkMiddleware(async (auth, request) => {
 	const response = NextResponse.next();
 	if (api || path.startsWith('/app')) response.headers.set('Cache-Control', 'private, no-store');
 	return response;
-});
+}, { frontendApiProxy: { enabled: true, path: '/__clerk' } });
 
 function standaloneProxy(request: NextRequest) {
 	if (['/api/health/live', '/api/health/ready', '/api/stripe/webhook', '/api/clerk/webhook', '/api/internal/jobs/run'].includes(request.nextUrl.pathname)) return NextResponse.next();
@@ -74,4 +74,4 @@ export function proxy(request: NextRequest, event?: NextFetchEvent) {
 	return standaloneProxy(request);
 }
 
-export const config = { matcher: ['/login', '/app/:path*', '/api/:path*', '/sign-in/:path*', '/sign-up/:path*'] };
+export const config = { matcher: ['/login', '/app/:path*', '/api/:path*', '/sign-in/:path*', '/sign-up/:path*', '/__clerk/:path*'] };
