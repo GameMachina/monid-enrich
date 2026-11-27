@@ -8,12 +8,12 @@ import { appendWorkspaceAuditEvent, type WorkspaceAuditAction } from '@/lib/serv
 export const maxDuration = 15;
 
 const ACTIONS: Record<string, WorkspaceAuditAction> = {
-	'organization_membership.created': 'workspace.member.added',
-	'organization_membership.updated': 'workspace.member.updated',
-	'organization_membership.deleted': 'workspace.member.removed',
-	'organization_invitation.created': 'workspace.invitation.created',
-	'organization_invitation.accepted': 'workspace.invitation.accepted',
-	'organization_invitation.revoked': 'workspace.invitation.revoked',
+	'organizationMembership.created': 'workspace.member.added',
+	'organizationMembership.updated': 'workspace.member.updated',
+	'organizationMembership.deleted': 'workspace.member.removed',
+	'organizationInvitation.created': 'workspace.invitation.created',
+	'organizationInvitation.accepted': 'workspace.invitation.accepted',
+	'organizationInvitation.revoked': 'workspace.invitation.revoked',
 };
 
 const object = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -27,15 +27,15 @@ function auditDetails(type: string, data: Record<string, unknown>) {
 	const role = text(data.role);
 	if (member) details.memberId = member;
 	if (role) details.role = role;
-	if (type.startsWith('organization_membership.') && membershipId) details.membershipId = membershipId;
-	if (type.startsWith('organization_invitation.') && invitationId) details.invitationId = invitationId;
+	if (type.startsWith('organizationMembership.') && membershipId) details.membershipId = membershipId;
+	if (type.startsWith('organizationInvitation.') && invitationId) details.invitationId = invitationId;
 	return details;
 }
 
 function actorFor(type: string, data: Record<string, unknown>) {
-	if (type === 'organization_invitation.created') return text(data.inviter_user_id) ?? 'clerk';
-	if (type === 'organization_invitation.revoked') return text(data.requesting_user_id) ?? 'clerk';
-	if (type === 'organization_invitation.accepted') return text(data.user_id) ?? 'clerk';
+	if (type === 'organizationInvitation.created') return text(data.inviter_user_id) ?? 'clerk';
+	if (type === 'organizationInvitation.revoked') return text(data.requesting_user_id) ?? 'clerk';
+	if (type === 'organizationInvitation.accepted') return text(data.user_id) ?? 'clerk';
 	return 'clerk';
 }
 
