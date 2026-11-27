@@ -1,4 +1,5 @@
 import 'server-only';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import Stripe from 'stripe';
 import { WorkspaceError } from '../workspace';
 import type { Account } from '../auth-identity';
@@ -11,7 +12,7 @@ const PURCHASE_CURRENCY = 'usd';
 let cached: { key: string; client: Stripe } | undefined;
 
 export function stripeConfigured() {
-	return Boolean(process.env.STRIPE_SECRET_KEY?.startsWith('sk_') && process.env.STRIPE_WEBHOOK_SECRET?.startsWith('whsec_') && process.env.STRIPE_ONE_TIME_PRICE_ID?.startsWith('price_') && process.env.STRIPE_PAYMENT_LINK_ID?.startsWith('plink_') && stripePaymentLinkUrl() && publicAppUrl());
+	return Boolean(process.env.STRIPE_WEBHOOK_SECRET?.startsWith('whsec_') && process.env.STRIPE_ONE_TIME_PRICE_ID?.startsWith('price_') && process.env.STRIPE_PAYMENT_LINK_ID?.startsWith('plink_') && stripePaymentLinkUrl() && publicAppUrl());
 }
 export function billingRequired() { return process.env.ENRICHABLE_BILLING_REQUIRED === 'true'; }
 export function stripePaymentLinkUrl() {
@@ -33,38 +34,8 @@ function stripe() {
 	if (!cached || cached.key !== key) cached = { key, client: new Stripe(key) };
 	return cached.client;
 }
-function priceId() {
-	const value = process.env.STRIPE_ONE_TIME_PRICE_ID;
-	if (!value?.startsWith('price_')) throw new WorkspaceError('The $37 one-time price is not configured.', 503);
-	return value;
-}
 function workspaceActor(account: Account): WorkspaceActor { return { issuer: account.issuer, organization: account.organization }; }
 function accountWorkspace(account: Account) { return workspaceId(workspaceActor(account)); }
-
-async function verifiedPrice() {
-	const price = await stripe().prices.retrieve(priceId());
-	if (!price.active || price.unit_amount !== PURCHASE_AMOUNT_CENTS || price.currency !== PURCHASE_CURRENCY || price.recurring) {
-		throw new WorkspaceError('The configured Stripe price must be active, one-time, and exactly $37 USD.', 503);
-	}
-	return price.id;
-}
-
-async function customerFor(account: Account, database: Database) {
-	const workspace = accountWorkspace(account);
-	const existing = (await database.read('SELECT customer_id FROM enrichable.stripe_customers WHERE workspace_id=$1', [workspace])).rows[0];
-	if (existing) return String(existing.customer_id);
-	const created = await stripe().customers.create({
-		name: account.organization.name,
-		...(account.user.email ? { email: account.user.email } : {}),
-		metadata: { enrichable_workspace_id: workspace, enrichable_issuer: account.issuer },
-	}, { idempotencyKey: `enrichable-customer-${workspace}` });
-	await database.transaction(async (sql) => {
-		await sql.query('INSERT INTO enrichable.stripe_customers (workspace_id,customer_id) VALUES ($1,$2) ON CONFLICT (workspace_id) DO NOTHING', [workspace, created.id]);
-	}, { workspace: account });
-	const saved = (await database.read('SELECT customer_id FROM enrichable.stripe_customers WHERE workspace_id=$1', [workspace])).rows[0];
-	if (!saved) throw new WorkspaceError('Could not save the workspace payment customer.', 503);
-	return String(saved.customer_id);
-}
 
 export async function billingSnapshot(account: Account, database: Database) {
 	const workspace = accountWorkspace(account);
@@ -85,6 +56,7 @@ export async function billingSnapshot(account: Account, database: Database) {
 	} : null;
 	return {
 		configured: stripeConfigured(), required: billingRequired(), priceUsd: PURCHASE_AMOUNT_CENTS / 100,
+		legacyPortalAvailable: Boolean(process.env.STRIPE_SECRET_KEY?.startsWith('sk_')),
 		purchase: activePurchase,
 		purchaseStatus: purchase ? String(purchase.status) : null,
 		legacySubscription,
@@ -97,19 +69,11 @@ export async function createCheckout(account: Account, database: Database, idemp
 	if (!origin) throw new WorkspaceError('Set ENRICHABLE_APP_URL to the public HTTPS app URL before enabling payments.', 503);
 	const snapshot = await billingSnapshot(account, database);
 	if (snapshot.hasAccess) throw new WorkspaceError('This workspace already has Monid Enrich access.', 409);
-	const [price, customer] = await Promise.all([verifiedPrice(), customerFor(account, database)]);
-	const workspace = accountWorkspace(account);
-	const session = await stripe().checkout.sessions.create({
-		mode: 'payment', customer, client_reference_id: workspace,
-		line_items: [{ price, quantity: 1 }],
-		success_url: `${origin}/app/settings?billing=success&session_id={CHECKOUT_SESSION_ID}`,
-		cancel_url: `${origin}/app/settings?billing=cancelled`,
-		metadata: { enrichable_workspace_id: workspace, enrichable_issuer: account.issuer, enrichable_purchase: 'lifetime_access' },
-		payment_intent_data: { metadata: { enrichable_workspace_id: workspace, enrichable_issuer: account.issuer, enrichable_purchase: 'lifetime_access' } },
-	}, { idempotencyKey });
-	if (!session.url) throw new WorkspaceError('Stripe did not return a checkout URL.', 502);
-	await recordWorkspaceAuditEvent(database, account, 'workspace.billing.checkout_started', { provider: 'stripe', mode: 'payment', amountUsd: PURCHASE_AMOUNT_CENTS / 100 });
-	return { url: session.url };
+	void idempotencyKey;
+	const url = stripePaymentLinkUrl();
+	if (!url || !process.env.STRIPE_PAYMENT_LINK_ID || !process.env.STRIPE_ONE_TIME_PRICE_ID) throw new WorkspaceError('The hosted $37 one-time payment link is not configured.', 503);
+	await recordWorkspaceAuditEvent(database, account, 'workspace.billing.checkout_started', { provider: 'stripe', mode: 'payment_link', amountUsd: PURCHASE_AMOUNT_CENTS / 100 });
+	return { url };
 }
 
 export async function createPortal(account: Account, database: Database) {
@@ -169,29 +133,27 @@ async function savePurchase(sql: Sql, session: Stripe.Checkout.Session, status: 
 
 export async function claimStripePurchase(account: Account, database: Database, sessionId: string) {
 	if (!account.user.email || !account.user.email_verified) throw new WorkspaceError('Verify your account email before claiming this purchase.', 403);
-	const session = await stripe().checkout.sessions.retrieve(sessionId);
-	if (session.mode !== 'payment' || session.payment_status !== 'paid' || session.amount_total !== PURCHASE_AMOUNT_CENTS || session.currency !== PURCHASE_CURRENCY) {
-		throw new WorkspaceError('Stripe has not confirmed a $37 USD payment for this session.', 409);
-	}
-	const workspace = accountWorkspace(account);
-	const sessionWorkspace = session.metadata?.enrichable_workspace_id ?? session.client_reference_id;
-	const appCheckout = sessionWorkspace === workspace && session.metadata?.enrichable_issuer === account.issuer && session.metadata?.enrichable_purchase === 'lifetime_access';
-	const paymentLink = asId(session.payment_link as string | Stripe.PaymentLink | null);
-	const publicLinkCheckout = Boolean(process.env.STRIPE_PAYMENT_LINK_ID && paymentLink === process.env.STRIPE_PAYMENT_LINK_ID && sessionEmail(session) === account.user.email.trim().toLowerCase());
-	if (!appCheckout && !publicLinkCheckout) throw new WorkspaceError('This paid Stripe session is not linked to your workspace or verified account email.', 403);
-	const workspaceHint = appCheckout ? workspace : undefined;
+	const buyerEmail = account.user.email.trim().toLowerCase();
+	if (!/^cs_(?:live|test)_[A-Za-z0-9]+$/.test(sessionId)) throw new WorkspaceError('Provide a valid Stripe checkout session.', 400);
 	return database.transaction(async (sql, scopedWorkspace) => {
-		const before = (await sql.query('SELECT workspace_id,status FROM enrichable.stripe_one_time_purchases WHERE session_id=$1 FOR UPDATE', [session.id])).rows[0];
-		await savePurchase(sql, session, 'paid', workspaceHint);
-		if (before?.workspace_id === scopedWorkspace && before.status === 'paid') return { claimed: true, alreadyClaimed: true };
+		const purchase = (await sql.query(`SELECT workspace_id,payment_link_id,buyer_email,amount_total,currency,status FROM enrichable.stripe_one_time_purchases WHERE session_id=$1 FOR UPDATE`, [sessionId])).rows[0];
+		if (!purchase || purchase.status !== 'paid') throw new WorkspaceError('Stripe is still confirming this $37 payment. Reload in a few seconds.', 409);
+		if (purchase.payment_link_id !== process.env.STRIPE_PAYMENT_LINK_ID || Number(purchase.amount_total) !== PURCHASE_AMOUNT_CENTS || String(purchase.currency).toLowerCase() !== PURCHASE_CURRENCY) {
+			throw new WorkspaceError('This Stripe payment does not match the Monid Enrich $37 purchase.', 403);
+		}
+		if (String(purchase.buyer_email ?? '').trim().toLowerCase() !== buyerEmail) {
+			throw new WorkspaceError('Sign in with the verified email address used at checkout to claim this purchase.', 403);
+		}
+		if (purchase.workspace_id && purchase.workspace_id !== scopedWorkspace) throw new WorkspaceError('This purchase has already been claimed by another workspace.', 409);
+		if (purchase.workspace_id === scopedWorkspace) return { claimed: true, alreadyClaimed: true };
 		const claimed = await sql.query(`UPDATE enrichable.stripe_one_time_purchases SET workspace_id=$2,updated_at=now()
-			WHERE session_id=$1 AND status='paid' AND (workspace_id IS NULL OR workspace_id=$2) RETURNING session_id`, [session.id, scopedWorkspace]);
+			WHERE session_id=$1 AND status='paid' AND payment_link_id=$3 AND lower(buyer_email)=$4 AND (workspace_id IS NULL OR workspace_id=$2) RETURNING session_id`, [sessionId, scopedWorkspace, process.env.STRIPE_PAYMENT_LINK_ID, buyerEmail]);
 		if (!claimed.rows.length) {
-			const current = (await sql.query('SELECT workspace_id,status FROM enrichable.stripe_one_time_purchases WHERE session_id=$1', [session.id])).rows[0];
+			const current = (await sql.query('SELECT workspace_id,status FROM enrichable.stripe_one_time_purchases WHERE session_id=$1', [sessionId])).rows[0];
 			if (current?.workspace_id === scopedWorkspace && current.status === 'paid') return { claimed: true, alreadyClaimed: true };
 			throw new WorkspaceError('This purchase is not available to claim. Check the payment status or contact support.', 409);
 		}
-		await appendWorkspaceAuditEvent(sql, scopedWorkspace, account.user.id, 'workspace.billing.purchase_updated', { status: 'paid', amountUsd: PURCHASE_AMOUNT_CENTS / 100, source: publicLinkCheckout ? 'payment_link' : 'checkout' });
+		await appendWorkspaceAuditEvent(sql, scopedWorkspace, account.user.id, 'workspace.billing.purchase_updated', { status: 'paid', amountUsd: PURCHASE_AMOUNT_CENTS / 100, source: 'payment_link' });
 		return { claimed: true, alreadyClaimed: false };
 	}, { workspace: account });
 }
@@ -208,7 +170,8 @@ export async function processStripeEvent(event: Stripe.Event, database: Database
 	let session: Stripe.Checkout.Session | undefined;
 	let subscription: Stripe.Subscription | undefined;
 	let workspaceHint: string | undefined;
-	let charge: Stripe.Charge | undefined;
+	let paymentIntentId: string | null = null;
+	let fullyRefunded = false;
 	let disputeStatus: 'disputed' | 'paid' | undefined;
 	if (event.type === 'checkout.session.completed' || event.type === 'checkout.session.async_payment_succeeded' || event.type === 'checkout.session.async_payment_failed') {
 		session = event.data.object as Stripe.Checkout.Session;
@@ -226,11 +189,12 @@ export async function processStripeEvent(event: Stripe.Event, database: Database
 		const subId = asId(invoice.subscription);
 		if (subId) subscription = await stripe().subscriptions.retrieve(subId);
 	} else if (event.type === 'charge.refunded') {
-		charge = event.data.object as Stripe.Charge;
+		const charge = event.data.object as Stripe.Charge;
+		paymentIntentId = asId(charge.payment_intent as string | Stripe.PaymentIntent | null);
+		fullyRefunded = charge.refunded && charge.amount_refunded >= charge.amount;
 	} else if (event.type === 'charge.dispute.created' || event.type === 'charge.dispute.closed') {
 		const dispute = event.data.object as Stripe.Dispute;
-		const chargeId = asId(dispute.charge as string | Stripe.Charge);
-		if (chargeId) charge = await stripe().charges.retrieve(chargeId);
+		paymentIntentId = asId(dispute.payment_intent as string | Stripe.PaymentIntent | null);
 		disputeStatus = event.type === 'charge.dispute.closed' && dispute.status === 'won' ? 'paid' : 'disputed';
 	}
 	return database.transaction(async (sql) => {
@@ -243,12 +207,9 @@ export async function processStripeEvent(event: Stripe.Event, database: Database
 			const workspace = await savePurchase(sql, session, status, workspaceHint);
 			if (workspace && status === 'paid') await appendWorkspaceAuditEvent(sql, workspace, 'system:stripe', 'workspace.billing.purchase_updated', { status: 'paid', amountUsd: Number(session.amount_total ?? 0) / 100, source: session.payment_link ? 'payment_link' : 'checkout' });
 		}
-		if (charge?.payment_intent) {
-			const paymentIntentId = asId(charge.payment_intent as string | Stripe.PaymentIntent);
-			if (paymentIntentId) {
-				if (charge.refunded && charge.amount_refunded >= charge.amount) await updatePurchaseStatus(sql, paymentIntentId, 'refunded');
-				else if (disputeStatus) await updatePurchaseStatus(sql, paymentIntentId, disputeStatus);
-			}
+		if (paymentIntentId) {
+			if (fullyRefunded) await updatePurchaseStatus(sql, paymentIntentId, 'refunded');
+			else if (disputeStatus) await updatePurchaseStatus(sql, paymentIntentId, disputeStatus);
 		}
 		if (subscription) {
 			const workspace = await saveSubscription(sql, subscription, workspaceHint);
@@ -278,6 +239,23 @@ export const handleStripeEvent = processStripeEvent;
 export function verifyStripeEvent(payload: string, signature: string | null) {
 	const secret = process.env.STRIPE_WEBHOOK_SECRET;
 	if (!secret?.startsWith('whsec_') || !signature) throw new WorkspaceError('Stripe webhook signature is missing or payments are not configured.', 400);
-	try { return stripe().webhooks.constructEvent(payload, signature, secret); }
-	catch { throw new WorkspaceError('Stripe webhook signature is invalid.', 400); }
+	const parts = signature.split(',').map((part) => part.trim().split('=', 2));
+	const timestamp = parts.find(([key]) => key === 't')?.[1];
+	const signatures = parts.filter(([key]) => key === 'v1').map(([, value]) => value).filter((value): value is string => Boolean(value));
+	const seconds = Number(timestamp);
+	if (!Number.isSafeInteger(seconds) || Math.abs(Math.floor(Date.now() / 1000) - seconds) > 300 || signatures.length === 0) {
+		throw new WorkspaceError('Stripe webhook signature is invalid or expired.', 400);
+	}
+	const expected = createHmac('sha256', secret).update(`${timestamp}.${payload}`, 'utf8').digest();
+	const valid = signatures.some((value) => {
+		if (!/^[a-f0-9]{64}$/i.test(value)) return false;
+		const received = Buffer.from(value, 'hex');
+		return received.length === expected.length && timingSafeEqual(received, expected);
+	});
+	if (!valid) throw new WorkspaceError('Stripe webhook signature is invalid.', 400);
+	try {
+		const event = JSON.parse(payload) as Stripe.Event;
+		if (!event.id || !event.type || !event.data?.object) throw new Error('Invalid Stripe event');
+		return event;
+	} catch { throw new WorkspaceError('Stripe webhook payload is invalid.', 400); }
 }

@@ -242,7 +242,7 @@ function WorkspaceData() {
 }
 
 type ProductBilling = {
-	configured: boolean; required: boolean; priceUsd: number; hasAccess: boolean; purchaseStatus: string | null;
+	configured: boolean; required: boolean; priceUsd: number; hasAccess: boolean; purchaseStatus: string | null; legacyPortalAvailable: boolean;
 	purchase: null | { status: 'paid'; amountUsd: number; currency: string; purchasedAt: string };
 	legacySubscription: null | { status: string; currentPeriodEnd: number | null; cancelAtPeriodEnd: boolean; active: boolean };
 };
@@ -260,9 +260,18 @@ function AccessBilling() {
 			try {
 				const sessionId = query.get('session_id');
 				if (query.get('billing') === 'success' && sessionId) {
-					const claim = await fetch('/api/billing/claim', { method: 'POST', headers: { ...accountHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId }), cache: 'no-store' });
-					const result = await claim.json().catch(() => null) as { error?: string } | null;
-					if (!claim.ok) throw new Error(result?.error || 'Payment completed, but access could not be confirmed yet. Reload in a moment.');
+					let claim: Response | undefined;
+					let claimError = '';
+					for (let attempt = 0; attempt < 20; attempt++) {
+						if (stopped) return;
+						claim = await fetch('/api/billing/claim', { method: 'POST', headers: { ...accountHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId }), cache: 'no-store' });
+						const result = await claim.json().catch(() => null) as { error?: string } | null;
+						if (claim.ok) break;
+						claimError = result?.error || 'Payment completed, but access could not be confirmed yet.';
+						if (claim.status !== 409 || attempt === 19) throw new Error(claimError);
+						await new Promise((resolve) => window.setTimeout(resolve, 1500));
+					}
+					if (!claim?.ok) throw new Error(claimError || 'Payment completed, but access could not be confirmed yet.');
 					if (!stopped) setNotice('Payment confirmed. Lifetime access is active for this workspace.');
 				} else if (query.get('billing') === 'cancelled' && !stopped) setNotice('Checkout was cancelled. No payment was made.');
 				const response = await fetch('/api/billing', { headers: accountHeaders(), cache: 'no-store' });
@@ -295,7 +304,7 @@ function AccessBilling() {
 			{error && <p role="alert" className="text-caption text-danger">{error}</p>}
 		</div>
 		{billing?.configured && workspaceAdmin && !billing.hasAccess && <Button size="sm" className="shrink-0 self-start sm:self-auto" loading={busy} onClick={() => void openBilling('/api/billing')}>Buy lifetime access · $37 once</Button>}
-		{billing?.configured && workspaceAdmin && legacyActive && !purchased && <Button size="sm" className="shrink-0 self-start sm:self-auto" loading={busy} onClick={() => void openBilling('/api/billing/portal')}>Manage legacy subscription</Button>}
+		{billing?.configured && billing.legacyPortalAvailable && workspaceAdmin && legacyActive && !purchased && <Button size="sm" className="shrink-0 self-start sm:self-auto" loading={busy} onClick={() => void openBilling('/api/billing/portal')}>Manage legacy subscription</Button>}
 	</section>;
 }
 
