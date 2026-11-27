@@ -13,4 +13,6 @@ CREATE TABLE IF NOT EXISTS enrichable.enrichment_reservations (
 CREATE INDEX IF NOT EXISTS enrichment_reservations_budget_time ON enrichable.enrichment_reservations (budget_id, created_at);
 
 ALTER TABLE enrichable.organization_providers DROP CONSTRAINT IF EXISTS organization_providers_provider_check;
-ALTER TABLE enrichable.organization_providers ADD CONSTRAINT organization_providers_provider_check CHECK (provider IN ('openai','context','typesafe','hunter','prospeo','quickenrich','apollo','contactout'));
+-- Keep this historical migration compatible with credentials persisted by
+-- later migrations. The current provider set is narrowed in 013 and 027.
+ALTER TABLE enrichable.organization_providers ADD CONSTRAINT organization_providers_provider_check CHECK (provider IN ('openai','monid','treg','context','typesafe','hunter','prospeo','quickenrich','apollo','contactout'));

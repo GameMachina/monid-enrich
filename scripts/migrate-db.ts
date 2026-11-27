@@ -11,4 +11,17 @@ async function migrate() {
 	await migrateDatabase((statements) => sql.transaction(statements.map((statement) => sql.query(statement))), join(process.cwd(), 'migrations'));
 	console.log('Enrichable workspace schema is ready.');
 }
-void migrate().catch(() => { console.error('Database migration failed. Check the dedicated Enrichable DATABASE_URL (or DATABASE_URL_UNPOOLED), database access, and migration files.'); process.exitCode = 1; });
+
+function safeErrorMessage(error: unknown) {
+	const message = error instanceof Error ? error.message : String(error);
+	return message
+		.replace(/postgres(?:ql)?:\/\/[^\s"'`<>]+/gi, 'postgresql://[redacted]')
+		.replace(/((?:password|secret|token|api[_ -]?key)\s*[:=]\s*)[^\s,;]+/gi, '$1[redacted]')
+		.slice(0, 500);
+}
+
+void migrate().catch((error: unknown) => {
+	const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? ` (${error.code})` : '';
+	console.error(`Database migration failed${code}: ${safeErrorMessage(error)}`);
+	process.exitCode = 1;
+});
