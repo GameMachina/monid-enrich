@@ -5,6 +5,13 @@
 .populate-prompt { padding: 0; border: 0; border-radius: 0; background: transparent; font-size: 17px; line-height: 1.6; }
 .populate-prompt:focus { box-shadow: none; }
 .populate-entry:focus-within { outline: 1px solid transparent; }
+.populate-interpretation { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 0 12px 8px; color: var(--color-fg-subtle); font-size: 11px; line-height: 1.4; }
+.populate-interpretation button { font-size: inherit; }
+.populate-refine { margin: 0 12px 8px; color: var(--color-fg-muted); font-size: 12px; }
+.populate-refine summary { width: fit-content; cursor: pointer; color: var(--color-fg-subtle); list-style-position: inside; }
+.populate-refine summary:hover { color: var(--color-fg); }
+.populate-refine[open] { padding-top: 7px; border-top: 1px solid var(--color-line-subtle); }
+.populate-refine[open] summary { margin-bottom: 3px; color: var(--color-fg-muted); }
 .populate-bottom { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 4px 1px 2px 12px; }
 .populate-summary { min-width: 0; color: var(--color-fg-muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .populate-cap { color: var(--color-fg-subtle); }
@@ -55,6 +62,8 @@
 	.populate-picker [role="radio"] { flex: 1 1 auto; justify-content: center; padding-inline: 7px; }
 	.populate-picker .populate-glyph { display: none; }
 	.populate-entry { padding-inline: 8px; }
+	.populate-interpretation { padding-inline: 8px; }
+	.populate-refine { margin-inline: 8px; }
 	.populate-bottom { padding-left: 8px; }
 	.populate-cap { display: none; }
 	.populate-country button[aria-haspopup] { max-width: 130px; }

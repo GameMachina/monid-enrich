@@ -208,6 +208,7 @@ export function isRunnableTableType(definition: TableTypeDefinition): boolean {
 }
 
 export function tableTypeInputError(definition: TableTypeDefinition, input: { query: string; countries?: string[]; inputs?: Record<string, string> }) {
+	if (['amazon-product-search', 'amazon-seller-offers'].includes(definition.id) && /\b(?:amazon\s+(?:uk|u\.k\.|ca|canada|de|germany|fr|japan|au|australia)|(?:uk|canada|germany|france|japan|australia)\s+amazon)\b/i.test(input.query)) return 'Amazon searches currently support the US marketplace only. Change the prompt to Amazon US to continue.';
 	for (const required of definition.requiredInputs.filter((item) => item.required)) {
 		if (required.key === 'query' && !input.query.trim()) return `${required.label} is required.`;
 		if (required.key === 'countries' && !input.countries?.length) return `${required.label} is required.`;

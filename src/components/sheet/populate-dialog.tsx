@@ -17,6 +17,7 @@ import { trackEvent } from '@/lib/analytics';
 import { useSettings } from '@/components/app/settings-context';
 import { useTableTypes } from '@/components/app/table-types-context';
 import { defaultTableTypeForEntity, tableTypeInputError, tableTypePricingNote, tableTypeRowLimit } from '@/lib/table-types';
+import { inferTableTypeFromPrompt, inferTableTypeInputs, inferredCountriesFromPrompt } from '@/lib/search-intent';
 import { ArrowRight, Info, TriangleAlert, X } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { accountHeaders } from '@/lib/account-storage';
@@ -41,7 +42,7 @@ function sheetEntity(sheet: Sheet): EntityKind {
 }
 
 /** Until `picked` (a click in the picker), the prompt chooses what to find: "heads of growth at …" finds people. */
-export interface FindRowsDraft { entity: EntityKind; tableTypeId?: string; query: string; countries: string[]; inputs?: Record<string, string>; target?: number; targetPicked?: boolean; picked?: boolean }
+export interface FindRowsDraft { entity: EntityKind; tableTypeId?: string; query: string; countries: string[]; inputs?: Record<string, string>; target?: number; targetPicked?: boolean; picked?: boolean; manualType?: boolean; countriesPicked?: boolean }
 
 type BillingAccess = { required: boolean; fullAccess: boolean; canManage: boolean; trial: null | { rowsUsed: number; rowLimit: number; sheetsUsed: number; sheetLimit: number } };
 
@@ -62,7 +63,10 @@ export function FindRowsComposer({ draft, onDraftChange, onSubmit, busy = false,
 	const messageId = useId();
 	const { entity, query, countries } = draft;
 	const tableTypes = useTableTypes();
-	const definition = tableTypes.find((item) => item.id === draft.tableTypeId) ?? tableTypes.find((item) => item.entity === entity) ?? defaultTableTypeForEntity(entity);
+	const promptType = draft.manualType ? null : inferTableTypeFromPrompt(query, tableTypes);
+	const definition = draft.manualType
+		? tableTypes.find((item) => item.id === draft.tableTypeId) ?? promptType ?? tableTypes.find((item) => item.entity === entity) ?? defaultTableTypeForEntity(entity)
+		: promptType ?? tableTypes.find((item) => item.id === draft.tableTypeId) ?? tableTypes.find((item) => item.entity === entity) ?? defaultTableTypeForEntity(entity);
 	const availableTypes = ['companies', 'people', 'websites'].map((kind) => tableTypes.find((item) => item.entity === kind) ?? defaultTableTypeForEntity(kind as EntityKind));
 	const companyTypes = tableTypes.filter((item) => item.id === 'companies' || item.category === 'Companies & Organizations');
 	const peopleTypes = tableTypes.filter((item) => item.id === 'people' || item.category === 'People');
@@ -74,16 +78,22 @@ export function FindRowsComposer({ draft, onDraftChange, onSubmit, busy = false,
 	const categories = [...new Set(moreTypes.map((item) => item.category))];
 	const selectedCategory = definition.entity === 'records' && categories.includes(definition.category) ? definition.category : '';
 	const categoryTypes = moreTypes.filter((item) => item.category === selectedCategory);
-	const tableTypeRowCap = tableTypeRowLimit(definition.id, draft.inputs ?? {});
+	const inferred = inferTableTypeInputs(definition, query);
+	const effectiveInputs = { ...inferred.inputs, ...draft.inputs };
+	const inferredCountries = inferredCountriesFromPrompt(query);
+	const effectiveCountries = draft.countriesPicked ? countries : inferredCountries.length ? inferredCountries : countries;
+	const tableTypeRowCap = tableTypeRowLimit(definition.id, effectiveInputs);
 	const extraInputs = definition.requiredInputs.filter((input) => input.key !== 'query' && input.key !== 'countries');
 	const examplePrompt = definition.examplePrompts[0] ?? EXAMPLES[entity];
 	const queryInput = definition.requiredInputs.find((input) => input.key === 'query');
 	const countryInput = definition.requiredInputs.find((input) => input.key === 'countries' && input.type === 'country-list');
 	const supportsCountries = Boolean(countryInput);
-	const inputError = tableTypeInputError(definition, draft);
+	const inputError = tableTypeInputError(definition, { query, countries: effectiveCountries, inputs: effectiveInputs });
 	const { connections } = useSettings();
 	const router = useRouter();
 	const [billing, setBilling] = useState<BillingAccess | null>(null);
+	const [refineOpen, setRefineOpen] = useState(false);
+	const requiredRefinement = query.trim().length >= 3 && Boolean(inputError);
 	useEffect(() => {
 		const controller = new AbortController();
 		void fetch('/api/billing', { headers: accountHeaders(), cache: 'no-store', signal: controller.signal })
@@ -102,7 +112,13 @@ export function FindRowsComposer({ draft, onDraftChange, onSubmit, busy = false,
 	const ready = query.trim().length >= 3 && !limitError && !trialMessage && !inputError && !busy;
 	const submit = (event?: FormEvent) => {
 		event?.preventDefault();
-		if (ready) onSubmit({ query: query.trim(), entity, tableTypeId: definition.id, tableType: definition, target, countries: supportsCountries ? countries : [], inputs: Object.fromEntries(extraInputs.map((input) => [input.key, draft.inputs?.[input.key]?.trim() ?? ''])), dataProvider: 'monid', idempotencyKey: crypto.randomUUID() });
+		if (ready) onSubmit({ query: query.trim(), entity: definition.entity as EntityKind, tableTypeId: definition.id, tableType: definition, target, countries: supportsCountries ? effectiveCountries : [], inputs: Object.fromEntries(extraInputs.map((input) => [input.key, effectiveInputs[input.key]?.trim() ?? ''])), dataProvider: 'monid', idempotencyKey: crypto.randomUUID() });
+	};
+	const followPrompt = () => {
+		const selected = inferTableTypeFromPrompt(query, tableTypes);
+		const nextEntity = selected?.entity as EntityKind | undefined ?? promptEntity(query) ?? fallbackEntity;
+		const base = tableTypes.find((item) => item.entity === nextEntity && ['companies', 'people', 'websites'].includes(item.id));
+		onDraftChange({ ...draft, entity: nextEntity, tableTypeId: selected?.id ?? base?.id, manualType: false, picked: false, inputs: {} });
 	};
 	return (
 		<form className="populate-composer" onSubmit={submit} noValidate>
@@ -112,29 +128,38 @@ export function FindRowsComposer({ draft, onDraftChange, onSubmit, busy = false,
 				{onClose && <button type="button" aria-label="Close" onClick={onClose} className="populate-close"><X aria-hidden size={16} /></button>}
 				<fieldset disabled={busy} className="populate-front">
 					<div className="populate-picker">
-						<Segmented label="What to find" value={(primaryTabEntity ?? '') as Exclude<EntityKind, 'records'>} size="sm" onChange={(value) => { const selected = availableTypes.find((item) => item.entity === value); if (selected) onDraftChange({ ...draft, entity: value, tableTypeId: selected.id, picked: true, inputs: {} }); }} options={availableTypes.filter((item) => item.entity !== 'records').map((item) => ({ value: item.entity as Exclude<EntityKind, 'records'>, label: <><EntityGlyph entity={item.entity as Exclude<EntityKind, 'records'>} active={primaryTabEntity === item.entity} />{item.name}</> }))} />
+						<Segmented label="What to find" value={(primaryTabEntity ?? '') as Exclude<EntityKind, 'records'>} size="sm" onChange={(value) => { const selected = availableTypes.find((item) => item.entity === value); if (selected) onDraftChange({ ...draft, entity: value, tableTypeId: selected.id, manualType: true, picked: true, inputs: {} }); }} options={availableTypes.filter((item) => item.entity !== 'records').map((item) => ({ value: item.entity as Exclude<EntityKind, 'records'>, label: <><EntityGlyph entity={item.entity as Exclude<EntityKind, 'records'>} active={primaryTabEntity === item.entity} />{item.name}</> }))} />
 						{(primaryTypes.length > 1 || categories.length > 0) && <div className="ml-2 flex min-w-0 items-center gap-1.5">
-							{primaryTypes.length > 1 && <Select id="find-rows-primary-type" variant="pill" aria-label={`${primaryTabEntity === 'companies' ? 'Company' : 'People'} search type`} value={primaryTypes.some((item) => item.id === definition.id) ? definition.id : ''} onValueChange={(id) => { const selected = primaryTypes.find((item) => item.id === id); if (selected) onDraftChange({ ...draft, entity: selected.entity as EntityKind, tableTypeId: selected.id, picked: true, inputs: {} }); }}>
+							{primaryTypes.length > 1 && <Select id="find-rows-primary-type" variant="pill" aria-label={`${primaryTabEntity === 'companies' ? 'Company' : 'People'} search type`} value={primaryTypes.some((item) => item.id === definition.id) ? definition.id : ''} onValueChange={(id) => { const selected = primaryTypes.find((item) => item.id === id); if (selected) onDraftChange({ ...draft, entity: selected.entity as EntityKind, tableTypeId: selected.id, manualType: true, picked: true, inputs: {} }); }}>
 								{primaryTypes.map((item) => <option key={item.id} value={item.id}>{item.id === 'companies' ? 'Company search' : item.id === 'people' ? 'People search' : item.name}</option>)}
 							</Select>}
-							{categories.length > 0 && <Select id="find-rows-category" variant="pill" aria-label="More categories" value={selectedCategory} onValueChange={(category) => { const first = moreTypes.find((item) => item.category === category); if (first) onDraftChange({ ...draft, entity: 'records', tableTypeId: first.id, picked: true, inputs: {} }); }}>
+							{categories.length > 0 && <Select id="find-rows-category" variant="pill" aria-label="More categories" value={selectedCategory} onValueChange={(category) => { const first = moreTypes.find((item) => item.category === category); if (first) onDraftChange({ ...draft, entity: 'records', tableTypeId: first.id, manualType: true, picked: true, inputs: {} }); }}>
 								<option value="">More</option>{categories.map((category) => <option key={category} value={category}>{category}</option>)}
 							</Select>}
-							{selectedCategory && <Select id="find-rows-table-type" variant="pill" aria-label="Table type" value={definition.id} onValueChange={(id) => { const selected = moreTypes.find((item) => item.id === id); if (selected) onDraftChange({ ...draft, entity: 'records', tableTypeId: selected.id, picked: true, inputs: {} }); }}>
+							{selectedCategory && <Select id="find-rows-table-type" variant="pill" aria-label="Table type" value={definition.id} onValueChange={(id) => { const selected = moreTypes.find((item) => item.id === id); if (selected) onDraftChange({ ...draft, entity: 'records', tableTypeId: selected.id, manualType: true, picked: true, inputs: {} }); }}>
 								{categoryTypes.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
 							</Select>}
 						</div>}
 					</div>
 					<div className="populate-entry">
-						<AutoTextarea aria-label={queryInput?.label ?? 'Describe the rows you want'} title={queryInput?.description || definition.description} aria-invalid={!!limitError || !!trialMessage || !!inputError} aria-describedby={message || notice ? messageId : undefined} rows={2} maxRows={10} autoFocus={autoFocus} value={query} onChange={(event) => { const next = event.target.value; const nextEntity = draft.picked ? entity : promptEntity(next) ?? fallbackEntity; const selected = availableTypes.find((item) => item.entity === nextEntity); onDraftChange({ ...draft, query: next, target: draft.targetPicked ? target : promptResultCount(next) ?? 5, entity: nextEntity, tableTypeId: nextEntity === 'records' ? draft.tableTypeId : selected?.id }); }} onKeyDown={(event) => {
+						<AutoTextarea aria-label={queryInput?.label ?? 'Describe the rows you want'} title={queryInput?.description || definition.description} aria-invalid={!!limitError || !!trialMessage || !!inputError} aria-describedby={message || notice ? messageId : undefined} rows={2} maxRows={10} autoFocus={autoFocus} value={query} onChange={(event) => { const next = event.target.value; const inferredType = draft.manualType ? null : inferTableTypeFromPrompt(next, tableTypes); const nextEntity = draft.manualType ? entity : inferredType?.entity as EntityKind | undefined ?? promptEntity(next) ?? fallbackEntity; const selected = inferredType ?? availableTypes.find((item) => item.entity === nextEntity); const nextTypeId = draft.manualType ? draft.tableTypeId : selected?.id ?? draft.tableTypeId; onDraftChange({ ...draft, query: next, target: draft.targetPicked ? target : promptResultCount(next) ?? 5, entity: nextEntity, tableTypeId: nextTypeId, inputs: nextTypeId === draft.tableTypeId ? draft.inputs : {} }); }} onKeyDown={(event) => {
 							if (event.key !== 'Enter' || !(event.metaKey || event.ctrlKey)) return;
 							event.preventDefault();
 							if (!isImeComposing(event)) submit();
 						}} placeholder={`Describe the ${NOUNS[entity][1]} you want, e.g. ${examplePrompt}`} className="populate-prompt" />
 					</div>
-					{extraInputs.length > 0 && <div className="grid gap-2 px-3 pb-2 sm:grid-cols-2">
-						{extraInputs.map((input) => <label key={input.key} className="grid gap-1 text-caption text-fg-muted"><span>{input.label}{input.required ? ' *' : ''}</span>{input.type === 'select' ? <Select variant="input" aria-label={input.label} value={draft.inputs?.[input.key] ?? ''} onValueChange={(value) => onDraftChange({ ...draft, inputs: { ...draft.inputs, [input.key]: value } })}><option value="">Any {input.label.toLowerCase()}</option>{input.options?.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</Select> : <input className="h-9 rounded-full border border-line-subtle bg-surface-secondary px-3 text-caption text-fg outline-none focus:border-blue-40" type={input.type === 'url' ? 'url' : 'text'} aria-label={input.label} title={input.description} placeholder={input.description} required={input.required} value={draft.inputs?.[input.key] ?? ''} onChange={(event) => onDraftChange({ ...draft, inputs: { ...draft.inputs, [input.key]: event.target.value } })} />}</label>)}
-					</div>}
+					<div className="populate-interpretation" aria-live="polite">
+						<span>{draft.manualType ? `Search type set to ${definition.name}.` : `Prompt interpreted as ${definition.name}.`}</span>
+						{!draft.manualType && inferred.assumptions.length > 0 && <span>{inferred.assumptions.join(' ')}</span>}
+						{draft.manualType && <button type="button" className="text-brand underline underline-offset-2" onClick={followPrompt}>Use prompt</button>}
+					</div>
+					{(extraInputs.length > 0 || supportsCountries) && <details className="populate-refine" open={refineOpen || requiredRefinement} onToggle={(event) => setRefineOpen(event.currentTarget.open)}>
+						<summary>{inputError && query.trim().length >= 3 ? 'Add required search details' : 'Refine search (optional)'}</summary>
+						<div className="grid gap-2 px-3 pb-2 pt-1 sm:grid-cols-2">
+							{supportsCountries && <div className="grid gap-1 text-caption text-fg-muted"><span>{countryInput?.label ?? 'Countries'}</span><CountryPicker id={countryId} value={effectiveCountries} onChange={(next) => onDraftChange({ ...draft, countries: next, countriesPicked: true })} disabled={busy} label={countryInput?.label ?? 'Countries'} description={countryInput?.description} /></div>}
+							{extraInputs.map((input) => <label key={input.key} className="grid gap-1 text-caption text-fg-muted"><span>{input.label}{input.required ? ' *' : ''}</span>{input.type === 'select' ? <Select variant="input" aria-label={input.label} value={effectiveInputs[input.key] ?? ''} onValueChange={(value) => onDraftChange({ ...draft, inputs: { ...draft.inputs, [input.key]: value } })}><option value="">Any {input.label.toLowerCase()}</option>{input.options?.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</Select> : <input className="h-9 rounded-full border border-line-subtle bg-surface-secondary px-3 text-caption text-fg outline-none focus:border-blue-40" type={input.type === 'url' ? 'url' : 'text'} aria-label={input.label} title={input.description} placeholder={input.description} required={input.required} value={effectiveInputs[input.key] ?? ''} onChange={(event) => onDraftChange({ ...draft, inputs: { ...draft.inputs, [input.key]: event.target.value } })} />}</label>)}
+						</div>
+					</details>}
 					<div className="populate-bottom">
 						<span className="populate-summary">{limitError ? '—' : entityCount(entity, target)}<span className="populate-cap"> · up to {trial ? rowLimit : MAX_POPULATE_LIMIT.toLocaleString()}</span></span>
 						<label className="sr-only" htmlFor="find-rows-target">Rows to find</label>
@@ -143,10 +168,6 @@ export function FindRowsComposer({ draft, onDraftChange, onSubmit, busy = false,
 						</Select>
 						<span className="populate-actions">
 							<span className="rounded-full bg-surface-secondary px-3 py-2 text-caption text-fg-muted">Monid · workspace wallet</span>
-							{supportsCountries && <span className="populate-country">
-								<label htmlFor={countryId} className="sr-only">{countryInput?.label ?? 'Countries'}</label>
-								<CountryPicker id={countryId} value={countries} onChange={(next) => onDraftChange({ ...draft, countries: next })} disabled={busy} label={countryInput?.label ?? 'Countries'} description={countryInput?.description} />
-							</span>}
 							<button type="submit" aria-label={`Find ${definition.name}`} aria-busy={busy || undefined} disabled={!ready} className="populate-send">{busy ? <span aria-hidden className="spinner !border-current !border-t-transparent" /> : <ArrowRight aria-hidden size={18} />}</button>
 						</span>
 					</div>
@@ -170,7 +191,7 @@ export function PopulateDialog({ sheet, rowCount, initialEntity, onClose, onGene
 	const router = useRouter();
 	const tableTypes = useTableTypes();
 	// A sheet with rows keeps its kind; an empty one follows the prompt until the user picks.
-	const [draft, setDraft] = useState<FindRowsDraft>(() => ({ entity: initialEntity ?? sheetEntity(sheet), tableTypeId: sheet.populate?.tableTypeId ?? (initialEntity ?? sheetEntity(sheet)), query: sheet.populate?.query ?? '', countries: sheet.populate?.countries ?? [], target: sheet.populate?.target ?? promptResultCount(sheet.populate?.query ?? '') ?? 5, picked: Boolean(initialEntity) || rowCount > 0 }));
+	const [draft, setDraft] = useState<FindRowsDraft>(() => ({ entity: initialEntity ?? sheetEntity(sheet), tableTypeId: sheet.populate?.tableTypeId ?? (initialEntity ?? sheetEntity(sheet)), query: sheet.populate?.query ?? '', countries: sheet.populate?.countries ?? [], target: sheet.populate?.target ?? promptResultCount(sheet.populate?.query ?? '') ?? 5, picked: Boolean(initialEntity) || rowCount > 0, manualType: Boolean(initialEntity) || rowCount > 0 || Boolean(sheet.populate?.tableTypeId), countriesPicked: Boolean(sheet.populate?.countries?.length) }));
 	// A search handed off from the Sheets page is already streaming: stay collapsed until it settles.
 	const [view, setView] = useState<View>(() => { const run = populateRunner.getSnapshot(sheet.id); return run.handoff && run.running ? 'hidden' : 'form'; });
 	// The Sheets page created this sheet for its search; if nothing came of it, closing removes the empty sheet.

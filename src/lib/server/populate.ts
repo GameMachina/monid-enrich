@@ -17,6 +17,7 @@ import { mapConcurrent } from './map-concurrent';
 import { classifyFailure } from './enrich-failure';
 import { defaultTableTypeForEntity, tableTypeRunnableError } from '../table-types';
 import { runMonidTableSearch } from './monid-table-runner';
+import { inferPromptConstraints } from '../search-intent';
 
 /* The populate agent: OpenAI plans and paginates Context.dev searches; results stream straight to the sheet.
    The model only sees compact summaries (counts, cursors, a few names), never the full records, so a 1,000-row
@@ -69,6 +70,7 @@ export async function runPopulate(access: ProviderAccess, request: PopulateReque
 	const limitError = populateLimitError(requestedTarget);
 	if (limitError) throw new Error(limitError);
 	request = { ...request, target: Math.min(requestedTarget, request.availableRows ?? 1000) };
+	const promptConstraints = inferPromptConstraints(request.query);
 	if (request.entity === 'records') {
 		await runMonidTableSearch(access, { ...request, tableType }, emit, signal);
 		return;
@@ -129,10 +131,10 @@ export async function runPopulate(access: ProviderAccess, request: PopulateReque
 				employees_max: z.number().int().min(0).optional(),
 				cursor: z.string().max(64).optional().describe('next_cursor from the previous call of the same query'),
 			}),
-			execute: async ({ query, employees_min, employees_max, cursor }) => searchInOrder(async () => {
+				execute: async ({ query, employees_min, employees_max, cursor }) => searchInOrder(async () => {
 				if (callsExhausted()) return { error: 'The configured search-call limit has been reached.' };
 				if (state.added >= target) return summarise(0, [], null, 0);
-				const result = await companySearch(client, { query, filters: { countries, employees_min, employees_max }, cursor });
+					const result = await companySearch(client, { query, filters: { countries, employees_min: employees_min ?? promptConstraints.employeesMin, employees_max: employees_max ?? promptConstraints.employeesMax }, cursor });
 				const rows: FoundRow[] = [];
 				for (const hit of result.results) {
 					const key = foundRowKey(hit.domain);
@@ -155,10 +157,10 @@ export async function runPopulate(access: ProviderAccess, request: PopulateReque
 				years_of_experience_max: z.number().int().min(0).optional(),
 				cursor: z.string().optional(),
 			}),
-			execute: async ({ query, mode, years_of_experience_min, years_of_experience_max, cursor }) => searchInOrder(async () => {
+				execute: async ({ query, mode, years_of_experience_min, years_of_experience_max, cursor }) => searchInOrder(async () => {
 				if (callsExhausted()) return { error: 'The configured search-call limit has been reached.' };
 				if (state.added >= target) return summarise(0, [], null, 0);
-				const response = await client.people.search({ query, mode, filters: { countries, years_of_experience_min, years_of_experience_max }, cursor }, { signal });
+					const response = await client.people.search({ query, mode, filters: { countries, years_of_experience_min: years_of_experience_min ?? promptConstraints.yearsOfExperienceMin, years_of_experience_max: years_of_experience_max ?? promptConstraints.yearsOfExperienceMax }, cursor }, { signal });
 				const hits: Array<{ hit: (typeof response.results)[number]; linkedin?: string }> = [];
 				for (const hit of response.results) {
 					if (hits.length >= target - state.added) break;
@@ -255,6 +257,7 @@ async function populateDirectMonid(access: ProviderAccess, request: PopulateRequ
 	const target = request.target;
 	const query = normalizeDiscoveryQuery(request.query);
 	const countries = request.countries?.length ? request.countries.map((country) => country.toUpperCase()) : undefined;
+	const promptConstraints = inferPromptConstraints(request.query);
 	const seen = new Set((request.existingKeys ?? []).map(foundRowKey).filter(Boolean));
 	let added = 0, cursor: string | undefined, calls = 0;
 	let runCursor = access.spend.monidRuns.length;
@@ -265,11 +268,11 @@ async function populateDirectMonid(access: ProviderAccess, request: PopulateRequ
 		calls++;
 		let rows: FoundRow[] = [], nextCursor: string | null = null;
 		if (request.entity === 'companies') {
-			const result = await companySearch(client, { query, filters: { countries }, cursor });
+			const result = await companySearch(client, { query, filters: { countries, employees_min: promptConstraints.employeesMin, employees_max: promptConstraints.employeesMax }, cursor });
 			nextCursor = result.next_cursor;
 			rows = result.results.map(companyRow);
 		} else if (request.entity === 'people') {
-			const response = await client.people.search({ query, mode: query.length > 500 ? 'ultra' : 'fast', filters: { countries }, cursor }, { signal });
+			const response = await client.people.search({ query, mode: query.length > 500 ? 'ultra' : 'fast', filters: { countries, years_of_experience_min: promptConstraints.yearsOfExperienceMin, years_of_experience_max: promptConstraints.yearsOfExperienceMax }, cursor }, { signal });
 			nextCursor = response.next_cursor ?? null;
 			rows = response.results.map((entry: unknown) => {
 				const hit = objectValue(entry), role = objectValue(hit.role), company = objectValue(role.company), location = objectValue(hit.location);

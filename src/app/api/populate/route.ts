@@ -13,6 +13,7 @@ import { WorkspaceError } from '@/lib/workspace';
 import { TableTypeStore } from '@/lib/server/table-type-store';
 import type { TableTypeDefinition } from '@/lib/types';
 import { tableTypeInputError, tableTypeRowLimit } from '@/lib/table-types';
+import { inferTableTypeFromPrompt, inferTableTypeInputs } from '@/lib/search-intent';
 
 export const maxDuration = 300;
 
@@ -21,15 +22,25 @@ export async function POST(request: Request) {
 	if (prepared instanceof Response) return prepared;
 	const { access } = prepared;
 	let tableType: TableTypeDefinition;
-	try { tableType = await withDatabase((database) => new TableTypeStore(database).resolvePublished(prepared.input.tableTypeId, prepared.input.entity)); }
+	try {
+		tableType = await withDatabase(async (database) => {
+			const store = new TableTypeStore(database);
+			if (prepared.input.tableTypeId) return store.resolvePublished(prepared.input.tableTypeId, prepared.input.entity);
+			const inferred = inferTableTypeFromPrompt(prepared.input.query, await store.listRunnablePublished());
+			const inferredEntity = inferred && ['companies', 'people', 'websites', 'records'].includes(inferred.entity) ? inferred.entity as typeof prepared.input.entity : prepared.input.entity;
+			return store.resolvePublished(inferred?.id, inferredEntity);
+		});
+	}
 	catch (error) { return jsonError(error instanceof Error ? error.message : 'The selected table type is unavailable.', error instanceof WorkspaceError ? error.status : 503, failure('input_invalid')); }
-	const invalidInput = tableTypeInputError(tableType, prepared.input);
+	const inferredInputs = inferTableTypeInputs(tableType, prepared.input.query).inputs;
+	const requestWithInferredInputs = { ...prepared.input, inputs: { ...inferredInputs, ...prepared.input.inputs }, entity: tableType.entity as typeof prepared.input.entity };
+	const invalidInput = tableTypeInputError(tableType, requestWithInferredInputs);
 	if (invalidInput) return jsonError(invalidInput, 400, failure('input_invalid'));
 	const requestedTarget = prepared.input.target;
 	if (requestedTarget > MAX_POPULATE_LIMIT) return jsonError(`A single Find rows request can return up to ${MAX_POPULATE_LIMIT.toLocaleString()} rows.`, 400, failure('input_invalid'));
-	const typeRowLimit = tableTypeRowLimit(tableType.id, prepared.input.inputs ?? {});
+	const typeRowLimit = tableTypeRowLimit(tableType.id, requestWithInferredInputs.inputs ?? {});
 	if (requestedTarget > typeRowLimit) return jsonError(`${tableType.name} supports up to ${typeRowLimit.toLocaleString()} rows per search with its current Monid source.`, 400, failure('input_invalid'));
-	let input: typeof prepared.input = { ...prepared.input, tableTypeId: tableType.id, tableType, target: requestedTarget, availableRows: undefined };
+	let input: typeof prepared.input = { ...requestWithInferredInputs, entity: tableType.entity as typeof prepared.input.entity, tableTypeId: tableType.id, tableType, target: requestedTarget, availableRows: undefined };
 	if (access.account) {
 		try {
 			const billing = await withDatabase((database) => billingSnapshot(access.account!, database));
