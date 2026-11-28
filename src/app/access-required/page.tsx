@@ -9,5 +9,5 @@ export const instant = false;
 export default async function AccessRequiredPage({ searchParams }: { searchParams: Promise<{ billing?: string; unlock?: string; session_id?: string }> }) {
 	if (!await currentAccount()) redirect(managedAuthEnabled() ? '/sign-in?redirect_url=%2Faccess-required' : '/login?returnTo=%2Faccess-required');
 	const query = await searchParams;
-	return <AccessRequired billingResult={query.billing === 'success' ? 'success' : query.billing === 'cancelled' ? 'cancelled' : null} sessionId={query.session_id ?? null} unlock={query.unlock === 'sheets' ? 'sheets' : 'rows'} />;
+	return <AccessRequired billingResult={query.billing === 'success' ? 'success' : query.billing === 'cancelled' ? 'cancelled' : null} sessionId={query.session_id ?? null} unlock={query.unlock === 'organization' ? 'organization' : query.unlock === 'sheets' ? 'sheets' : 'rows'} />;
 }

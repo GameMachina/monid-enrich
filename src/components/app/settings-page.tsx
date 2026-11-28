@@ -242,7 +242,7 @@ function WorkspaceData() {
 }
 
 type ProductBilling = {
-	configured: boolean; required: boolean; priceUsd: number; hasAccess: boolean; fullAccess: boolean; exempt: boolean; purchaseStatus: string | null; legacyPortalAvailable: boolean;
+	configured: boolean; required: boolean; priceUsd: number; hasAccess: boolean; fullAccess: boolean; exempt: boolean; requiresPurchase: boolean; purchaseStatus: string | null; legacyPortalAvailable: boolean;
 	trial: null | { active: boolean; sheetsUsed: number; rowsUsed: number; sheetLimit: number; rowLimit: number };
 	purchase: null | { status: 'paid'; amountUsd: number; currency: string; purchasedAt: string };
 	legacySubscription: null | { status: string; currentPeriodEnd: number | null; cancelAtPeriodEnd: boolean; active: boolean };
@@ -299,8 +299,8 @@ function AccessBilling() {
 	return <section aria-labelledby="product-billing-title" className="glass-card flex flex-col gap-4 px-5 py-5 sm:flex-row sm:items-center sm:justify-between">
 		<div className="flex min-w-0 flex-col gap-1">
 			<h2 id="product-billing-title" className="text-body text-fg">Monid Enrich access</h2>
-			<p className="text-body-sm text-fg-muted">One payment of $37 USD gives this workspace lifetime access. Monid and optional OpenAI usage remain billed separately by their providers.</p>
-			{billing && <p className="text-caption text-fg-subtle">{billing.exempt ? 'Owner or beta tester access is enabled for this verified account.' : purchased ? `Lifetime access purchased · $${billing.purchase?.amountUsd.toFixed(2)} USD` : legacyActive ? `Legacy subscription active${billing.legacySubscription?.currentPeriodEnd ? ` through ${new Date(billing.legacySubscription.currentPeriodEnd * 1000).toLocaleDateString()}` : ''}` : billing.purchaseStatus === 'refunded' ? 'The purchase was refunded; workspace access is inactive.' : billing.purchaseStatus === 'disputed' ? 'The purchase is in dispute; workspace access is inactive.' : billing.trial ? `Trial active · ${billing.trial.sheetsUsed}/${billing.trial.sheetLimit} sheet · ${billing.trial.rowsUsed}/${billing.trial.rowLimit} populated rows${billing.configured ? '' : ' · Stripe checkout is not configured'}` : 'No purchase is recorded for this workspace.'}</p>}
+			<p className="text-body-sm text-fg-muted">A one-time $37 USD payment unlocks this organization for all its members. Monid and optional OpenAI usage remain billed separately by their providers.</p>
+			{billing && <p className="text-caption text-fg-subtle">{billing.exempt ? 'Admin access is enabled for this organization.' : purchased ? `Lifetime access purchased · $${billing.purchase?.amountUsd.toFixed(2)} USD` : legacyActive ? `Legacy subscription active${billing.legacySubscription?.currentPeriodEnd ? ` through ${new Date(billing.legacySubscription.currentPeriodEnd * 1000).toLocaleDateString()}` : ''}` : billing.purchaseStatus === 'refunded' ? 'The purchase was refunded; workspace access is inactive.' : billing.purchaseStatus === 'disputed' ? 'The purchase is in dispute; workspace access is inactive.' : billing.trial ? `First-organization trial · ${billing.trial.sheetsUsed}/${billing.trial.sheetLimit} sheet · ${billing.trial.rowsUsed}/${billing.trial.rowLimit} populated rows${billing.configured ? '' : ' · Stripe checkout is not configured'}` : billing.requiresPurchase ? 'Additional organization · no trial is available. Purchase access for this organization to unlock it for all members.' : 'No purchase is recorded for this workspace.'}</p>}
 			{notice && <p role="status" className="text-caption text-success">{notice}</p>}
 			{error && <p role="alert" className="text-caption text-danger">{error}</p>}
 		</div>

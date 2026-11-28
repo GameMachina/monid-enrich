@@ -14,25 +14,28 @@ import { billingRequired, billingSnapshot } from './stripe-billing';
 
 type Actor = Pick<Account, 'issuer' | 'user' | 'organization'>;
 
-const TRIAL_SHEET_LIMIT = 1;
-const TRIAL_ROW_LIMIT = 5;
 const hasRowData = (row: Row) => Object.values(row.cells).some((cell) => cell.v !== null && cell.v !== '' && !(Array.isArray(cell.v) && cell.v.length === 0));
 
-async function countTrialRows(sql: Sql, workspace: string, sheetId?: string) {
-	const scope = sheetId ? ' AND r.sheet_id=$2' : '';
-	const values = sheetId ? [workspace, sheetId] : [workspace];
-	const result = await sql.query(`SELECT count(*)::int AS row_count FROM enrichable.sheet_rows r
-		WHERE r.workspace_id=$1${scope} AND EXISTS (
-			SELECT 1 FROM jsonb_each(r.data->'cells') cell
-			WHERE cell.value->'v' IS NOT NULL AND cell.value->'v' <> 'null'::jsonb AND cell.value->>'v' <> ''
-		)`, values);
-	return Number(result.rows[0]?.row_count ?? 0);
-}
+type TrialLimits = { sheetLimit: number; rowLimit: number; sheetsUsed: number; rowsUsed: number };
+type WriteLimits = TrialLimits | { purchaseRequired: true } | null;
 
-async function trialLimits(actor: Actor, database: Database) {
+async function trialLimits(actor: Actor, database: Database): Promise<WriteLimits> {
 	if (!billingRequired()) return null;
 	const billing = await billingSnapshot(actor, database);
-	return billing.fullAccess ? null : { sheetLimit: TRIAL_SHEET_LIMIT, rowLimit: TRIAL_ROW_LIMIT };
+	if (billing.fullAccess) return null;
+	if (billing.requiresPurchase || !billing.trial) return { purchaseRequired: true };
+	return billing.trial;
+}
+
+async function enforceTrialQuota(sql: Sql, workspace: string, limits: WriteLimits, addedSheets = 0, addedRows = 0) {
+	if (!limits) return;
+	if ('purchaseRequired' in limits) throw new WorkspaceError('This additional organization has no free trial. Buy lifetime access for $37 once to unlock this workspace.', 402);
+	const result = await sql.query('SELECT sheets_used,rows_used FROM enrichable.workspace_trial_usage WHERE workspace_id=$1 FOR UPDATE', [workspace]);
+	if (!result.rows.length) throw new WorkspaceError('This organization has no free trial. Buy lifetime access for $37 once to unlock this workspace.', 402);
+	const sheetsUsed = Number(result.rows[0].sheets_used ?? 0), rowsUsed = Number(result.rows[0].rows_used ?? 0);
+	if (sheetsUsed + addedSheets > limits.sheetLimit) throw new WorkspaceError(`The first-organization trial includes one sheet. Buy lifetime access for $37 once to unlock more sheets.`, 402);
+	if (rowsUsed + addedRows > limits.rowLimit) throw new WorkspaceError(`The first-organization trial allows up to ${limits.rowLimit} populated rows. Buy lifetime access for $37 once to unlock more rows.`, 402);
+	if (addedSheets || addedRows) await sql.query(`UPDATE enrichable.workspace_trial_usage SET sheets_used=sheets_used+$2,rows_used=rows_used+$3,updated_at=now() WHERE workspace_id=$1`, [workspace, addedSheets, addedRows]);
 }
 
 export function collaboratorIdentity(account: Account) {
@@ -194,6 +197,7 @@ ON CONFLICT (workspace_id,client_id) DO UPDATE SET sheet_id=excluded.sheet_id,na
 					if (key) existingByKey.set(key, row);
 				}
 			}
+			const previouslyPopulated = new Map([...existingByKey.values()].map((row) => [row.id, hasRowData(row)]));
 			const seen = new Set(existingByKey.keys()), changed = new Map<string, Row>(), added: Row[] = [];
 			let order = Number((await client.query('SELECT COALESCE(MAX(position),-1)+1 AS next FROM enrichable.sheet_rows WHERE workspace_id=$1 AND sheet_id=$2', [workspace, id])).rows[0]?.next ?? 0);
 			for (const [index, values] of mapped.records.entries()) {
@@ -228,6 +232,8 @@ ON CONFLICT (workspace_id,client_id) DO UPDATE SET sheet_id=excluded.sheet_id,na
 				added.push({ id: nanoid(12), sheetId: id, order: order++, cells, createdAt: Date.now() });
 			}
 			const rowsToWrite = [...changed.values(), ...added];
+			const newlyPopulated = added.filter(hasRowData).length + [...changed.values()].filter((row) => !previouslyPopulated.get(row.id) && hasRowData(row)).length;
+			await enforceTrialQuota(client, workspace, limits, 0, newlyPopulated);
 			if (rowsToWrite.length) {
 				const saved = await client.query(`INSERT INTO enrichable.sheet_rows (workspace_id,sheet_id,id,position,data)
 					SELECT $1,$2,value->>'id',(value->>'order')::double precision,value FROM jsonb_array_elements($3::jsonb)
@@ -238,7 +244,6 @@ ON CONFLICT (workspace_id,client_id) DO UPDATE SET sheet_id=excluded.sheet_id,na
 			if (columns.length !== sheet.columns.length || rowsToWrite.length) {
 				await client.query('UPDATE enrichable.sheets SET data=$3::jsonb,revision=revision+1,updated_by=$4 WHERE workspace_id=$1 AND id=$2', [workspace, id, JSON.stringify({ ...sheet, ...(columns.length !== sheet.columns.length ? { columns } : {}), updatedAt: Date.now() }), actor.user.id]);
 			}
-			if (limits && await countTrialRows(client, workspace) > limits.rowLimit) throw new WorkspaceError(`The free trial includes up to ${limits.rowLimit} rows in one sheet. Unlock more rows with lifetime access for $37 once.`, 402);
 			const result = { added: added.length, updated: changed.size };
 			await persist?.(client, result);
 			return result;
@@ -248,13 +253,9 @@ ON CONFLICT (workspace_id,client_id) DO UPDATE SET sheet_id=excluded.sheet_id,na
 		const { sheet, rows } = parseInput(createSheetSchema, input, 'Invalid sheet data.');
 		this.validateRows(sheet, rows);
 		const limits = await trialLimits(actor, this.database);
-		if (limits && rows.filter(hasRowData).length > limits.rowLimit) throw new WorkspaceError(`The free trial allows up to ${limits.rowLimit} populated rows. Unlock more with lifetime access for $37 once.`, 402);
 		return this.database.transaction(async (client, workspace) => {
 			await this.ensureDefaultFolder(client, workspace);
-			if (limits) {
-				const count = Number((await client.query('SELECT count(*)::int AS sheet_count FROM enrichable.sheets WHERE workspace_id=$1', [workspace])).rows[0]?.sheet_count ?? 0);
-				if (count >= limits.sheetLimit) throw new WorkspaceError(`The free trial includes one sheet. Unlock additional sheets with lifetime access for $37 once.`, 402);
-			}
+			await enforceTrialQuota(client, workspace, limits, 1, rows.filter(hasRowData).length);
 			const folderId = sheet.folderId ?? DEFAULT_FOLDER_ID;
 			const folder = await client.query('SELECT id FROM enrichable.sheet_folders WHERE workspace_id=$1 AND id=$2', [workspace, folderId]);
 			if (!folder.rows.length) throw new WorkspaceError('Choose a folder in this workspace.', 404);
@@ -279,9 +280,12 @@ ON CONFLICT (workspace_id,client_id) DO UPDATE SET sheet_id=excluded.sheet_id,na
 			const folder = await client.query('SELECT id FROM enrichable.sheet_folders WHERE workspace_id=$1 AND id=$2', [workspace, folderId]);
 			if (!folder.rows.length) throw new WorkspaceError('Choose a folder in this workspace.', 404);
 			await this.validateValues(client, workspace, record.rows[0].data as Sheet, patch);
+			const previousRows = await client.query('SELECT id,data FROM enrichable.sheet_rows WHERE workspace_id=$1 AND sheet_id=$2', [workspace, id]);
+			const previousById = new Map(previousRows.rows.map((entry) => [String(entry.id), entry.data as Row]));
+			const newlyPopulated = patch.rows.filter((row) => hasRowData(row) && !hasRowData(previousById.get(row.id) ?? { ...row, cells: {} })).length;
+			await enforceTrialQuota(client, workspace, limits, 0, newlyPopulated);
 			await client.query('DELETE FROM enrichable.sheet_rows WHERE workspace_id=$1 AND sheet_id=$2 AND id=ANY($3::text[])', [workspace, id, patch.deleted]);
 			await this.putRows(client, workspace, id, patch.rows);
-			if (limits && await countTrialRows(client, workspace) > limits.rowLimit) throw new WorkspaceError(`The free trial includes up to ${limits.rowLimit} populated rows in one sheet. Unlock more with lifetime access for $37 once.`, 402);
 			const sheet = { ...patch.sheet, folderId, updatedAt: Date.now() };
 			const result = await client.query('UPDATE enrichable.sheets SET data=$3::jsonb, revision=revision+1, updated_by=$4 WHERE workspace_id=$1 AND id=$2 RETURNING revision', [workspace, id, JSON.stringify(sheet), actor.user.id]);
 			return { revision: Number(result.rows[0].revision), updatedAt: sheet.updatedAt };
@@ -291,6 +295,7 @@ ON CONFLICT (workspace_id,client_id) DO UPDATE SET sheet_id=excluded.sheet_id,na
 	    sheet order) as they are, and returns the cell to store, or undefined to leave it. Every writer to the workspace
 	    waits for that lock, so no revision conflict can refuse the write. */
 	async changeCell(actor: Actor, id: string, target: { rowId: string; columnId: string }, change: (grid: { sheet: Sheet; rows: Row[] }) => Cell | undefined) {
+		const limits = await trialLimits(actor, this.database);
 		return this.database.transaction(async (client, workspace) => {
 			const record = await client.query('SELECT revision, data FROM enrichable.sheets WHERE workspace_id=$1 AND id=$2', [workspace, id]);
 			if (!record.rows.length) throw new WorkspaceError('Sheet not found in this workspace.', 404);
@@ -300,6 +305,7 @@ ON CONFLICT (workspace_id,client_id) DO UPDATE SET sheet_id=excluded.sheet_id,na
 			const cell = row && sheet.columns.some((column) => column.id === target.columnId) ? change({ sheet, rows }) : undefined;
 			if (!row || !cell) return undefined;
 			const written = { ...row, cells: { ...row.cells, [target.columnId]: cell } };
+			await enforceTrialQuota(client, workspace, limits, 0, !hasRowData(row) && hasRowData(written) ? 1 : 0);
 			await this.validateValues(client, workspace, data, { sheet: data, rows: [written], deleted: [] });
 			await this.putRows(client, workspace, id, [written]);
 			await client.query('UPDATE enrichable.sheets SET data=$3::jsonb, revision=revision+1, updated_by=$4 WHERE workspace_id=$1 AND id=$2', [workspace, id, JSON.stringify({ ...data, updatedAt: Date.now() }), actor.user.id]);

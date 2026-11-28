@@ -3,6 +3,7 @@ import { NO_STORE_HEADERS } from '@/lib/server/credentials';
 import { monidHealth } from '@/lib/server/monid';
 import { routeAccess, serverKeyAvailability } from '@/lib/server/provider-access';
 import { verifyOpenAI } from '@/lib/server/verify-openai';
+import { WorkspaceError } from '@/lib/workspace';
 
 export const maxDuration = 30;
 
@@ -41,5 +42,13 @@ export async function POST(request: Request) {
 }
 
 export async function GET(request: Request) {
-	return new Response(JSON.stringify(await serverKeyAvailability(request)), { status: 200, headers: NO_STORE_HEADERS });
+	try {
+		return new Response(JSON.stringify(await serverKeyAvailability(request)), { status: 200, headers: NO_STORE_HEADERS });
+	} catch (error) {
+		// This metadata endpoint is polled by the app shell. A missing local encryption
+		// setting must be reported as a configuration problem, not leaked as a Next 500.
+		const status = error instanceof WorkspaceError ? error.status : 503;
+		const message = error instanceof WorkspaceError ? error.message : 'Workspace connection status is temporarily unavailable.';
+		return new Response(JSON.stringify({ error: message }), { status, headers: NO_STORE_HEADERS });
+	}
 }

@@ -44,6 +44,7 @@ export async function POST(request: Request) {
 	if (access.account) {
 		try {
 			const billing = await withDatabase((database) => billingSnapshot(access.account!, database));
+			if (billing.requiresPurchase) return jsonError('This additional organization has no free trial. Buy lifetime access for $37 once to unlock this workspace.', 402, failure('provider_error', input.dataProvider, false));
 			if (billing.trial) {
 				if (requestedTarget > billing.trial.rowLimit) return jsonError(`The free trial includes up to ${billing.trial.rowLimit} rows. Unlock larger searches with lifetime access for $37 once.`, 402, failure('provider_error', input.dataProvider, false));
 				const remaining = Math.max(0, billing.trial.rowLimit - billing.trial.rowsUsed);

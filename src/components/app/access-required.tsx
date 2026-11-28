@@ -10,12 +10,13 @@ type BillingAccess = {
 	configured: boolean;
 	required: boolean;
 	fullAccess: boolean;
+	requiresPurchase: boolean;
 	canManage: boolean;
 	priceUsd: number;
 	trial: null | { rowsUsed: number; rowLimit: number; sheetsUsed: number; sheetLimit: number };
 };
 
-export function AccessRequired({ billingResult, sessionId, unlock }: { billingResult: 'success' | 'cancelled' | null; sessionId: string | null; unlock: 'sheets' | 'rows' }) {
+export function AccessRequired({ billingResult, sessionId, unlock }: { billingResult: 'success' | 'cancelled' | null; sessionId: string | null; unlock: 'sheets' | 'rows' | 'organization' }) {
 	const router = useRouter();
 	const [billing, setBilling] = useState<BillingAccess | null>(null);
 	const [busy, setBusy] = useState(false);
@@ -77,14 +78,16 @@ export function AccessRequired({ billingResult, sessionId, unlock }: { billingRe
 
 	return <main className="mx-auto flex min-h-screen w-full max-w-5xl items-center px-5 py-12">
 		<section className="mx-auto w-full max-w-2xl rounded-2xl border border-line bg-surface p-6 shadow-sm sm:p-10" aria-labelledby="access-title">
-			<button type="button" onClick={() => router.push('/app')} className="mb-8 inline-flex items-center gap-2 text-caption text-fg-muted hover:text-fg"><ArrowLeft className="size-4" />Back to your trial</button>
+			<button type="button" onClick={() => router.push('/app')} className="mb-8 inline-flex items-center gap-2 text-caption text-fg-muted hover:text-fg"><ArrowLeft className="size-4" />Back to your workspace</button>
 			<div className="mb-4 grid size-11 place-items-center rounded-xl bg-blue-10 text-brand"><LockKeyhole className="size-5" /></div>
-			<h1 id="access-title" className="text-h2 tracking-[-0.03em] text-fg">Unlock Monid Enrich</h1>
-			<p className="mt-3 max-w-xl text-body text-fg-muted">Your trial includes one sheet and up to five populated rows. A one-time payment unlocks additional sheets and searches of up to 1,000 rows.</p>
+			<h1 id="access-title" className="text-h2 tracking-[-0.03em] text-fg">Unlock this organization</h1>
+			<p className="mt-3 max-w-xl text-body text-fg-muted">{billing?.requiresPurchase
+				? 'Only your first organization includes a free trial. This organization has its own workspace and needs its own one-time $37 purchase before sheets and searches are available.'
+				: 'Your first organization includes one sheet and up to five populated rows. A one-time payment unlocks additional sheets and searches of up to 1,000 rows for this organization.'}</p>
 			<div className="mt-6 rounded-xl border border-line-subtle bg-canvas p-4">
-				<p className="text-body-sm font-medium text-fg">{unlock === 'sheets' ? 'Unlock another sheet' : 'Unlock larger searches'}</p>
+				<p className="text-body-sm font-medium text-fg">{billing?.requiresPurchase ? 'Additional organization · no trial' : unlock === 'sheets' ? 'Unlock another sheet' : unlock === 'rows' ? 'Unlock larger searches' : 'Unlock this organization'}</p>
 				{billing?.trial && <p className="mt-1 text-caption text-fg-muted">Trial usage: {billing.trial.sheetsUsed}/{billing.trial.sheetLimit} sheet · {billing.trial.rowsUsed}/{billing.trial.rowLimit} populated rows.</p>}
-				<p className="mt-2 text-caption text-fg-subtle">Provider usage is separate. Monid charges your workspace wallet for searches and enrichment.</p>
+				<p className="mt-2 text-caption text-fg-subtle">One $37 purchase unlocks this organization for all its members. Provider usage is separate; Monid charges this workspace’s wallet for searches and enrichment.</p>
 			</div>
 			<div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center">
 				{billing?.canManage === false
@@ -92,7 +95,7 @@ export function AccessRequired({ billingResult, sessionId, unlock }: { billingRe
 					: <Button size="md" variant="brand" loading={busy || checking} disabled={!billing?.configured || checking} onClick={() => void checkout()}><Sparkles className="size-4" />Pay $37 once</Button>}
 				{checking && <span role="status" className="text-caption text-fg-subtle">Confirming payment with Stripe…</span>}
 			</div>
-			{billing && !billing.configured && <p role="status" className="mt-3 text-caption text-warning">Stripe Checkout is not configured for this deployment. Your trial remains available.</p>}
+			{billing && !billing.configured && <p role="status" className="mt-3 text-caption text-warning">Stripe Checkout is not configured for this deployment. {billing.requiresPurchase ? 'This organization stays locked until checkout is available.' : 'Your first-organization trial remains available.'}</p>}
 			{notice && <p role="status" className="mt-3 flex items-center gap-2 text-caption text-success"><CheckCircle2 className="size-4" />{notice}</p>}
 			{error && <p role="alert" className="mt-3 text-caption text-danger">{error}</p>}
 		</section>

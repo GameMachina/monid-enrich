@@ -78,7 +78,7 @@ export function SheetsPage() {
 	const creationQueryHandled = useRef<string | null>(null);
 	const [renaming, setRenaming] = useState<Sheet | null>(null);
 	const [deleting, setDeleting] = useState<Sheet | null>(null);
-	const [billing, setBilling] = useState<{ required: boolean; fullAccess: boolean; trial: null | { sheetsUsed: number; sheetLimit: number; rowsUsed: number; rowLimit: number } } | null>(null);
+	const [billing, setBilling] = useState<{ required: boolean; fullAccess: boolean; requiresPurchase: boolean; trial: null | { sheetsUsed: number; sheetLimit: number; rowsUsed: number; rowLimit: number } } | null>(null);
 	const count = sheets?.length ?? 0;
 	useEffect(() => {
 		const controller = new AbortController();
@@ -89,7 +89,9 @@ export function SheetsPage() {
 		return () => controller.abort();
 	}, []);
 	const trial = billing?.required && !billing.fullAccess ? billing.trial : null;
-	const trialSheetLocked = Boolean(trial && trial.sheetsUsed >= trial.sheetLimit);
+	const organizationLocked = Boolean(billing?.required && !billing.fullAccess && billing.requiresPurchase);
+	const trialSheetLocked = organizationLocked || Boolean(trial && trial.sheetsUsed >= trial.sheetLimit);
+	const openAccess = () => router.push(`/access-required?unlock=${organizationLocked ? 'organization' : 'sheets'}`);
 	useEffect(() => {
 		const launch = searchParams.get('createSheet') === '1';
 		if (!launch) { creationQueryHandled.current = null; return; }
@@ -106,6 +108,7 @@ export function SheetsPage() {
 
 	/** One empty row to type into, created with the sheet. */
 	async function createBlank() {
+		if (organizationLocked) { openAccess(); return; }
 		try {
 			const columns = [newColumn({ name: 'Name', type: 'source' }), newColumn({ name: 'Website', type: 'source', format: 'url' })];
 			const sheetId = id();
@@ -117,6 +120,7 @@ export function SheetsPage() {
 
 	/** A free onboarding sheet. Every company and URL is explicitly fictional and uses the reserved .example domain. */
 	async function createSample() {
+		if (organizationLocked) { openAccess(); return; }
 		try {
 			const values = [
 				['Aster Loop (fictional)', 'https://aster-loop.example', '20–50', 'Recently raised a seed round'],
@@ -144,6 +148,7 @@ export function SheetsPage() {
 
 	/** The sheet exists only once the user asks for rows. Discovery keeps streaming into it after navigation. */
 	async function findRows(request: PopulateRequest) {
+		if (organizationLocked) { openAccess(); return; }
 		const tableType = tableTypes.find((item) => item.id === request.tableTypeId) ?? defaultTableTypeForEntity(request.entity);
 		const taken = new Set(sheets?.map((sheet) => sheet.name.toLowerCase()));
 		const base = sheetNameFromPrompt(request.query) || ({ companies: 'Companies', people: 'People', websites: 'Websites', records: tableType.name }[request.entity]);
@@ -158,7 +163,7 @@ export function SheetsPage() {
 		router.push(`/app/sheets/${sheet.id}?find=1&entity=${request.entity}`);
 	}
 
-	const starts = { onFind: findRows, providerReady, onNeedKeys: () => openKeys('monid'), onImport: () => setDialog('import'), onBlank: () => { setDialog(null); void createBlank(); }, onSample: () => { setDialog(null); void createSample(); } };
+	const starts = { onFind: findRows, providerReady, onNeedKeys: () => openKeys('monid'), onImport: () => { if (organizationLocked) openAccess(); else setDialog('import'); }, onBlank: () => { setDialog(null); void createBlank(); }, onSample: () => { setDialog(null); void createSample(); } };
 
 	return (
 		<PageColumn>
@@ -167,14 +172,18 @@ export function SheetsPage() {
 					<div className="flex min-w-0 items-baseline gap-3">
 						<h1 className="text-h4 text-fg">Sheets</h1>
 					</div>
-					{!!count && <Button variant="brand" size="sm" onClick={() => { if (trialSheetLocked) router.push('/access-required?unlock=sheets'); else { setCreationFolderId(undefined); setDialog('new'); } }} className="max-sm:min-h-11">{trialSheetLocked ? <Sparkles strokeWidth={1.75} /> : <Plus strokeWidth={1.75} />}{trialSheetLocked ? 'Unlock more sheets · $37 once' : 'New sheet'}</Button>}
+					{!!count && <Button variant="brand" size="sm" onClick={() => { if (trialSheetLocked) openAccess(); else { setCreationFolderId(undefined); setDialog('new'); } }} className="max-sm:min-h-11">{trialSheetLocked ? <Sparkles strokeWidth={1.75} /> : <Plus strokeWidth={1.75} />}{organizationLocked ? 'Unlock organization · $37 once' : trialSheetLocked ? 'Unlock more sheets · $37 once' : 'New sheet'}</Button>}
 				</div>
 			</header>
+			{organizationLocked && <section className="flex flex-col gap-2 rounded-xl border border-line bg-surface p-5 sm:flex-row sm:items-center sm:justify-between" aria-label="Organization access required">
+				<div><h2 className="text-body font-medium text-fg">This organization needs its own unlock</h2><p className="text-body-sm text-fg-muted">The free trial applies only to your first organization. One $37 purchase unlocks this workspace for all its members.</p></div>
+				<Button size="sm" variant="brand" onClick={openAccess}><Sparkles className="size-4" />Unlock · $37 once</Button>
+			</section>}
 			{trial && <p className="text-caption text-fg-subtle">Trial: one sheet and up to five populated rows. A one-time $37 purchase unlocks more sheets and larger searches; Monid usage is billed separately.</p>}
 			{count > 0 && <FirstRunChecklist
 				hasSheet={count > 0}
 				hasProvider={providerReady('monid')}
-				openSheet={() => trialSheetLocked ? router.push('/access-required?unlock=sheets') : setDialog('new')}
+				openSheet={() => trialSheetLocked ? openAccess() : setDialog('new')}
 				openConnections={() => openKeys()}
 			/>}
 			{sheets === undefined ? (
@@ -188,7 +197,7 @@ export function SheetsPage() {
 						<h2 id="sheets-empty-title" className="text-h3 tracking-[-0.02em] text-fg">Start with the rows you want</h2>
 						<p className="text-body text-fg-muted">Describe a list and an agent finds it on the web, row by row. Then add AI columns that answer questions about each row.</p>
 					</div>
-					<div className="w-full max-w-2xl"><NewSheet {...starts} /></div>
+				<div className="w-full max-w-2xl">{organizationLocked ? <p className="rounded-xl border border-line bg-surface p-5 text-body-sm text-fg-muted">Unlock this organization to create sheets, import data, or run a search.</p> : <NewSheet {...starts} />}</div>
 				</section>
 			) : (
 				<ul aria-label="Sheets" className="grid grid-cols-1 gap-5 sm:grid-cols-2">

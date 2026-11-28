@@ -1,5 +1,5 @@
 import 'server-only';
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import Stripe from 'stripe';
 import { WorkspaceError } from '../workspace';
 import { CLERK_ISSUER, type Account } from '../auth-identity';
@@ -15,12 +15,13 @@ const exemptEmailCache = new Map<string, { email: string | null; expiresAt: numb
 const TRIAL_SHEET_LIMIT = 1;
 const TRIAL_ROW_LIMIT = 5;
 type BillingAccount = Pick<Account, 'issuer' | 'user' | 'organization'>;
+const stripeKeyConfigured = () => /^(?:sk|rk)_/.test(process.env.STRIPE_SECRET_KEY ?? '');
 
 export function stripeConfigured() {
 	return Boolean(process.env.STRIPE_WEBHOOK_SECRET?.startsWith('whsec_')
+		&& stripeKeyConfigured()
 		&& process.env.STRIPE_ONE_TIME_PRICE_ID?.startsWith('price_')
-		&& process.env.STRIPE_PAYMENT_LINK_ID?.startsWith('plink_')
-		&& stripePaymentLinkUrl() && publicAppUrl());
+		&& publicAppUrl());
 }
 export function billingRequired() { return process.env.ENRICHABLE_BILLING_REQUIRED === 'true'; }
 export function stripePaymentLinkUrl() {
@@ -38,7 +39,7 @@ function publicAppUrl() {
 }
 function stripe() {
 	const key = process.env.STRIPE_SECRET_KEY;
-	if (!key?.startsWith('sk_')) throw new WorkspaceError('Stripe payments are not configured. Ask the workspace owner to finish billing setup.', 503);
+	if (!key || !/^(?:sk|rk)_/.test(key)) throw new WorkspaceError('Stripe payments are not configured. Ask the workspace owner to finish billing setup.', 503);
 	if (!cached || cached.key !== key) cached = { key, client: new Stripe(key) };
 	return cached.client;
 }
@@ -71,23 +72,49 @@ export async function billingExempt(account: BillingAccount): Promise<boolean> {
 	return Boolean(email && allowlist.has(email));
 }
 
-function trialUsageSql() {
-	return `SELECT count(*)::int AS sheet_count,
-		(SELECT count(*)::int FROM enrichable.sheet_rows r WHERE r.workspace_id=$1 AND EXISTS (
-			SELECT 1 FROM jsonb_each(r.data->'cells') cell
-			WHERE cell.value->'v' IS NOT NULL AND cell.value->'v' <> 'null'::jsonb AND cell.value->>'v' <> ''
-		)) AS row_count
-		FROM enrichable.sheets WHERE workspace_id=$1`;
+async function firstWorkspaceEntitlement(account: BillingAccount, database: Database) {
+	if (account.user.id === 'mcp' || account.user.email?.endsWith('@enrichable.localhost')) {
+		return { isFirstWorkspace: false, trialEligible: false, adminExempt: false, sheetsUsed: 0, rowsUsed: 0 };
+	}
+	const allowlisted = await billingExempt(account);
+	return database.transaction(async (sql, workspace) => {
+		const inserted = await sql.query(`INSERT INTO enrichable.account_first_workspaces (issuer,user_id,workspace_id)
+			VALUES ($1,$2,$3) ON CONFLICT (issuer,user_id) DO NOTHING RETURNING workspace_id`, [account.issuer, account.user.id, workspace]);
+		const first = inserted.rows[0] ?? (await sql.query('SELECT workspace_id FROM enrichable.account_first_workspaces WHERE issuer=$1 AND user_id=$2', [account.issuer, account.user.id])).rows[0];
+		const isFirstWorkspace = first?.workspace_id === workspace;
+		if (isFirstWorkspace) {
+			await sql.query(`INSERT INTO enrichable.workspace_trial_usage (workspace_id,trial_eligible,sheets_used,rows_used)
+				SELECT $1,true,
+					(SELECT count(*)::int FROM enrichable.sheets WHERE workspace_id=$1),
+					(SELECT count(*)::int FROM enrichable.sheet_rows r WHERE r.workspace_id=$1 AND EXISTS (
+						SELECT 1 FROM jsonb_each(r.data->'cells') cell
+						WHERE cell.value->'v' IS NOT NULL AND cell.value->'v' <> 'null'::jsonb AND cell.value->>'v' <> ''
+						AND NOT (jsonb_typeof(cell.value->'v')='array' AND cell.value->'v'='[]'::jsonb)
+					))
+				ON CONFLICT (workspace_id) DO NOTHING`, [workspace]);
+			if (allowlisted) await sql.query('UPDATE enrichable.workspace_trial_usage SET admin_exempt=true,updated_at=now() WHERE workspace_id=$1', [workspace]);
+		}
+		const usage = (await sql.query('SELECT trial_eligible,admin_exempt,sheets_used,rows_used FROM enrichable.workspace_trial_usage WHERE workspace_id=$1', [workspace])).rows[0];
+		return {
+			isFirstWorkspace,
+			trialEligible: Boolean(usage?.trial_eligible),
+			adminExempt: Boolean(usage?.admin_exempt),
+			sheetsUsed: Number(usage?.sheets_used ?? 0),
+			rowsUsed: Number(usage?.rows_used ?? 0),
+		};
+	}, { workspace: account });
 }
 
 export async function billingSnapshot(account: BillingAccount, database: Database) {
 	const workspace = accountWorkspace(account);
-	const [purchaseResult, subscriptionResult, usageResult] = await Promise.all([
+	const accountWorkspaceState = billingRequired()
+		? await firstWorkspaceEntitlement(account, database)
+		: { isFirstWorkspace: false, trialEligible: false, adminExempt: false, sheetsUsed: 0, rowsUsed: 0 };
+	const [purchaseResult, subscriptionResult] = await Promise.all([
 		database.read(`SELECT session_id,status,amount_total,currency,created_at FROM enrichable.stripe_one_time_purchases
 			WHERE workspace_id=$1 AND status IN ('paid','refunded','disputed') ORDER BY (status='paid') DESC,created_at DESC LIMIT 1`, [workspace]),
 		database.read(`SELECT s.status,s.price_id,s.current_period_end,s.cancel_at_period_end,s.subscription_id
 			FROM enrichable.workspace_subscriptions s WHERE s.workspace_id=$1`, [workspace]),
-		database.read(trialUsageSql(), [workspace]),
 	]);
 	const row = subscriptionResult.rows[0];
 	const purchase = purchaseResult.rows[0];
@@ -98,44 +125,61 @@ export async function billingSnapshot(account: BillingAccount, database: Databas
 		currency: String(purchase.currency ?? PURCHASE_CURRENCY),
 		purchasedAt: purchase.created_at instanceof Date ? purchase.created_at.toISOString() : String(purchase.created_at),
 	} : null;
-	const exempt = billingRequired() ? await billingExempt(account) : false;
+	const exempt = billingRequired() && accountWorkspaceState.adminExempt;
 	const purchased = Boolean(activePurchase || legacySubscription?.active);
 	const fullAccess = !billingRequired() || purchased || exempt;
-	const trial = billingRequired() && !fullAccess ? {
+	const trial = billingRequired() && !fullAccess && accountWorkspaceState.trialEligible ? {
 		active: true,
-		sheetsUsed: Number(usageResult.rows[0]?.sheet_count ?? 0),
-		rowsUsed: Number(usageResult.rows[0]?.row_count ?? 0),
+		sheetsUsed: accountWorkspaceState.sheetsUsed,
+		rowsUsed: accountWorkspaceState.rowsUsed,
 		sheetLimit: TRIAL_SHEET_LIMIT,
 		rowLimit: TRIAL_ROW_LIMIT,
 	} : null;
+	const requiresPurchase = billingRequired() && !fullAccess && !trial;
 	return {
 		configured: stripeConfigured(), required: billingRequired(), priceUsd: PURCHASE_AMOUNT_CENTS / 100,
-		legacyPortalAvailable: Boolean(process.env.STRIPE_SECRET_KEY?.startsWith('sk_')),
+		legacyPortalAvailable: stripeKeyConfigured(),
 		purchase: activePurchase,
 		purchaseStatus: purchase ? String(purchase.status) : null,
 		legacySubscription,
 		hasAccess: fullAccess,
 		fullAccess,
 		exempt,
+		trialEligible: Boolean(accountWorkspaceState.trialEligible),
+		isFirstWorkspace: Boolean(accountWorkspaceState.isFirstWorkspace),
+		requiresPurchase,
 		trial,
 	};
 }
 
+export function buildOrgCheckoutParams(account: Account, buyerEmail: string, origin: string, priceId: string, suffix: string): Stripe.Checkout.SessionCreateParams {
+	const workspace = accountWorkspace(account);
+	return {
+		mode: 'payment',
+		line_items: [{ price: priceId, quantity: 1 }],
+		customer_email: buyerEmail,
+		client_reference_id: workspace,
+		metadata: { enrichable_purchase: 'lifetime_access', enrichable_workspace_id: workspace },
+		success_url: `${origin}/app/settings?billing=success&session_id={CHECKOUT_SESSION_ID}`,
+		cancel_url: `${origin}/access-required?billing=cancelled`,
+		integration_identifier: `monid_enrich_workspace_unlock_${suffix}`,
+	};
+}
+
 export async function createCheckout(account: Account, database: Database, idempotencyKey: string) {
-	void idempotencyKey;
 	const snapshot = await billingSnapshot(account, database);
 	if (snapshot.hasAccess) throw new WorkspaceError('This workspace already has Monid Enrich access.', 409);
 	const priceId = process.env.STRIPE_ONE_TIME_PRICE_ID;
 	if (!priceId?.startsWith('price_')) throw new WorkspaceError('The hosted $37 one-time price is not configured.', 503);
-	if (!process.env.STRIPE_PAYMENT_LINK_ID?.startsWith('plink_')) throw new WorkspaceError('The hosted $37 Stripe Payment Link is not configured.', 503);
-	const url = stripePaymentLinkUrl();
-	if (!url || !process.env.STRIPE_WEBHOOK_SECRET?.startsWith('whsec_')) throw new WorkspaceError('Stripe payments are not configured for this deployment.', 503);
-	const link = new URL(url);
+	const origin = publicAppUrl();
+	if (!origin || !process.env.STRIPE_WEBHOOK_SECRET?.startsWith('whsec_')) throw new WorkspaceError('Stripe payments are not configured for this deployment.', 503);
 	const buyerEmail = await verifiedAccountEmail(account);
 	if (!buyerEmail) throw new WorkspaceError('Verify your account email before starting checkout so the payment can be linked to your workspace.', 403);
-	link.searchParams.set('prefilled_email', buyerEmail);
-	await recordWorkspaceAuditEvent(database, account, 'workspace.billing.checkout_started', { provider: 'stripe', mode: 'payment_link', amountUsd: PURCHASE_AMOUNT_CENTS / 100 });
-	return { url: link.toString() };
+	const identifierSuffix = Array.from(randomBytes(8), (byte) => 'abcdefghijklmnopqrstuvwxyz'[byte % 26]).join('');
+	const session = await stripe().checkout.sessions.create(buildOrgCheckoutParams(account, buyerEmail, origin, priceId, identifierSuffix), { idempotencyKey });
+	if (!session.url) throw new WorkspaceError('Stripe did not return a Checkout URL. Try again in a moment.', 503);
+	await recordWorkspaceAuditEvent(database, account, 'workspace.billing.checkout_started', { provider: 'stripe', mode: 'checkout_session', amountUsd: PURCHASE_AMOUNT_CENTS / 100 });
+	return { url: session.url };
 }
 
 export async function createPortal(account: Account, database: Database) {
@@ -178,7 +222,7 @@ async function savePurchase(sql: Sql, session: Stripe.Checkout.Session, status: 
 	const appCheckout = session.metadata?.enrichable_purchase === 'lifetime_access';
 	const linkedWorkspace = workspaceHint || (appCheckout && customerId ? (await sql.query('SELECT workspace_id FROM enrichable.stripe_customers WHERE customer_id=$1', [customerId])).rows[0]?.workspace_id : undefined);
 	const workspace = typeof linkedWorkspace === 'string' && linkedWorkspace ? linkedWorkspace : null;
-	const paymentLinkId = asId(session.payment_link as string | Stripe.PaymentLink | null);
+	const paymentLinkId = asId(session.payment_link as string | Stripe.PaymentLink | null) ?? (appCheckout ? 'checkout_session' : null);
 	await sql.query(`INSERT INTO enrichable.stripe_one_time_purchases (session_id,workspace_id,customer_id,payment_intent_id,payment_link_id,buyer_email,amount_total,currency,status)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
 		ON CONFLICT (session_id) DO UPDATE SET
@@ -200,7 +244,8 @@ export async function claimStripePurchase(account: Account, database: Database, 
 	return database.transaction(async (sql, scopedWorkspace) => {
 		const purchase = (await sql.query(`SELECT workspace_id,payment_link_id,buyer_email,amount_total,currency,status FROM enrichable.stripe_one_time_purchases WHERE session_id=$1 FOR UPDATE`, [sessionId])).rows[0];
 		if (!purchase || purchase.status !== 'paid') throw new WorkspaceError('Stripe is still confirming this $37 payment. Reload in a few seconds.', 409);
-		if (purchase.payment_link_id !== process.env.STRIPE_PAYMENT_LINK_ID || Number(purchase.amount_total) !== PURCHASE_AMOUNT_CENTS || String(purchase.currency).toLowerCase() !== PURCHASE_CURRENCY) {
+		const expectedPaymentLink = Boolean(process.env.STRIPE_PAYMENT_LINK_ID?.startsWith('plink_') && purchase.payment_link_id === process.env.STRIPE_PAYMENT_LINK_ID);
+		if ((!expectedPaymentLink && purchase.payment_link_id !== 'checkout_session') || Number(purchase.amount_total) !== PURCHASE_AMOUNT_CENTS || String(purchase.currency).toLowerCase() !== PURCHASE_CURRENCY) {
 			throw new WorkspaceError('This Stripe payment does not match the Monid Enrich $37 purchase.', 403);
 		}
 		if (String(purchase.buyer_email ?? '').trim().toLowerCase() !== buyerEmail) {
@@ -209,13 +254,13 @@ export async function claimStripePurchase(account: Account, database: Database, 
 		if (purchase.workspace_id && purchase.workspace_id !== scopedWorkspace) throw new WorkspaceError('This purchase has already been claimed by another workspace.', 409);
 		if (purchase.workspace_id === scopedWorkspace) return { claimed: true, alreadyClaimed: true };
 		const claimed = await sql.query(`UPDATE enrichable.stripe_one_time_purchases SET workspace_id=$2,updated_at=now()
-			WHERE session_id=$1 AND status='paid' AND payment_link_id=$3 AND lower(buyer_email)=$4 AND (workspace_id IS NULL OR workspace_id=$2) RETURNING session_id`, [sessionId, scopedWorkspace, process.env.STRIPE_PAYMENT_LINK_ID, buyerEmail]);
+			WHERE session_id=$1 AND status='paid' AND (payment_link_id='checkout_session' OR payment_link_id=$3) AND lower(buyer_email)=$4 AND (workspace_id IS NULL OR workspace_id=$2) RETURNING session_id`, [sessionId, scopedWorkspace, process.env.STRIPE_PAYMENT_LINK_ID ?? '', buyerEmail]);
 		if (!claimed.rows.length) {
 			const current = (await sql.query('SELECT workspace_id,status FROM enrichable.stripe_one_time_purchases WHERE session_id=$1', [sessionId])).rows[0];
 			if (current?.workspace_id === scopedWorkspace && current.status === 'paid') return { claimed: true, alreadyClaimed: true };
 			throw new WorkspaceError('This purchase is not available to claim. Check the payment status or contact support.', 409);
 		}
-		await appendWorkspaceAuditEvent(sql, scopedWorkspace, account.user.id, 'workspace.billing.purchase_updated', { status: 'paid', amountUsd: PURCHASE_AMOUNT_CENTS / 100, source: 'payment_link' });
+		await appendWorkspaceAuditEvent(sql, scopedWorkspace, account.user.id, 'workspace.billing.purchase_updated', { status: 'paid', amountUsd: PURCHASE_AMOUNT_CENTS / 100, source: purchase.payment_link_id === 'checkout_session' ? 'checkout' : 'payment_link' });
 		return { claimed: true, alreadyClaimed: false };
 	}, { workspace: account });
 }
@@ -269,7 +314,9 @@ export async function processStripeEvent(event: Stripe.Event, database: Database
 			workspaceHint = session.metadata?.enrichable_purchase === 'lifetime_access'
 				? session.metadata.enrichable_workspace_id ?? undefined
 				: undefined;
-			const validPurchase = session.amount_total === PURCHASE_AMOUNT_CENTS && session.currency === PURCHASE_CURRENCY && (session.metadata?.enrichable_purchase === 'lifetime_access' || asId(session.payment_link as string | Stripe.PaymentLink | null) === process.env.STRIPE_PAYMENT_LINK_ID);
+			const appCheckout = session.metadata?.enrichable_purchase === 'lifetime_access' && /^[a-f0-9]{64}$/.test(session.metadata.enrichable_workspace_id ?? '');
+			const paymentLink = process.env.STRIPE_PAYMENT_LINK_ID?.startsWith('plink_') && asId(session.payment_link as string | Stripe.PaymentLink | null) === process.env.STRIPE_PAYMENT_LINK_ID;
+			const validPurchase = session.amount_total === PURCHASE_AMOUNT_CENTS && session.currency === PURCHASE_CURRENCY && (appCheckout || paymentLink);
 			const status = validPurchase && session.payment_status === 'paid' && event.type !== 'checkout.session.async_payment_failed' ? 'paid' : 'unpaid';
 			const workspace = await savePurchase(sql, session, status, workspaceHint);
 			if (workspace && status === 'paid') await appendWorkspaceAuditEvent(sql, workspace, 'system:stripe', 'workspace.billing.purchase_updated', { status: 'paid', amountUsd: Number(session.amount_total ?? 0) / 100, source: session.payment_link ? 'payment_link' : 'checkout' });

@@ -33,6 +33,7 @@ export async function enqueuePopulate(actor: Account, sheetId: string, input: Po
 	const tableType = await withDatabase((database) => new TableTypeStore(database).resolvePublished(input.tableTypeId, input.entity));
 	const request = PopulateRequestSchema.parse(Object.fromEntries(REQUEST_FIELDS.map((field) => [field, field === 'tableType' ? tableType : field === 'tableTypeId' ? tableType.id : input[field]])));
 	const billing = await withDatabase((database) => billingSnapshot(actor, database));
+	if (billing.requiresPurchase) throw new WorkspaceError('This additional organization has no free trial. Buy lifetime access for $37 once to unlock this workspace.', 402);
 	const fingerprint = jobFingerprint(sheetId, request), id = randomUUID();
 	return withDatabase(async (database) => {
 		const store = new WorkspaceStore(database);
@@ -128,6 +129,10 @@ async function processClaimed(database: Database, job: Job) {
 	const keyColumn = foundRowColumns(request.entity, grid.sheet.columns, request.tableType).key;
 	const count = grid.rows.length;
 	const billing = await billingSnapshot(actor, database);
+	if (billing.requiresPurchase) {
+		await updateJob(database, job, { status: 'failed', progress: 'Organization purchase required.', error: 'This additional organization has no free trial. Buy lifetime access for $37 once to unlock this workspace.', clearRequest: true });
+		return;
+	}
 	const trialCapacity = billing.trial ? Math.max(0, billing.trial.rowLimit - billing.trial.rowsUsed) : MAX_ROWS;
 	const availableRows = Math.min(MAX_ROWS - count, trialCapacity);
 	if (!availableRows) {

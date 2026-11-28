@@ -4,15 +4,15 @@ This guide prepares a managed Monid Enrich deployment on Vercel. It does not dep
 
 ## Current deployment state
 
-Audited 2026-11-27: the `monid-enrich` Vercel project is linked to `GameMachina/monid-enrich`. The protected Preview deployment for commit `da38087` is ready at `https://monid-enrich-e6cwmct5g-jalens-projects-5f6738d0.vercel.app`. Its build and full migration replay succeeded against the isolated, schema-only Neon `vercel-preview` branch. Preview uses self-hosted single-operator auth behind Vercel SSO and a preview-only encryption secret. Realtime, billing enforcement, and durable enrichment are disabled in this preview. The verified Vercel domain `https://monid-enrich.vercel.app` is attached to the project. No production deployment has been promoted or created.
+Audited 2026-11-28: the `monid-enrich` Vercel project is linked to `GameMachina/monid-enrich`. The production app responds at `https://enrich.autonomousgtm.xyz` and `https://monid-enrich.vercel.app`; both readiness endpoints reported ready for the currently deployed code. This does not validate the uncommitted billing changes or their new trial migration. A protected Preview deployment for commit `da38087` was previously verified against the isolated, schema-only Neon `vercel-preview` branch.
 
-Neon Postgres and Realtime are provisioned on the `production` branch and migrations have been applied. The branch's Realtime allowlist contains `http://localhost:3000` and `https://monid-enrich.vercel.app`. Vercel's Production environment has the production database URLs, Realtime endpoint and secret, stable vault encryption root, cron secret, app URL, Realtime enable flag, durable-enrichment flag, and Stripe purchase configuration. Secret values are stored as sensitive Vercel variables. A live $37 USD one-time Stripe product and Payment Link exist, and the signed webhook endpoint is registered; the Payment Link is inactive until customer auth and app deployment are ready. Customer identity is still unconfigured, so no customer-facing production deployment is ready.
+Neon Postgres and Realtime are provisioned on the `production` branch. Vercel Production has Clerk, the production database, Realtime, durable-enrichment, the Monid Enrich domain, a Stripe webhook secret, and the live $37 one-time Price. Stripe's live webhook is enabled at `https://monid-enrich.vercel.app/api/stripe/webhook` and includes checkout completion, asynchronous checkout, refund, and dispute events. The legacy $37 Payment Link is inactive. **Production currently has no `STRIPE_SECRET_KEY`**, which the new workspace-bound Checkout Session implementation requires; its production preflight will refuse deployment until a live `sk_` or appropriately restricted `rk_` key is added. The current billing changes and migration have not been deployed.
 
 The worker is scheduled every minute in `vercel.json`. Vercel Pro or Enterprise supports the required schedule; verify the deployed cron after launch. [Vercel’s Cron limits](https://vercel.com/docs/cron-jobs/usage-and-pricing) document the schedule constraints.
 
-The production build command runs `check:production-config` before migrations. It rejects a production deploy unless live Clerk credentials, the Stripe webhook signing secret, the live $37 one-time Stripe Price and Payment Link, the stable app URL, Neon, the vault key, and durable worker settings are present. Preview builds skip this production-only gate. This prevents an incomplete deployment from being promoted while account setup is pending.
+The production build command runs `check:production-config` before migrations. It rejects a production deploy unless live Clerk credentials, the Stripe API and webhook keys, the live $37 one-time Stripe Price, the stable app URL, Neon, the vault key, and durable worker settings are present. The inactive legacy Payment Link is not required for new workspace-bound Checkout Sessions. Preview builds skip this production-only gate.
 
-Stripe's $37 product, one-time price, Payment Link, webhook endpoint, and production Vercel billing variables are configured. The link remains inactive so nobody is charged before access provisioning is deployed. Clerk customer auth is not configured: Production still lacks `ENRICHABLE_AUTH_MODE`, Clerk keys, and the Clerk webhook signing secret. Configure a separate staging Clerk application, add its production settings, and run the staging verification below before enabling the link. The preview is for internal review, not customer use.
+Clerk production authentication is configured. The old Payment Link must remain inactive because it cannot bind a payment to the selected organization. The new Checkout Session flow sets the verified workspace ID in server-owned metadata and grants access only after the signed webhook confirms payment. Add the missing Production `STRIPE_SECRET_KEY` in Vercel before deploying this change; do not put the key in source control or chat.
 
 ## Required services and settings
 
@@ -25,8 +25,8 @@ Use separate Clerk, Neon, Stripe, and Vercel environments for staging and produc
 | Vercel | Node.js 22.23.4; project variables listed below | `vercel.json` checks production configuration, runs migrations, then builds and schedules `/api/internal/jobs/run` once a minute. This worker schedule requires Vercel Pro or Enterprise; Hobby supports only daily Cron schedules. See [Vercel Cron limits](https://vercel.com/docs/cron-jobs/usage-and-pricing). |
 | Neon/Postgres | Pooled `DATABASE_URL` for runtime; migration access available during build | Keep production, staging, and preview on separate branches/databases. Apply and review migrations on staging first. |
 | Clerk | Publishable and secret keys; enable Organizations and configure sign-in/up | The Team screen uses Clerk's organization management UI. Verify invite, role, removal, recovery, and session behavior with test users. |
-| Stripe | Webhook signing secret, active $37 USD one-time Price ID, Payment Link ID and URL, public app URL | New purchases use a signed webhook and verified-email claim; they do not require a Stripe API secret key. Start in test mode. Do not enable recurring billing or automatic tax unless separately required. `STRIPE_SECRET_KEY` is optional and only supports legacy subscription management. Monid usage remains separate. |
-| Trial access | `ENRICHABLE_BILLING_EXEMPT_EMAILS` | Set verified email allowlist entries for the owner and invited beta testers. Other workspaces get one sheet and five populated trial rows; the $37 one-time purchase unlocks more sheets and searches up to 1,000 rows. |
+| Stripe | API secret, webhook signing secret, active $37 USD one-time Price ID, public app URL | Server-created Checkout Sessions bind the payment to the selected organization and return to that app domain. Signed webhooks fulfill access. Start in Stripe test mode. Do not enable recurring billing or automatic tax unless separately required. Monid usage remains separate. |
+| Trial and organization access | `ENRICHABLE_BILLING_EXEMPT_EMAILS` | The first Monid organization a user opens gets one sheet and five populated rows; usage is retained if sheets or rows are deleted. Later organizations have no trial and require their own $37 one-time purchase. The verified admin allowlist grants full access only to that user's first organization; access is shared with that organization's members. |
 | Platform administration | `ENRICHABLE_PLATFORM_ADMIN_EMAILS` | Optional comma-separated list of additional verified Clerk emails allowed to edit global Monid table-type defaults. `jalendnelson@gmail.com` is the initial platform administrator. Workspace admin roles do not grant this access. |
 | Vercel Cron | `CRON_SECRET` | Use a high-entropy secret of at least 32 characters. Vercel sends it as a bearer token to the worker route. |
 
@@ -43,10 +43,10 @@ ENRICHABLE_MCP_ENCRYPTION_SECRET=<stable random secret, 32+ characters>
 ENRICHABLE_APP_URL=https://your-production-host
 ENRICHABLE_BILLING_REQUIRED=true
 ENRICHABLE_BILLING_EXEMPT_EMAILS=jalendnelson@gmail.com
+STRIPE_SECRET_KEY=rk_… # Restricted key scoped to Checkout Sessions (recommended)
 STRIPE_WEBHOOK_SECRET=whsec_…
 STRIPE_ONE_TIME_PRICE_ID=price_…
-STRIPE_PAYMENT_LINK_ID=plink_…
-STRIPE_PAYMENT_LINK_URL=https://buy.stripe.com/…
+# STRIPE_PAYMENT_LINK_ID=plink_… # optional, only for historical Payment Link purchases
 ENRICHABLE_DURABLE_ENRICHMENT=true
 CRON_SECRET=<stable random secret, 32+ characters>
 ```
@@ -69,11 +69,11 @@ Do not put a platform Monid key into the deployment environment for customer use
 
 1. In Stripe test mode, create a $37 USD one-time product and Price. Do not enable recurring billing or automatic tax unless a separate tax review calls for it.
 2. Add a webhook endpoint at `https://your-host/api/stripe/webhook` and subscribe to `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`, `charge.refunded`, `charge.dispute.created`, `charge.dispute.closed`, and the legacy subscription events if existing subscribers remain.
-3. Set the test secret, endpoint signing secret, one-time price ID, Payment Link ID and URL, and `ENRICHABLE_APP_URL` in the staging Vercel environment.
-4. Verify one-time checkout, payment-link email claim, successful and failed asynchronous payments, refunds, disputes, webhook retries, and workspace access after each state change. Confirm Stripe shows a non-recurring $37 USD Price.
+3. Set the test API secret, endpoint signing secret, one-time price ID, and `ENRICHABLE_APP_URL` in the staging Vercel environment.
+4. Verify one-time Checkout, workspace-bound success/cancel URLs, successful and failed asynchronous payments, refunds, disputes, webhook retries, and workspace access after each state change. Confirm Stripe shows a non-recurring $37 USD Price. Verify that one test organization can use its first-org trial, a second org is paywalled, and a separate $37 Checkout unlocks only that org for all members.
 5. Repeat with production Stripe objects only after staging passes. Never reuse test keys or test database records in production.
 
-The hosted product currently has one $37 USD one-time lifetime-access purchase. Before redirecting a Payment Link back to the app, set its success URL to `https://your-host/access-required?billing=success&session_id={CHECKOUT_SESSION_ID}`; the app verifies the signed webhook and claims the payment against the signed-in admin's verified email. A verified-email allowlist can grant full access to the owner and beta testers. Everyone else can use one sheet and up to five trial rows; full access unlocks additional sheets and searches up to 1,000 rows. Monid provider usage stays separately billed. The app does not configure automatic tax, subscriptions for new customers, usage tiers, or multiple plans. Existing legacy subscriptions remain visible and manageable until they are canceled in Stripe.
+The hosted product uses one $37 USD non-recurring Price. Checkout Sessions are created by the app with the active workspace ID in trusted server-side metadata, so the webhook grants access to exactly the organization that started Checkout. The first organization a user opens receives a single-sheet, five-row trial; an additional organization has no trial and needs its own $37 purchase. Purchases unlock the whole workspace for all its members. The verified-email admin allowlist applies only to that user's first organization. Monid provider usage stays separately billed. The app does not configure automatic tax, subscriptions for new customers, usage tiers, or multiple plans. Existing legacy subscriptions remain visible and manageable until canceled in Stripe.
 
 ## Database, migrations, and previews
 
