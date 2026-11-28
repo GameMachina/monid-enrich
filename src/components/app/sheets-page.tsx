@@ -2,7 +2,7 @@
 
 import { createSheet, db, deleteSheet, duplicateSheet, emptyCell, id, newColumn, sheetSync, updateSheet } from '@/lib/db';
 import { verifyKeys } from '@/lib/api';
-import { ENTITY_COLUMNS, type PopulateRequest, type Row, type Sheet } from '@/lib/types';
+import type { PopulateRequest, Row, Sheet } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog, Dialog, NameDialog } from '@/components/ui/dialog';
 import { MenuButton } from '@/components/ui/menu';
@@ -10,7 +10,7 @@ import { useToast } from '@/components/ui/toast';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { ArrowUpRight, Check, Copy, MoreHorizontal, Pencil, Plus, Sparkles, Trash2, X } from 'lucide-react';
 import Dexie from 'dexie';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { type ReactNode, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { PageColumn } from './page-header';
 import { useSettings } from './settings-context';
@@ -21,6 +21,9 @@ import { populateRunner } from '@/lib/populate-runner';
 import { sheetNameFromPrompt } from '@/lib/populate-limit';
 import { trackEvent } from '@/lib/analytics';
 import { accountHeaders, accountStorageKey } from '@/lib/account-storage';
+import { useFolders } from './folders-context';
+import { useTableTypes } from './table-types-context';
+import { defaultTableTypeForEntity } from '@/lib/table-types';
 
 // The sheet page still imports NameDialog from here.
 export { NameDialog };
@@ -49,7 +52,10 @@ const message = (error: unknown, fallback: string) => error instanceof Error && 
 
 export function SheetsPage() {
 	const { selfHosted, providerReady, openKeys } = useSettings();
+	const tableTypes = useTableTypes();
+	const { folders, loading: foldersLoading } = useFolders();
 	const router = useRouter();
+	const searchParams = useSearchParams();
 	const { toast } = useToast();
 	const now = useNow();
 	const sheets = useLiveQuery(() => db.sheets.orderBy('updatedAt').reverse().toArray(), []);
@@ -68,6 +74,8 @@ export function SheetsPage() {
 		return map;
 	}, []);
 	const [dialog, setDialog] = useState<null | 'new' | 'import'>(null);
+	const [creationFolderId, setCreationFolderId] = useState<string | undefined>();
+	const creationQueryHandled = useRef<string | null>(null);
 	const [renaming, setRenaming] = useState<Sheet | null>(null);
 	const [deleting, setDeleting] = useState<Sheet | null>(null);
 	const [billing, setBilling] = useState<{ required: boolean; fullAccess: boolean; trial: null | { sheetsUsed: number; sheetLimit: number; rowsUsed: number; rowLimit: number } } | null>(null);
@@ -82,13 +90,26 @@ export function SheetsPage() {
 	}, []);
 	const trial = billing?.required && !billing.fullAccess ? billing.trial : null;
 	const trialSheetLocked = Boolean(trial && trial.sheetsUsed >= trial.sheetLimit);
+	useEffect(() => {
+		const launch = searchParams.get('createSheet') === '1';
+		if (!launch) { creationQueryHandled.current = null; return; }
+		if (foldersLoading) return;
+		const requested = searchParams.get('folderId');
+		const launchKey = requested ?? 'default';
+		if (creationQueryHandled.current === launchKey) return;
+		creationQueryHandled.current = launchKey;
+		const folder = folders.find((entry) => entry.id === requested) ?? folders.find((entry) => entry.isDefault);
+		setCreationFolderId(folder?.id);
+		setDialog('new');
+		router.replace('/app', { scroll: false });
+	}, [folders, foldersLoading, router, searchParams]);
 
 	/** One empty row to type into, created with the sheet. */
 	async function createBlank() {
 		try {
 			const columns = [newColumn({ name: 'Name', type: 'source' }), newColumn({ name: 'Website', type: 'source', format: 'url' })];
 			const sheetId = id();
-			const sheet = await createSheet(undefined, columns, { id: sheetId, rows: [{ id: id(), sheetId, order: 0, createdAt: Date.now(), cells: Object.fromEntries(columns.map((column) => [column.id, emptyCell()])) }] });
+			const sheet = await createSheet(undefined, columns, { id: sheetId, folderId: creationFolderId, rows: [{ id: id(), sheetId, order: 0, createdAt: Date.now(), cells: Object.fromEntries(columns.map((column) => [column.id, emptyCell()])) }] });
 			trackEvent('sheet_created', { source: 'blank' });
 			router.push(`/app/sheets/${sheet.id}`);
 		} catch (error) { toast(message(error, 'Could not create a sheet.'), 'error'); }
@@ -115,7 +136,7 @@ export function SheetsPage() {
 				id: id(), sheetId, order, createdAt: Date.now(),
 				cells: Object.fromEntries(columns.map((column, index) => [column.id, { ...emptyCell(), v: rowValues[index] }])) as Row['cells'],
 			}));
-			const sheet = await createSheet('Sample · fictional companies', columns, { id: sheetId, rows });
+			const sheet = await createSheet('Sample · fictional companies', columns, { id: sheetId, folderId: creationFolderId, rows });
 			trackEvent('sheet_created', { source: 'sample' });
 			router.push(`/app/sheets/${sheet.id}`);
 		} catch (error) { toast(message(error, 'Could not create the sample sheet.'), 'error'); }
@@ -123,13 +144,15 @@ export function SheetsPage() {
 
 	/** The sheet exists only once the user asks for rows. Discovery keeps streaming into it after navigation. */
 	async function findRows(request: PopulateRequest) {
+		const tableType = tableTypes.find((item) => item.id === request.tableTypeId) ?? defaultTableTypeForEntity(request.entity);
 		const taken = new Set(sheets?.map((sheet) => sheet.name.toLowerCase()));
-		const base = sheetNameFromPrompt(request.query) || { companies: 'Companies', people: 'People', websites: 'Websites' }[request.entity];
+		const base = sheetNameFromPrompt(request.query) || ({ companies: 'Companies', people: 'People', websites: 'Websites', records: tableType.name }[request.entity]);
 		let name = base;
 		for (let suffix = 2; taken.has(name.toLowerCase()); suffix++) name = `${base} ${suffix}`;
-		const columns = ENTITY_COLUMNS[request.entity].map((column) => newColumn({ name: column.name, type: 'source', width: column.width, format: column.format }));
-		const sheet = await createSheet(name, columns, { populate: request });
-		trackEvent('sheet_created', { source: request.entity });
+		const columns = tableType.defaultColumns.map((column) => newColumn({ name: column.name, type: 'source', width: column.width, format: column.format }));
+		request = { ...request, tableTypeId: tableType.id, tableType };
+		const sheet = await createSheet(name, columns, { populate: request, folderId: creationFolderId });
+		trackEvent('sheet_created', { source: request.entity === 'records' ? 'table' : request.entity });
 		trackEvent('rows_requested', { kind: request.entity });
 		void populateRunner.start(sheet, request, { handoff: true });
 		router.push(`/app/sheets/${sheet.id}?find=1&entity=${request.entity}`);
@@ -144,7 +167,7 @@ export function SheetsPage() {
 					<div className="flex min-w-0 items-baseline gap-3">
 						<h1 className="text-h4 text-fg">Sheets</h1>
 					</div>
-					{!!count && <Button variant="brand" size="sm" onClick={() => trialSheetLocked ? router.push('/access-required?unlock=sheets') : setDialog('new')} className="max-sm:min-h-11">{trialSheetLocked ? <Sparkles strokeWidth={1.75} /> : <Plus strokeWidth={1.75} />}{trialSheetLocked ? 'Unlock more sheets · $37 once' : 'New sheet'}</Button>}
+					{!!count && <Button variant="brand" size="sm" onClick={() => { if (trialSheetLocked) router.push('/access-required?unlock=sheets'); else { setCreationFolderId(undefined); setDialog('new'); } }} className="max-sm:min-h-11">{trialSheetLocked ? <Sparkles strokeWidth={1.75} /> : <Plus strokeWidth={1.75} />}{trialSheetLocked ? 'Unlock more sheets · $37 once' : 'New sheet'}</Button>}
 				</div>
 			</header>
 			{trial && <p className="text-caption text-fg-subtle">Trial: one sheet and up to five populated rows. A one-time $37 purchase unlocks more sheets and larger searches; Monid usage is billed separately.</p>}
@@ -212,7 +235,7 @@ export function SheetsPage() {
 					<NewSheet {...starts} autoFocus onClose={() => setDialog(null)} />
 				</Dialog>
 			)}
-			{dialog === 'import' && <ImportCsvDialog onClose={() => setDialog(null)} onImported={(sheetId) => router.push(`/app/sheets/${sheetId}`)} />}
+			{dialog === 'import' && <ImportCsvDialog folderId={creationFolderId} onClose={() => setDialog(null)} onImported={(sheetId) => router.push(`/app/sheets/${sheetId}`)} />}
 			{renaming && <NameDialog title="Rename sheet" initial={renaming.name} confirmLabel="Rename" onClose={() => setRenaming(null)} onSubmit={(name) => updateSheet(renaming.id, { name })} />}
 			{deleting && (
 				<ConfirmDialog
@@ -293,7 +316,7 @@ async function requiredKeyIssue(): Promise<{ error: string; issue: ConnectionIss
 
 /** Find rows into a new sheet, or start from a CSV or a blank sheet. */
 function NewSheet({ onFind, providerReady, onNeedKeys, onImport, onBlank, onSample, onClose, autoFocus }: { onFind: (request: PopulateRequest) => Promise<void>; providerReady: (provider: 'monid') => boolean; onNeedKeys: () => void; onImport: () => void; onBlank: () => void; onSample: () => void; onClose?: () => void; autoFocus?: boolean }) {
-	const [draft, setDraft] = useState<FindRowsDraft>({ entity: 'companies', query: '', countries: [], target: 5 });
+	const [draft, setDraft] = useState<FindRowsDraft>({ entity: 'companies', tableTypeId: 'companies', query: '', countries: [], target: 5 });
 	const [state, setState] = useState<{ status: 'idle' | 'creating' } | { status: 'failed'; error: string; issue?: ConnectionIssue }>({ status: 'idle' });
 	// One sheet per submit, even if Cmd+Enter and a click land before the busy state renders.
 	const inFlight = useRef(false);

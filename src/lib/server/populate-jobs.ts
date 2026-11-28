@@ -12,6 +12,7 @@ import { OrganizationStore } from './organization-store';
 import { runPopulate } from './populate';
 import { withDatabase, workspaceId, type Database, type Sql } from './database';
 import { WorkspaceStore } from './workspace-store';
+import { TableTypeStore } from './table-type-store';
 import { acquireDurableWorkerSlot, releaseDurableWorkerSlot } from './durable-slots';
 import { billingSnapshot } from './stripe-billing';
 
@@ -19,7 +20,7 @@ const ACTIVE = "status IN ('queued','running')";
 const TERMINAL = new Set(['succeeded', 'failed', 'uncertain', 'cancelled']);
 const MAX_ACTIVE_PER_MEMBER = 100;
 const MAX_ACTIVE_PER_WORKSPACE = 500;
-const REQUEST_FIELDS = ['query', 'entity', 'dataProvider', 'enrichFullProfiles', 'target', 'countries', 'idempotencyKey'] as const;
+const REQUEST_FIELDS = ['query', 'entity', 'tableTypeId', 'tableType', 'dataProvider', 'enrichFullProfiles', 'target', 'countries', 'inputs', 'idempotencyKey'] as const;
 
 function digest(value: string) { return createHash('sha256').update(value).digest('hex'); }
 function jobFingerprint(sheetId: string, request: PopulateRequest) {
@@ -29,7 +30,8 @@ function jobFingerprint(sheetId: string, request: PopulateRequest) {
 /** Enqueue an account-scoped search without persisting caller-supplied row keys or capacity claims. */
 export async function enqueuePopulate(actor: Account, sheetId: string, input: PopulateRequest) {
 	if (!input.idempotencyKey) throw new WorkspaceError('A durable Find rows idempotency key is required.', 400);
-	const request = PopulateRequestSchema.parse(Object.fromEntries(REQUEST_FIELDS.map((field) => [field, input[field]])));
+	const tableType = await withDatabase((database) => new TableTypeStore(database).resolvePublished(input.tableTypeId, input.entity));
+	const request = PopulateRequestSchema.parse(Object.fromEntries(REQUEST_FIELDS.map((field) => [field, field === 'tableType' ? tableType : field === 'tableTypeId' ? tableType.id : input[field]])));
 	const billing = await withDatabase((database) => billingSnapshot(actor, database));
 	const fingerprint = jobFingerprint(sheetId, request), id = randomUUID();
 	return withDatabase(async (database) => {
@@ -123,7 +125,7 @@ async function processClaimed(database: Database, job: Job) {
 	}
 	const request = parsed.data;
 	const store = new WorkspaceStore(database), grid = await store.snapshot(actor, job.sheet_id);
-	const keyColumn = foundRowColumns(request.entity, grid.sheet.columns).key;
+	const keyColumn = foundRowColumns(request.entity, grid.sheet.columns, request.tableType).key;
 	const count = grid.rows.length;
 	const billing = await billingSnapshot(actor, database);
 	const trialCapacity = billing.trial ? Math.max(0, billing.trial.rowLimit - billing.trial.rowsUsed) : MAX_ROWS;
@@ -157,7 +159,7 @@ async function processClaimed(database: Database, job: Job) {
 					const updated = await sql.query(`UPDATE enrichable.populate_jobs SET added=added+$4,updated_count=updated_count+$5,
 						progress=$6,updated_at=now() WHERE workspace_id=$1 AND id=$2 AND lease_owner=$3 AND status='running' RETURNING id`, [job.workspace_id, job.id, job.lease_owner, result.added, result.updated, `Saved ${result.added} new rows${result.updated ? `, refreshed ${result.updated} existing` : ''}.`]);
 					if (!updated.rows.length) throw new Error('The Find rows job lease is no longer current.');
-				});
+				}, request.tableType);
 			}
 		}, new AbortController().signal);
 		if (searchError) {

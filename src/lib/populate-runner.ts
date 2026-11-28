@@ -5,6 +5,7 @@ import { foundRecords, foundRowColumns, foundRowKey } from './found-rows';
 import { cancelPopulateJob, lookupActivePopulateJob, streamPopulate } from './populate-client';
 import { RowArrivalPacer } from './row-arrival-pacer';
 import { MAX_ROWS } from './workspace';
+import { defaultTableTypeForEntity } from './table-types';
 import type { EnrichFailure, PopulateRequest, Row, Sheet } from './types';
 
 /**
@@ -171,21 +172,22 @@ class PopulateRunner {
 	}
 	/** Resolves true when the server reported `done`. */
 	private async search(sheet: Sheet, input: PopulateRequest, signal: AbortSignal, jobId?: string): Promise<boolean> {
+		const tableType = input.tableType ?? defaultTableTypeForEntity(input.entity);
 		const fresh = (await db.sheets.get(sheet.id)) ?? sheet;
 		const rows = await db.rows.where('sheetId').equals(sheet.id).toArray();
 		const capacity = MAX_ROWS - rows.length;
 		if (capacity <= 0) throw new Error(`This sheet already has ${MAX_ROWS.toLocaleString()} rows. Delete rows before finding more.`);
 		const target = Math.min(input.target, capacity);
-		const { key, missing } = foundRowColumns(input.entity, fresh.columns);
+		const { key, missing } = foundRowColumns(input.entity, fresh.columns, tableType);
 		// A sheet created for this search already has its columns and request.
-		if (missing.length || JSON.stringify(fresh.populate) !== JSON.stringify(input)) await updateSheet(sheet.id, (current) => {
-			const columns = foundRowColumns(input.entity, current.columns).missing.map((column) => newColumn({ name: column.name, type: 'source', width: column.width, format: column.format }));
+		if (missing.length || JSON.stringify(fresh.populate) !== JSON.stringify({ ...input, tableType })) await updateSheet(sheet.id, (current) => {
+			const columns = foundRowColumns(input.entity, current.columns, tableType).missing.map((column) => newColumn({ name: column.name, type: 'source', width: column.width, format: column.format }));
 			const combined = [...current.columns, ...columns];
 			if (rows.length === 0 && current.columns.every((column) => column.type === 'source')) {
-				const { rank } = foundRowColumns(input.entity, combined);
+				const { rank } = foundRowColumns(input.entity, combined, tableType);
 				combined.sort((a, b) => rank(a) - rank(b));
 			}
-			return { columns: combined, populate: input };
+			return { columns: combined, populate: { ...input, tableType } };
 		}, { history: false });
 		if (signal.aborted) return false;
 		const request = { ...input, target, availableRows: capacity, existingKeys: key ? rows.map((row) => foundRowKey(row.cells[key.id]?.v)).filter(Boolean).slice(0, 20000) : [] };
@@ -203,7 +205,7 @@ class PopulateRunner {
 				if (remaining) {
 					const current = await db.sheets.get(sheet.id);
 					if (!current) { this.stop(sheet.id); return; }
-					const { records, cellMeta, dedupeOn } = foundRecords(input.entity, event.rows.slice(0, remaining), current.columns, event.meta);
+					const { records, cellMeta, dedupeOn } = foundRecords(input.entity, event.rows.slice(0, remaining), current.columns, event.meta, tableType);
 					await appendRows(sheet.id, records, { source: 'find-rows', cellMeta, createColumns: true, dedupeOn, mergeExisting: event.updateExisting, history: false, onAdded: (added) => this.queue(sheet.id, added), onUpdated: (count) => {
 						if (count) this.patch(sheet.id, { updated: this.getSnapshot(sheet.id).updated + count });
 					} });

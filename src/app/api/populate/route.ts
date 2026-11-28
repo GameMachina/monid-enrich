@@ -10,6 +10,9 @@ import { billingSnapshot } from '@/lib/server/stripe-billing';
 import { withDatabase } from '@/lib/server/database';
 import { MAX_POPULATE_LIMIT } from '@/lib/populate-limit';
 import { WorkspaceError } from '@/lib/workspace';
+import { TableTypeStore } from '@/lib/server/table-type-store';
+import type { TableTypeDefinition } from '@/lib/types';
+import { tableTypeInputError, tableTypeRowLimit } from '@/lib/table-types';
 
 export const maxDuration = 300;
 
@@ -17,9 +20,16 @@ export async function POST(request: Request) {
 	const prepared = await routeInput(request, FindRowsRequestSchema, { requirePurchase: false });
 	if (prepared instanceof Response) return prepared;
 	const { access } = prepared;
+	let tableType: TableTypeDefinition;
+	try { tableType = await withDatabase((database) => new TableTypeStore(database).resolvePublished(prepared.input.tableTypeId, prepared.input.entity)); }
+	catch (error) { return jsonError(error instanceof Error ? error.message : 'The selected table type is unavailable.', error instanceof WorkspaceError ? error.status : 503, failure('input_invalid')); }
+	const invalidInput = tableTypeInputError(tableType, prepared.input);
+	if (invalidInput) return jsonError(invalidInput, 400, failure('input_invalid'));
 	const requestedTarget = prepared.input.target;
 	if (requestedTarget > MAX_POPULATE_LIMIT) return jsonError(`A single Find rows request can return up to ${MAX_POPULATE_LIMIT.toLocaleString()} rows.`, 400, failure('input_invalid'));
-	let input: typeof prepared.input = { ...prepared.input, target: requestedTarget, availableRows: undefined };
+	const typeRowLimit = tableTypeRowLimit(tableType.id, prepared.input.inputs ?? {});
+	if (requestedTarget > typeRowLimit) return jsonError(`${tableType.name} supports up to ${typeRowLimit.toLocaleString()} rows per search with its current Monid source.`, 400, failure('input_invalid'));
+	let input: typeof prepared.input = { ...prepared.input, tableTypeId: tableType.id, tableType, target: requestedTarget, availableRows: undefined };
 	if (access.account) {
 		try {
 			const billing = await withDatabase((database) => billingSnapshot(access.account!, database));

@@ -8,6 +8,9 @@ import { SettingsProvider, useSettings } from './settings-context';
 import { NavigationProvider, Sidebar } from './sidebar';
 import { AccountBoundary, useSessionWarning } from './account-boundary';
 import { SELF_HOSTED_ISSUER, type Account } from '@/lib/auth-identity';
+import { FoldersProvider } from './folders-context';
+import { TableTypesProvider } from './table-types-context';
+import type { TableTypeDefinition } from '@/lib/types';
 
 const SETUP_SEEN_KEY = 'enrichable.setup-seen.v1';
 function setupSeen() {
@@ -43,22 +46,26 @@ function ShellAlerts() {
 	);
 }
 
-export function AppShell({ children, account, contextSignIn = false, managedAuth = false }: { children: ReactNode; account: Account & { sessionId: string }; contextSignIn?: boolean; managedAuth?: boolean }) {
+export function AppShell({ children, account, tableTypes, platformAdmin = false, contextSignIn = false, managedAuth = false }: { children: ReactNode; account: Account & { sessionId: string }; tableTypes: readonly TableTypeDefinition[]; platformAdmin?: boolean; contextSignIn?: boolean; managedAuth?: boolean }) {
 	return (
 		<AccountBoundary account={account}>
 			<SettingsProvider logolinkPublicId={account.organization.logolink_public_id} selfHosted={account.issuer === SELF_HOSTED_ISSUER} workspaceAdmin={account.role === 'owner' || account.role === 'admin'} contextSignIn={contextSignIn} workspaceName={account.organization.name}>
 				<ToastProvider>
+				<TableTypesProvider tableTypes={tableTypes}>
 					<NavigationProvider>
+					<FoldersProvider>
 					<div className="flex h-dvh overflow-clip bg-canvas pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)]">
 						<Suspense fallback={<aside className="hidden h-full w-[212px] shrink-0 md:block" />}>
-						<Sidebar account={account} managedAuth={managedAuth} />
+						<Sidebar account={account} managedAuth={managedAuth} platformAdmin={platformAdmin} />
 						</Suspense>
 						<main className="relative flex min-w-0 flex-1 flex-col overflow-clip">
 							<ShellAlerts />
 							{children}
 						</main>
 					</div>
+					</FoldersProvider>
 					</NavigationProvider>
+				</TableTypesProvider>
 					<KeysGate />
 				</ToastProvider>
 			</SettingsProvider>

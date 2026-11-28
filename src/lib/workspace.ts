@@ -12,7 +12,7 @@ export const SHEET_DATA_VERSION = 2;
 const identifier = z.string().min(1).max(128);
 const cellValue = z.union([z.string(), z.number().finite(), z.boolean(), z.null(), z.array(z.string())]);
 export const sheetSchema = z.object({
-	id: identifier, name: z.string().min(1).max(300),
+	id: identifier, folderId: identifier.optional(), name: z.string().min(1).max(300),
 	columns: z.array(z.object({ id: identifier, name: z.string().max(300), type: z.enum(['source', 'enriched']), op: ColumnOpSchema.optional(), action: ActionColumnSchema.optional(), width: z.number().finite().positive(), hidden: z.boolean().optional(), format: z.enum(COLUMN_FORMATS).optional(), categoryOptions: z.array(z.string().trim().min(1).max(200)).min(1).max(100).refine((options) => new Set(options).size === options.length, 'Categories must be unique.').optional(), categoryColors: z.record(z.string().min(1).max(200), z.string().regex(/^#[a-f0-9]{6}$/i)).refine((colors) => Object.keys(colors).length <= 100, 'Up to 100 category colors.').optional(), currency: z.enum(['USD', 'EUR', 'GBP', 'CAD', 'AUD', 'INR', 'JPY']).optional(), unit: z.string().max(30).optional(), dateFormat: z.enum(DATE_FORMATS).optional(), useGrouping: z.boolean().optional(), decimalPlaces: z.number().int().min(0).max(10).optional(), createdAt: z.number().finite() })).max(200)
 		.superRefine((columns, context) => {
 			columns.forEach((column, index) => {

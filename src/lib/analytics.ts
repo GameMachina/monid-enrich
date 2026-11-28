@@ -5,7 +5,7 @@ export const ANALYTICS_CLIENT_ID = process.env.NEXT_PUBLIC_DATABUDDY_CLIENT_ID?.
 
 /** Product events. Properties describe the action only: never sheet contents, prompts or keys. */
 export interface AnalyticsEvents {
-	sheet_created: { source: 'blank' | 'companies' | 'people' | 'websites' | 'import' | 'sample' };
+	sheet_created: { source: 'blank' | 'companies' | 'people' | 'websites' | 'table' | 'import' | 'sample' };
 	rows_requested: { kind: string };
 	column_added: { kind: string };
 	enrichment_started: { cells: number };

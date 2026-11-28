@@ -178,7 +178,7 @@ export function newColumn(input: { name: string; type: Column['type']; op?: Colu
 }
 
 /** Rows (with this sheet's `id`) and the populate request are created in the same request as the sheet. */
-export async function createSheet(name?: string, columns: Column[] = [], initial: { id?: string; rows?: Row[]; populate?: PopulateRequest } = {}): Promise<Sheet> {
+export async function createSheet(name?: string, columns: Column[] = [], initial: { id?: string; rows?: Row[]; populate?: PopulateRequest; folderId?: string } = {}): Promise<Sheet> {
 	return inWorkspaceOrder(async () => {
 		if (name === undefined) {
 			const names = new Set((await db.sheets.toArray()).map((sheet) => sheet.name));
@@ -186,7 +186,7 @@ export async function createSheet(name?: string, columns: Column[] = [], initial
 			for (let suffix = 2; names.has(name); suffix++) name = `Untitled ${suffix}`;
 		}
 		const rows = initial.rows ?? [];
-		const sheet = await connected().create({ id: initial.id ?? id(), name, columns, filters: [], sort: null, ...(initial.populate ? { populate: initial.populate } : {}), dataVersion: SHEET_DATA_VERSION, createdAt: Date.now(), updatedAt: Date.now() }, rows);
+		const sheet = await connected().create({ id: initial.id ?? id(), ...(initial.folderId ? { folderId: initial.folderId } : {}), name, columns, filters: [], sort: null, ...(initial.populate ? { populate: initial.populate } : {}), dataVersion: SHEET_DATA_VERSION, createdAt: Date.now(), updatedAt: Date.now() }, rows);
 		await db.transaction('rw', db.sheets, db.rows, async () => {
 			await db.sheets.add(sheet);
 			if (rows.length) await db.rows.bulkAdd(rows);
@@ -198,7 +198,7 @@ export async function createSheet(name?: string, columns: Column[] = [], initial
 const recordEntry = (record: Record<string, CellValue>, name: string) => Object.entries(record).find(([key]) => key.toLowerCase() === name.toLowerCase());
 
 /** Import as one request, so a failed import never leaves an empty sheet behind. */
-export async function createSheetFromRecords(name: string, records: Record<string, CellValue>[]): Promise<Sheet> {
+export async function createSheetFromRecords(name: string, records: Record<string, CellValue>[], options: { folderId?: string } = {}): Promise<Sheet> {
 	const sheetId = id();
 	const columns: Column[] = [];
 	const seen = new Set<string>();
@@ -213,7 +213,7 @@ export async function createSheetFromRecords(name: string, records: Record<strin
 		const value = valueOf(record, column);
 		return [column.id, value === undefined ? emptyCell() : admittedCell(column, sourceCell(value), 'import')];
 	})) }));
-	return createSheet(name, fitted, { id: sheetId, rows });
+	return createSheet(name, fitted, { id: sheetId, rows, ...(options.folderId ? { folderId: options.folderId } : {}) });
 }
 
 export async function updateSheet(sheetId: string, patch: Partial<Sheet> | ((sheet: Sheet) => Partial<Sheet>), options: { history?: boolean } = {}) {

@@ -17,9 +17,9 @@ import { plural } from './sheet-page-utils';
 const PREVIEW_COLUMNS = 8;
 
 /** Appending matches columns by header; a new sheet is created together with its rows. */
-async function importRecords(records: Record<string, CellValue>[], target: { sheetId: string; afterRowId?: string } | { name: string }) {
+async function importRecords(records: Record<string, CellValue>[], target: { sheetId: string; afterRowId?: string } | { name: string; folderId?: string }) {
 	if ('sheetId' in target) return { sheetId: target.sheetId, added: await appendRows(target.sheetId, records, { createColumns: true, afterRowId: target.afterRowId }) };
-	const sheet = await createSheetFromRecords(target.name, records);
+	const sheet = await createSheetFromRecords(target.name, records, { folderId: target.folderId });
 	trackEvent('sheet_created', { source: 'import' });
 	return { sheetId: sheet.id, added: records.length };
 }
@@ -105,7 +105,7 @@ function importSummary(parsed: { headers: string[] } | null, total: number, newH
 }
 
 /** Import a CSV as a new sheet, or append rows to an existing one (matching columns by header name). */
-export function ImportCsvDialog({ sheetId, afterRowId, onClose, onImported }: { sheetId?: string; afterRowId?: string; onClose: () => void; onImported: (sheetId: string, added: number) => void }) {
+export function ImportCsvDialog({ sheetId, afterRowId, folderId, onClose, onImported }: { sheetId?: string; afterRowId?: string; folderId?: string; onClose: () => void; onImported: (sheetId: string, added: number) => void }) {
 	const { toast } = useToast();
 	const errorId = useId();
 	const [name, setName] = useState('Imported sheet');
@@ -128,7 +128,7 @@ export function ImportCsvDialog({ sheetId, afterRowId, onClose, onImported }: { 
 		setState({ status: 'importing' });
 		const records = parsed.records.slice(0, importable);
 		try {
-			const imported = await importRecords(records, sheetId ? { sheetId, afterRowId } : { name: name.trim() || 'Imported sheet' });
+			const imported = await importRecords(records, sheetId ? { sheetId, afterRowId } : { name: name.trim() || 'Imported sheet', folderId });
 			const flagged = await flaggedCells(imported.sheetId).catch(() => 0);
 			if (flagged) toast(`${plural(flagged, 'value')} didn’t match ${flagged === 1 ? 'its column’s' : 'their columns’'} format. ${flagged === 1 ? 'It’s' : 'They’re'} kept and marked in red to fix.`, 'info');
 			else if (sheetId) toast(`Added ${plural(imported.added, 'row')}`, 'success');

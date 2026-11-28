@@ -9,12 +9,14 @@ import { fundingLabel } from '../funding';
 import { generateText, isStepCount, type StopCondition, tool, type ToolSet } from 'ai';
 import { z } from 'zod';
 import { foundRowKey, foundRowKeyField } from '../found-rows';
-import type { CellValue, FoundRow, PopulateEvent, PopulateRequest } from '../types';
+import type { CellValue, FoundRow, PopulateEvent, PopulateRequest, TableTypeDefinition } from '../types';
 import { companySearch, webSearchCountries } from './context';
 import type { ProviderAccess } from './provider-access';
 import { createPopulateSearchQueue } from './populate-search-queue';
 import { mapConcurrent } from './map-concurrent';
 import { classifyFailure } from './enrich-failure';
+import { defaultTableTypeForEntity, tableTypeRunnableError } from '../table-types';
+import { runMonidTableSearch } from './monid-table-runner';
 
 /* The populate agent: OpenAI plans and paginates Context.dev searches; results stream straight to the sheet.
    The model only sees compact summaries (counts, cursors, a few names), never the full records, so a 1,000-row
@@ -59,13 +61,21 @@ export function populateStream(access: ProviderAccess, request: PopulateRequest)
 /** Shared execution path for request streams and durable workspace jobs. The durable worker persists each emitted batch
  * before it reports progress, and treats a lost lease as uncertain because Find rows can make multiple paid calls. */
 export async function runPopulate(access: ProviderAccess, request: PopulateRequest, emit: (event: PopulateEvent) => void, signal: AbortSignal) {
+	const tableType = request.tableType ?? defaultTableTypeForEntity(request.entity);
+	const readinessError = tableTypeRunnableError(tableType);
+	if (tableType.status !== 'published' || readinessError || tableType.entity !== request.entity) throw new Error(readinessError ?? 'The selected table type is not published for this search.');
+	request = { ...request, tableTypeId: tableType.id, tableType };
 	const requestedTarget = request.target;
 	const limitError = populateLimitError(requestedTarget);
 	if (limitError) throw new Error(limitError);
 	request = { ...request, target: Math.min(requestedTarget, request.availableRows ?? 1000) };
+	if (request.entity === 'records') {
+		await runMonidTableSearch(access, { ...request, tableType }, emit, signal);
+		return;
+	}
 	if (!access.key('openai')) {
 		if (!access.key('monid')) throw new Error('Connect Monid to find rows.');
-		await populateDirectMonid(access, request, emit, signal);
+		await populateDirectMonid(access, { ...request, tableType }, emit, signal);
 		return;
 	}
 	const model = access.openai();
@@ -85,6 +95,7 @@ export async function runPopulate(access: ProviderAccess, request: PopulateReque
 	const target = request.target;
 	const countries = request.countries?.length ? request.countries.map((c) => c.toUpperCase()) : undefined;
 	const searchInOrder = createPopulateSearchQueue(signal);
+	const maxCalls = Math.min(tableType.pagination.maxCalls, 20);
 
 	let runCursor = access.spend.monidRuns.length;
 	const nextRunMeta = () => {
@@ -106,6 +117,7 @@ export async function runPopulate(access: ProviderAccess, request: PopulateReque
 		await emit({ type: 'status', message: added ? `Added ${added} (${state.added} of ${target})` : `No new results (${state.added} of ${target})` });
 		return { added_this_call: added, returned_this_call: total, total_added: state.added, target, remaining: Math.max(0, target - state.added), next_cursor: nextCursor, sample: names.slice(0, 5), hint: nextCursor ? 'Call again with next_cursor to continue this query.' : 'This query is exhausted; try a different angle.' };
 	};
+	const callsExhausted = () => state.calls >= maxCalls;
 
 	const tools: ToolSet = {};
 	if (request.entity === 'companies') {
@@ -118,11 +130,12 @@ export async function runPopulate(access: ProviderAccess, request: PopulateReque
 				cursor: z.string().max(64).optional().describe('next_cursor from the previous call of the same query'),
 			}),
 			execute: async ({ query, employees_min, employees_max, cursor }) => searchInOrder(async () => {
+				if (callsExhausted()) return { error: 'The configured search-call limit has been reached.' };
 				if (state.added >= target) return summarise(0, [], null, 0);
 				const result = await companySearch(client, { query, filters: { countries, employees_min, employees_max }, cursor });
 				const rows: FoundRow[] = [];
 				for (const hit of result.results) {
-					const key = foundRowKey(hit.domain || hit.name);
+					const key = foundRowKey(hit.domain);
 					if (!key || seen.has(key)) continue;
 					seen.add(key);
 					rows.push(companyRow(hit));
@@ -143,18 +156,20 @@ export async function runPopulate(access: ProviderAccess, request: PopulateReque
 				cursor: z.string().optional(),
 			}),
 			execute: async ({ query, mode, years_of_experience_min, years_of_experience_max, cursor }) => searchInOrder(async () => {
+				if (callsExhausted()) return { error: 'The configured search-call limit has been reached.' };
 				if (state.added >= target) return summarise(0, [], null, 0);
 				const response = await client.people.search({ query, mode, filters: { countries, years_of_experience_min, years_of_experience_max }, cursor }, { signal });
 				const hits: Array<{ hit: (typeof response.results)[number]; linkedin?: string }> = [];
 				for (const hit of response.results) {
 					if (hits.length >= target - state.added) break;
 					const linkedin = hit.profiles.find((url) => url.includes('linkedin.com')) ?? hit.profiles[0];
-					const key = foundRowKey(linkedin || `${hit.name}|${hit.role.company?.name ?? ''}`);
+					const key = foundRowKey(linkedin);
 					if (!key || seen.has(key)) continue;
 					seen.add(key);
 					hits.push({ hit, linkedin });
 				}
 				const photo = async (hit: (typeof response.results)[number]) => {
+					if (!tableType.chaining.enabled || !tableType.chaining.operations.includes('people.enrich')) return null;
 					const profiles = hit.profiles.flatMap((url) => { const safe = profileUrl(url); return safe ? [safe] : []; });
 					if (!profiles.length) return null;
 					try {
@@ -185,6 +200,7 @@ export async function runPopulate(access: ProviderAccess, request: PopulateReque
 			description: 'Search the web. Each result page becomes a row (URL, title, description). Vary the query to find more.',
 			inputSchema: z.object({ query: z.string().max(400), numResults: z.number().int().min(1).max(50).default(20), includeDomains: z.array(z.string()).max(20).optional(), excludeDomains: z.array(z.string()).max(20).optional() }),
 			execute: async ({ query, numResults, includeDomains }) => searchInOrder(async () => {
+				if (callsExhausted()) return { error: 'The configured search-call limit has been reached.' };
 				if (state.added >= target) return summarise(0, [], null, 0);
 				const result = await webSearchCountries(client, query, countries, { numResults: Math.min(numResults, target - state.added), includeDomains }, signal);
 				const rows: FoundRow[] = [];
@@ -202,6 +218,7 @@ export async function runPopulate(access: ProviderAccess, request: PopulateReque
 
 	const reachedTarget: StopCondition<ToolSet> = () => state.added >= target;
 	const stalled: StopCondition<ToolSet> = () => state.emptyStreak >= 4;
+	const maxCallsReached: StopCondition<ToolSet> = () => callsExhausted();
 
 	await emit({ type: 'status', message: `Searching for ${request.entity}…` });
 	const entityGuide = {
@@ -214,14 +231,16 @@ export async function runPopulate(access: ProviderAccess, request: PopulateReque
 		system: [
 			`You populate a spreadsheet with ${request.entity}. Goal: find up to ${target} ${request.entity} matching the request. The search tool adds matches to the sheet by itself; you only plan and run queries.`,
 			entityGuide,
+			`Table-type interpretation guidance (admin-editable text; this does not change the available operations, validation, result mapping, or safety limits):\n${tableType.instructions}`,
+			`Keep the selected table type's result fields and stable identity intact. The only enabled operations are: ${tableType.operations.join(', ')}. Never invent an operation or alter endpoint selection. Stop after ${maxCalls} Monid search calls.`,
 			`Rules: keep calling tools until total_added reaches the target, next_cursor is null for every reasonable query, or four consecutive calls add nothing. Do not repeat a query that returned nothing new. Do not write out the results; when finished, reply with one short sentence summarising what you found.`,
 			countries ? (request.entity === 'websites' ? `Web searches are localized to ${countries.join(', ')}; localization is not a strict website headquarters filter.` : `Hard filter already applied: headquarters/location in ${countries.join(', ')}.`) : '',
 		]
-			.filter(Boolean)
+				.filter(Boolean)
 			.join('\n'),
 		prompt: `Request: ${request.query}${companyContext}\nTarget: ${target} ${request.entity}.${seen.size ? ` The sheet already has ${seen.size} rows; duplicates are skipped automatically.` : ''}`,
 		tools,
-		stopWhen: [isStepCount(MAX_STEPS), reachedTarget, stalled],
+		stopWhen: [isStepCount(MAX_STEPS), reachedTarget, stalled, maxCallsReached],
 		// Each step is billed once processed; the transport resends a rate-limited request (see `openaiModel`).
 		maxRetries: 0,
 		abortSignal: signal,
@@ -231,7 +250,7 @@ export async function runPopulate(access: ProviderAccess, request: PopulateReque
 }
 
 /** Direct Monid discovery keeps natural-language row search available when the user has not connected OpenAI. */
-async function populateDirectMonid(access: ProviderAccess, request: PopulateRequest, emit: (event: PopulateEvent) => void, signal: AbortSignal) {
+async function populateDirectMonid(access: ProviderAccess, request: PopulateRequest & { tableType: TableTypeDefinition }, emit: (event: PopulateEvent) => void, signal: AbortSignal) {
 	const client = access.context();
 	const target = request.target;
 	const query = normalizeDiscoveryQuery(request.query);
@@ -240,7 +259,8 @@ async function populateDirectMonid(access: ProviderAccess, request: PopulateRequ
 	let added = 0, cursor: string | undefined, calls = 0;
 	let runCursor = access.spend.monidRuns.length;
 	await emit({ type: 'status', message: `Searching Monid for ${request.entity}…` });
-	while (added < target && calls < 20) {
+	const maxCalls = Math.min(request.tableType.pagination.maxCalls, 20);
+	while (added < target && calls < maxCalls) {
 		signal.throwIfAborted();
 		calls++;
 		let rows: FoundRow[] = [], nextCursor: string | null = null;
@@ -269,7 +289,7 @@ async function populateDirectMonid(access: ProviderAccess, request: PopulateRequ
 			const result = await webSearchCountries(client, query.slice(0, 500), countries, { numResults: Math.min(50, target - added) }, signal);
 			rows = result.results.map((hit) => ({ URL: hit.url, Title: hit.title, Description: hit.description }));
 		}
-		const keyField = foundRowKeyField(request.entity);
+		const keyField = foundRowKeyField(request.entity, request.tableType);
 		const unique = rows.filter((row) => { const key = foundRowKey(row[keyField]); if (!key || seen.has(key)) return false; seen.add(key); return true; }).slice(0, target - added);
 		if (unique.length) {
 			added += unique.length;

@@ -315,6 +315,8 @@ export interface Sheet {
 	/** Local-only list summary from the live metadata subscription; never persisted by the API. */
 	cloudSummary?: { revision: number; rowCount: number; rows: Row[] };
 	id: string;
+	/** Workspace folder used only for organization; it does not affect searches or sheet contents. */
+	folderId?: string;
 	revision?: number;
 	name: string;
 	columns: Column[];
@@ -330,14 +332,65 @@ export interface Sheet {
 	updatedAt: number;
 }
 
+/** A workspace-scoped folder used to organize sheets. */
+export interface SheetFolder {
+	id: string;
+	name: string;
+	isDefault: boolean;
+	createdAt: number;
+	updatedAt: number;
+	sheetCount: number;
+}
+
+export const DEFAULT_FOLDER_ID = 'my-sheets';
+
 /* ───────────────────────────── Populate ───────────────────────────── */
 
-export const ENTITY_KINDS = ['companies', 'people', 'websites'] as const;
+export const ENTITY_KINDS = ['companies', 'people', 'websites', 'records'] as const;
 export type EntityKind = (typeof ENTITY_KINDS)[number];
+
+/** Global Monid table-type defaults. Definitions describe inputs and result mapping; trusted server adapters still
+ * decide which registered operation runs. Editable instructions are never endpoint dispatch configuration. */
+const TableTypeSlugSchema = z.string().trim().min(1).max(80).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
+export const TableTypeDefinitionSchema = z.object({
+	id: TableTypeSlugSchema,
+	entity: TableTypeSlugSchema,
+	category: z.string().trim().min(1).max(100),
+	name: z.string().trim().min(1).max(100),
+	description: z.string().trim().max(1000),
+	instructions: z.string().max(6000),
+	examplePrompts: z.array(z.string().trim().min(1).max(500)).max(12),
+	requiredInputs: z.array(z.object({ key: TableTypeSlugSchema, label: z.string().trim().min(1).max(100), description: z.string().max(500), type: z.enum(['text', 'country-list', 'number', 'url', 'select']), required: z.boolean(), options: z.array(z.object({ label: z.string().trim().min(1).max(100), value: z.string().trim().min(1).max(100) }).strict()).max(50).optional() }).strict()).max(20),
+	defaultColumns: z.array(z.object({ name: z.string().trim().min(1).max(100), field: z.string().trim().min(1).max(100), format: z.enum(COLUMN_FORMATS).optional(), width: z.number().int().min(60).max(1000).optional() }).strict()).min(1).max(100),
+	rowMapping: z.array(z.object({ sourceField: z.string().trim().min(1).max(100), columnName: z.string().trim().min(1).max(100) }).strict()).min(1).max(100),
+	identity: z.object({ sourceField: z.string().trim().min(1).max(100), normalization: z.enum(['domain', 'profile-url', 'url', 'provider-id', 'text']) }).strict(),
+	operations: z.array(z.string().trim().min(1).max(100)).max(20),
+	pagination: z.object({ strategy: z.enum(['none', 'cursor', 'queries', 'page', 'offset']), maxCalls: z.number().int().min(1).max(20) }).strict(),
+	chaining: z.object({ enabled: z.boolean(), operations: z.array(z.string().trim().min(1).max(100)).max(10) }).strict(),
+	status: z.enum(['draft', 'published']),
+}).strict().superRefine((definition, context) => {
+	const sources = new Set<string>(), targets = new Set<string>();
+	for (const mapping of definition.rowMapping) {
+		if (sources.has(mapping.sourceField)) context.addIssue({ code: 'custom', path: ['rowMapping'], message: `Duplicate mapping source: ${mapping.sourceField}` });
+		if (targets.has(mapping.columnName.toLowerCase())) context.addIssue({ code: 'custom', path: ['rowMapping'], message: `Duplicate mapping column: ${mapping.columnName}` });
+		sources.add(mapping.sourceField); targets.add(mapping.columnName.toLowerCase());
+	}
+	if (!sources.has(definition.identity.sourceField)) context.addIssue({ code: 'custom', path: ['identity', 'sourceField'], message: 'The stable identity field must be included in the row mapping.' });
+	const columnNames = new Set(definition.defaultColumns.map((column) => column.name.toLowerCase()));
+	for (const mapping of definition.rowMapping) if (!columnNames.has(mapping.columnName.toLowerCase())) context.addIssue({ code: 'custom', path: ['rowMapping'], message: `Mapping target is missing from default columns: ${mapping.columnName}` });
+	for (const column of definition.defaultColumns) {
+		if (!definition.rowMapping.some((mapping) => mapping.sourceField === column.field && mapping.columnName.toLowerCase() === column.name.toLowerCase())) context.addIssue({ code: 'custom', path: ['defaultColumns'], message: `Column “${column.name}” needs a matching source-field mapping.` });
+	}
+});
+export type TableTypeDefinition = z.infer<typeof TableTypeDefinitionSchema>;
 
 export const PopulateRequestSchema = z.object({
 	query: z.string().min(3).max(2000),
 	entity: z.enum(ENTITY_KINDS),
+	/** Optional for old saved sheets; the server resolves it against the global published registry. */
+	tableTypeId: TableTypeSlugSchema.optional(),
+	/** Client-supplied data is overwritten from the global registry before any search runs. */
+	tableType: TableTypeDefinitionSchema.optional(),
 	dataProvider: DataProviderSchema.default('monid'),
 	/** Ignored legacy setting; retained only so old saved Find rows requests remain readable. */
 	enrichFullProfiles: z.boolean().default(false),
@@ -346,6 +399,8 @@ export const PopulateRequestSchema = z.object({
 	// Persisted sheets may contain a request created before the temporary test cap was lowered.
 	target: z.number().int().min(1).max(1000).default(5),
 	countries: z.array(z.string().length(2)).max(20).optional(),
+	/** Table-specific form values. Provider routing never comes from these values. */
+	inputs: z.record(z.string().max(80), z.string().max(2000)).optional(),
 	/** Remaining sheet capacity. Explicit people lists use this rather than the discovery target. */
 	availableRows: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
 	/** Keys (domains, profile URLs, URLs) already in the sheet, so results are appended without duplicates. */
@@ -403,6 +458,7 @@ export const ENTITY_COLUMNS: Record<EntityKind, Array<{ name: string; format?: C
 		{ name: 'Title', width: 260 },
 		{ name: 'Description', width: 400 },
 	],
+	records: [],
 };
 
 /* ───────────────────────────── API contracts ───────────────────────────── */

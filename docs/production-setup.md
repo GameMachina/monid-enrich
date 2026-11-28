@@ -27,6 +27,7 @@ Use separate Clerk, Neon, Stripe, and Vercel environments for staging and produc
 | Clerk | Publishable and secret keys; enable Organizations and configure sign-in/up | The Team screen uses Clerk's organization management UI. Verify invite, role, removal, recovery, and session behavior with test users. |
 | Stripe | Webhook signing secret, active $37 USD one-time Price ID, Payment Link ID and URL, public app URL | New purchases use a signed webhook and verified-email claim; they do not require a Stripe API secret key. Start in test mode. Do not enable recurring billing or automatic tax unless separately required. `STRIPE_SECRET_KEY` is optional and only supports legacy subscription management. Monid usage remains separate. |
 | Trial access | `ENRICHABLE_BILLING_EXEMPT_EMAILS` | Set verified email allowlist entries for the owner and invited beta testers. Other workspaces get one sheet and five populated trial rows; the $37 one-time purchase unlocks more sheets and searches up to 1,000 rows. |
+| Platform administration | `ENRICHABLE_PLATFORM_ADMIN_EMAILS` | Optional comma-separated list of additional verified Clerk emails allowed to edit global Monid table-type defaults. `jalendnelson@gmail.com` is the initial platform administrator. Workspace admin roles do not grant this access. |
 | Vercel Cron | `CRON_SECRET` | Use a high-entropy secret of at least 32 characters. Vercel sends it as a bearer token to the worker route. |
 
 Set these project variables in each relevant Vercel environment. `.env.example` is the local template; never commit actual values.

@@ -2,9 +2,9 @@ import 'server-only';
 import { createHash } from 'node:crypto';
 import { nanoid } from 'nanoid';
 import type { Account } from '../auth-identity';
-import type { Cell, CellMeta, CellValue, Column, EntityKind, FoundRow, Row, Sheet } from '../types';
+import { DEFAULT_FOLDER_ID, type Cell, type CellMeta, type CellValue, type Column, type EntityKind, type FoundRow, type Row, type Sheet, type SheetFolder } from '../types';
 import { PRESENCE_TTL_MS, type presenceInputSchema } from '../collaboration';
-import type { z } from 'zod';
+import { z } from 'zod';
 import { createSheetSchema, patchSheetSchema, parseInput, WorkspaceError } from '../workspace';
 import { admittedCell, fitGuessedFormat, invalidCell, redefinedColumns } from '../cell-admission';
 import { foundRecords, foundRowColumns, foundRowKey } from '../found-rows';
@@ -43,6 +43,68 @@ export function collaboratorIdentity(account: Account) {
 
 export class WorkspaceStore {
 	constructor(private database: Database) {}
+	private async ensureDefaultFolder(client: Sql, workspace: string) {
+		const now = Date.now();
+		await client.query(`INSERT INTO enrichable.sheet_folders (workspace_id,id,name,is_default,created_at,updated_at)
+			VALUES ($1,$2,'My Sheets',true,$3,$3) ON CONFLICT (workspace_id,id) DO NOTHING`, [workspace, DEFAULT_FOLDER_ID, now]);
+		return (await client.query('SELECT id,name,is_default,created_at,updated_at FROM enrichable.sheet_folders WHERE workspace_id=$1 AND id=$2', [workspace, DEFAULT_FOLDER_ID])).rows[0];
+	}
+	private folderFromRow(entry: Record<string, unknown>, sheetCount = 0): SheetFolder {
+		return { id: String(entry.id), name: String(entry.name), isDefault: Boolean(entry.is_default), createdAt: Number(entry.created_at), updatedAt: Number(entry.updated_at), sheetCount };
+	}
+	private async listFoldersIn(client: Sql, workspace: string) {
+		const rows = await client.query(`SELECT f.id,f.name,f.is_default,f.created_at,f.updated_at,count(s.id)::int AS sheet_count
+			FROM enrichable.sheet_folders f LEFT JOIN enrichable.sheets s ON s.workspace_id=f.workspace_id
+			AND COALESCE(s.data->>'folderId',$2)=f.id WHERE f.workspace_id=$1
+			GROUP BY f.workspace_id,f.id ORDER BY f.is_default DESC,f.created_at,f.name`, [workspace, DEFAULT_FOLDER_ID]);
+		return rows.rows.map((entry) => this.folderFromRow(entry, Number(entry.sheet_count ?? 0)));
+	}
+	async listFolders(actor: Actor) {
+		return this.database.transaction(async (client, workspace) => {
+			await this.ensureDefaultFolder(client, workspace);
+			return this.listFoldersIn(client, workspace);
+		}, { workspace: actor });
+	}
+	async createFolder(actor: Actor, input: unknown) {
+		const { name } = parseInput(z.object({ name: z.string().trim().min(1).max(80) }).strict(), input, 'Enter a folder name.');
+		return this.database.transaction(async (client, workspace) => {
+			await this.ensureDefaultFolder(client, workspace);
+			const now = Date.now(), id = nanoid(12);
+			const result = await client.query(`INSERT INTO enrichable.sheet_folders (workspace_id,id,name,is_default,created_at,updated_at)
+				VALUES ($1,$2,$3,false,$4,$4) ON CONFLICT DO NOTHING RETURNING id,name,is_default,created_at,updated_at`, [workspace, id, name, now]);
+			if (!result.rows.length) throw new WorkspaceError('A folder with that name already exists.', 409);
+			return this.folderFromRow(result.rows[0]);
+		}, { workspace: actor });
+	}
+	async renameFolder(actor: Actor, id: string, input: unknown) {
+		const { name } = parseInput(z.object({ name: z.string().trim().min(1).max(80) }).strict(), input, 'Enter a folder name.');
+		return this.database.transaction(async (client, workspace) => {
+			await this.ensureDefaultFolder(client, workspace);
+			const current = await client.query('SELECT id FROM enrichable.sheet_folders WHERE workspace_id=$1 AND id=$2', [workspace, id]);
+			if (!current.rows.length) throw new WorkspaceError('Folder not found in this workspace.', 404);
+			const duplicate = await client.query('SELECT id FROM enrichable.sheet_folders WHERE workspace_id=$1 AND lower(name)=lower($2) AND id<>$3', [workspace, name, id]);
+			if (duplicate.rows.length) throw new WorkspaceError('A folder with that name already exists.', 409);
+			const now = Date.now();
+			const result = await client.query(`UPDATE enrichable.sheet_folders SET name=$3,updated_at=$4
+				WHERE workspace_id=$1 AND id=$2 RETURNING id,name,is_default,created_at,updated_at`, [workspace, id, name, now]);
+			return this.folderFromRow(result.rows[0]);
+		}, { workspace: actor });
+	}
+	async deleteFolder(actor: Actor, id: string) {
+		if (id === DEFAULT_FOLDER_ID) throw new WorkspaceError('The default folder cannot be deleted.', 400);
+		return this.database.transaction(async (client, workspace) => {
+			await this.ensureDefaultFolder(client, workspace);
+			const folder = await client.query('SELECT id FROM enrichable.sheet_folders WHERE workspace_id=$1 AND id=$2 AND is_default=false', [workspace, id]);
+			if (!folder.rows.length) throw new WorkspaceError('Folder not found in this workspace.', 404);
+			const count = Number((await client.query(`SELECT count(*)::int AS count FROM enrichable.sheets
+				WHERE workspace_id=$1 AND data->>'folderId'=$2`, [workspace, id])).rows[0]?.count ?? 0);
+			const now = Date.now();
+			await client.query(`UPDATE enrichable.sheets SET data=jsonb_set(jsonb_set(data,'{folderId}',to_jsonb($3::text),true),'{updatedAt}',to_jsonb($4::bigint),true),
+				revision=revision+1,updated_by=$5 WHERE workspace_id=$1 AND data->>'folderId'=$2`, [workspace, id, DEFAULT_FOLDER_ID, now, actor.user.id]);
+			await client.query('DELETE FROM enrichable.sheet_folders WHERE workspace_id=$1 AND id=$2', [workspace, id]);
+			return { movedCount: count };
+		}, { workspace: actor });
+	}
 	async presence(actor: Account, input: z.infer<typeof presenceInputSchema>, now = Date.now()) {
 		const identity = collaboratorIdentity(actor), workspace = workspaceId(actor);
 		return this.database.transaction(async (client) => {
@@ -65,7 +127,7 @@ ON CONFLICT (workspace_id,client_id) DO UPDATE SET sheet_id=excluded.sheet_id,na
 	}
 	async list(actor: Actor) {
 		const result = await this.database.read('SELECT s.data, s.revision, (SELECT count(*)::int FROM enrichable.sheet_rows r WHERE r.workspace_id=s.workspace_id AND r.sheet_id=s.id) AS row_count FROM enrichable.sheets s WHERE s.workspace_id=$1 ORDER BY s.id', [workspaceId(actor)]);
-		return result.rows.map((entry) => ({ sheet: { ...(entry.data as Sheet), revision: Number(entry.revision) }, rowCount: Number(entry.row_count) }));
+		return result.rows.map((entry) => ({ sheet: { ...(entry.data as Sheet), folderId: (entry.data as Sheet).folderId ?? DEFAULT_FOLDER_ID, revision: Number(entry.revision) }, rowCount: Number(entry.row_count) }));
 	}
 	async get(actor: Actor, id: string, offset = 0, revision?: number) {
 		// A single SQL statement gives the metadata and row page the same MVCC snapshot.
@@ -79,7 +141,7 @@ ON CONFLICT (workspace_id,client_id) DO UPDATE SET sheet_id=excluded.sheet_id,na
 		if (!record) throw new WorkspaceError('Sheet not found in this workspace.', 404);
 		if (revision !== undefined && Number(record.revision) !== revision) throw new WorkspaceError('Sheet changed. Refresh and try again.', 409);
 		const rows = record.sheet_rows as Row[];
-		return { sheet: { ...(record.data as Sheet), revision: Number(record.revision) }, rows: rows.slice(0, 100), next: rows.length > 100 ? offset + 100 : null };
+		return { sheet: { ...(record.data as Sheet), folderId: (record.data as Sheet).folderId ?? DEFAULT_FOLDER_ID, revision: Number(record.revision) }, rows: rows.slice(0, 100), next: rows.length > 100 ? offset + 100 : null };
 	}
 	/** The whole sheet as of one moment, for callers that plan against every row. Pages read one by one fail with 409
 	    whenever a write lands between them; one statement reads the sheet and all its rows from one MVCC snapshot. */
@@ -88,10 +150,10 @@ ON CONFLICT (workspace_id,client_id) DO UPDATE SET sheet_id=excluded.sheet_id,na
 			UNION ALL SELECT 1, NULL, r.data, r.position, r.id FROM enrichable.sheet_rows r WHERE r.workspace_id=$1 AND r.sheet_id=$2
 			ORDER BY part, position, id`, [workspaceId(actor), id])).rows;
 		if (!record || Number(record.part) !== 0) throw new WorkspaceError('Sheet not found in this workspace.', 404);
-		return { sheet: { ...(record.data as Sheet), revision: Number(record.revision) }, rows: rows.map((entry) => entry.data as Row) };
+		return { sheet: { ...(record.data as Sheet), folderId: (record.data as Sheet).folderId ?? DEFAULT_FOLDER_ID, revision: Number(record.revision) }, rows: rows.map((entry) => entry.data as Row) };
 	}
 	/** Persist one provider batch into the shared sheet before reporting its progress to a browser. */
-	async appendFoundRows(actor: Account, id: string, entity: EntityKind, input: readonly FoundRow[], meta?: CellMeta, mergeExisting = false, persist?: (sql: Sql, result: { added: number; updated: number }) => Promise<void>) {
+	async appendFoundRows(actor: Account, id: string, entity: EntityKind, input: readonly FoundRow[], meta?: CellMeta, mergeExisting = false, persist?: (sql: Sql, result: { added: number; updated: number }) => Promise<void>, tableType?: import('../types').TableTypeDefinition) {
 		if (!input.length) return { added: 0, updated: 0 };
 		const limits = await trialLimits(actor, this.database);
 		return this.database.transaction(async (client, workspace) => {
@@ -104,8 +166,8 @@ ON CONFLICT (workspace_id,client_id) DO UPDATE SET sheet_id=excluded.sheet_id,na
 				const proposed = { id: nanoid(12), name, type: 'source' as const, width, format: format ?? inferredFormat({ name, type: 'source' }), createdAt: Date.now() };
 				columns.push(proposed);
 			};
-			for (const missing of foundRowColumns(entity, columns).missing) ensureColumn(missing.name, missing.width, missing.format);
-			let mapped = foundRecords(entity, input, columns, meta);
+			for (const missing of foundRowColumns(entity, columns, tableType).missing) ensureColumn(missing.name, missing.width, missing.format);
+			let mapped = foundRecords(entity, input, columns, meta, tableType);
 			for (const row of mapped.records) for (const name of Object.keys(row)) {
 				const exists = columns.some((column) => column.name.toLowerCase() === name.toLowerCase());
 				if (!exists) ensureColumn(name);
@@ -117,7 +179,7 @@ ON CONFLICT (workspace_id,client_id) DO UPDATE SET sheet_id=excluded.sheet_id,na
 					const fitted = fitGuessedFormat(column, values);
 					columns[columns.findIndex((entry) => entry.id === column.id)] = fitted;
 				}
-				mapped = foundRecords(entity, input, columns, meta);
+				mapped = foundRecords(entity, input, columns, meta, tableType);
 			}
 			const byName = new Map(columns.map((column) => [column.name.toLowerCase(), column]));
 			const dedupeColumn = byName.get(mapped.dedupeOn.toLowerCase());
@@ -188,14 +250,19 @@ ON CONFLICT (workspace_id,client_id) DO UPDATE SET sheet_id=excluded.sheet_id,na
 		const limits = await trialLimits(actor, this.database);
 		if (limits && rows.filter(hasRowData).length > limits.rowLimit) throw new WorkspaceError(`The free trial allows up to ${limits.rowLimit} populated rows. Unlock more with lifetime access for $37 once.`, 402);
 		return this.database.transaction(async (client, workspace) => {
+			await this.ensureDefaultFolder(client, workspace);
 			if (limits) {
 				const count = Number((await client.query('SELECT count(*)::int AS sheet_count FROM enrichable.sheets WHERE workspace_id=$1', [workspace])).rows[0]?.sheet_count ?? 0);
 				if (count >= limits.sheetLimit) throw new WorkspaceError(`The free trial includes one sheet. Unlock additional sheets with lifetime access for $37 once.`, 402);
 			}
-			const created = await client.query('INSERT INTO enrichable.sheets (workspace_id, id, data, created_by, updated_by) VALUES ($1,$2,$3::jsonb,$4,$4) ON CONFLICT DO NOTHING RETURNING id', [workspace, sheet.id, JSON.stringify(sheet), actor.user.id]);
+			const folderId = sheet.folderId ?? DEFAULT_FOLDER_ID;
+			const folder = await client.query('SELECT id FROM enrichable.sheet_folders WHERE workspace_id=$1 AND id=$2', [workspace, folderId]);
+			if (!folder.rows.length) throw new WorkspaceError('Choose a folder in this workspace.', 404);
+			const storedSheet = { ...sheet, folderId };
+			const created = await client.query('INSERT INTO enrichable.sheets (workspace_id, id, data, created_by, updated_by) VALUES ($1,$2,$3::jsonb,$4,$4) ON CONFLICT DO NOTHING RETURNING id', [workspace, storedSheet.id, JSON.stringify(storedSheet), actor.user.id]);
 			if (!created.rows.length) throw new WorkspaceError('This sheet already exists.', 409);
-			await this.putRows(client, workspace, sheet.id, rows);
-			return { ...sheet, revision: 1 };
+			await this.putRows(client, workspace, storedSheet.id, rows);
+			return { ...storedSheet, revision: 1 };
 		}, { workspace: actor });
 	}
 	async patch(actor: Actor, id: string, input: unknown) {
@@ -207,11 +274,15 @@ ON CONFLICT (workspace_id,client_id) DO UPDATE SET sheet_id=excluded.sheet_id,na
 			const record = await client.query('SELECT revision, data FROM enrichable.sheets WHERE workspace_id=$1 AND id=$2', [workspace, id]);
 			if (!record.rows.length) throw new WorkspaceError('Sheet not found in this workspace.', 404);
 			if (Number(record.rows[0].revision) !== patch.revision) throw new WorkspaceError('Another member changed this sheet. Refresh and retry your edit.', 409);
+			await this.ensureDefaultFolder(client, workspace);
+			const folderId = patch.sheet.folderId ?? DEFAULT_FOLDER_ID;
+			const folder = await client.query('SELECT id FROM enrichable.sheet_folders WHERE workspace_id=$1 AND id=$2', [workspace, folderId]);
+			if (!folder.rows.length) throw new WorkspaceError('Choose a folder in this workspace.', 404);
 			await this.validateValues(client, workspace, record.rows[0].data as Sheet, patch);
 			await client.query('DELETE FROM enrichable.sheet_rows WHERE workspace_id=$1 AND sheet_id=$2 AND id=ANY($3::text[])', [workspace, id, patch.deleted]);
 			await this.putRows(client, workspace, id, patch.rows);
 			if (limits && await countTrialRows(client, workspace) > limits.rowLimit) throw new WorkspaceError(`The free trial includes up to ${limits.rowLimit} populated rows in one sheet. Unlock more with lifetime access for $37 once.`, 402);
-			const sheet = { ...patch.sheet, updatedAt: Date.now() };
+			const sheet = { ...patch.sheet, folderId, updatedAt: Date.now() };
 			const result = await client.query('UPDATE enrichable.sheets SET data=$3::jsonb, revision=revision+1, updated_by=$4 WHERE workspace_id=$1 AND id=$2 RETURNING revision', [workspace, id, JSON.stringify(sheet), actor.user.id]);
 			return { revision: Number(result.rows[0].revision), updatedAt: sheet.updatedAt };
 		}, { workspace: actor });

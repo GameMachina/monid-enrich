@@ -13,7 +13,7 @@ test('explicit result counts override the default without interpreting company a
 	assert.equal(populateLimitError(101), null);
 	assert.match(populateLimitError(1001)!, /up to 1,000/);
 	assert.ok(populateLimitError(0));
-	assert.equal(PopulateRequestSchema.parse({ query: 'software', entity: 'companies' }).target, 20);
+	assert.equal(PopulateRequestSchema.parse({ query: 'software', entity: 'companies' }).target, 5);
 	assert.equal(PopulateRequestSchema.safeParse({ query: 'software', entity: 'companies', target: 101 }).success, true);
 });
 

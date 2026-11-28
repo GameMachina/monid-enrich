@@ -72,6 +72,42 @@ export interface MonidOperationInputs {
 	'web.urls': { queryParams: WebUrlsQuery };
 	'email.find': { queryParams: JsonInput & { domain: string; full_name?: string; first_name?: string; last_name?: string; linkedin_handle?: string; max_duration?: number } };
 	'email.verify': { body: JsonInput & { email: string } };
+	'table.1688.search': { body: JsonInput & { query: string; beginPage: number; pageSize: number; language: 'en'; currency: 'USD' } };
+	'table.channel3.search': { body: JsonInput & { query: string; limit: number; page_token?: string } };
+	'table.shopify.products': { queryParams: JsonInput & { store: string; page: number; limit: number } };
+	'table.yelp.search': { body: JsonInput & { keyword: string; location: string; limit: number } };
+	'table.yelp.reviews': { body: JsonInput & { url: string; limit: number; page_token?: string } };
+	'table.tripadvisor.search': { queryParams: JsonInput & { q: string; num: number; start: number } };
+	'table.tripadvisor.reviews': { queryParams: JsonInput & { place_id: string; num: number; start: number } };
+	'table.idealist.organizations': { queryParams: JsonInput & { q: string; page: number; location?: string; org_type?: string } };
+	'table.wellfound.jobs': { queryParams: JsonInput & { role: string; location?: string; page: number } };
+	'table.google.maps': { body: JsonInput & { keyword: string; depth: number; location_name?: string; location_code?: number; location_coordinate?: string; language_name?: string; language_code?: string } };
+	'table.greenhouse.jobs': { queryParams: JsonInput & { board: string; q?: string; location?: string; page: number; limit: number; include_content: boolean } };
+	'table.lever.jobs': { queryParams: JsonInput & { company: string; skip: number; limit: number } };
+	'table.homes.agents': { queryParams: JsonInput & { location: string; page: number } };
+	'table.googleplay.search': { body: JsonInput & { keyword: string; depth: number; location_name?: string; language_name?: string } };
+	'table.appstore.search': { queryParams: JsonInput & { term: string; country: string; num: number; device: 'mobile' } };
+	'table.googleplay.reviews': { body: JsonInput & { app_id: string; depth: number; location_name: string; language_name: string; sort_by: string } };
+	'table.appstore.reviews': { queryParams: JsonInput & { product_id: string; country: string; sort: 'mostrecent' | 'mosthelpful'; page: number } };
+	'table.fundable.companies': { body: JsonInput & { company: { search_query: string; min_relevance?: number }; page: number; page_size: number; sort_by: string } };
+	'table.fundable.investors': { body: JsonInput & { company_investments: { search_query: string; min_relevance?: number }; page: number; page_size: number; sort_by: string } };
+	'table.fundable.investor-deals': { queryParams: JsonInput & { domain: string; page: number; page_size: number } };
+	'table.zillow.sale': { queryParams: JsonInput & { location: string; page: number } };
+	'table.zillow.rent': { queryParams: JsonInput & { location: string; page: number } };
+	'table.zillow.agents': { queryParams: JsonInput & { location: string; page: number } };
+	'table.fundmomentum.funds': { queryParams: JsonInput & { stage?: string; country?: string; industry?: string; limit: number; offset: number } };
+	'table.fundable.deals': { body: JsonInput & { page: number; page_size: number; sort_by?: string } };
+	'table.thomasnet.search': { body: JsonInput & { keyword: string; limit: number } };
+	'table.tendata.importers': { body: JsonInput & { pageNo: number; pageSize: number; catalog: 'imports' | 'exports'; startDate: string; endDate: string; productDesc: string; hsCode?: string; countryOfOriginCode?: string; countryOfDestinationCode?: string; filterBlankFields?: Array<'importer' | 'exporter'>; filterLogisticFields?: Array<'importer' | 'exporter'> } };
+	'table.tendata.exporters': { body: JsonInput & { pageNo: number; pageSize: number; catalog: 'imports' | 'exports'; startDate: string; endDate: string; productDesc: string; hsCode?: string; countryOfOriginCode?: string; countryOfDestinationCode?: string; filterBlankFields?: Array<'importer' | 'exporter'>; filterLogisticFields?: Array<'importer' | 'exporter'> } };
+	'table.tendata.hs-code': { body: JsonInput & { pageNo: number; pageSize: number; catalog: 'imports' | 'exports'; startDate: string; endDate: string; productDesc: string; countryOfOriginCode?: string; countryOfDestinationCode?: string } };
+	'table.tiktok.search': { body: JsonInput & { keyword: string } };
+	'table.g2.search-software': { queryParams: JsonInput & { query: string } };
+	'table.g2.reviews': { queryParams: JsonInput & { slug: string; page: number } };
+	'table.capterra.search-software': { queryParams: JsonInput & { query: string } };
+	'table.capterra.reviews': { queryParams: JsonInput & { product_id: string; product_name: string; page: number } };
+	'table.amazon.products': { body: JsonInput & { keyword: string; depth: number; max_crawl_pages: number; location_name: string; language_name: string } };
+	'table.amazon.sellers': { body: JsonInput & { asin: string; location_name: string; language_name: string } };
 }
 export type MonidOperationName = keyof MonidOperationInputs;
 const MONID_OPERATIONS = {
@@ -86,7 +122,45 @@ const MONID_OPERATIONS = {
 	'web.urls': { provider: 'context.dev', endpoint: '/web/urls' },
 	'email.find': { provider: 'hunterio', endpoint: '/email-finder' },
 	'email.verify': { provider: 'anyapi', endpoint: '/email.verify' },
+	'table.1688.search': { provider: 'mrscraper', endpoint: '/promo/1688/category' },
+	'table.channel3.search': { provider: 'channel3', endpoint: '/v1/search' },
+	'table.shopify.products': { provider: 'litescrape', endpoint: '/shopify/products' },
+	'table.yelp.search': { provider: 'everyinfra', endpoint: '/yelp/search' },
+	'table.yelp.reviews': { provider: 'everyinfra', endpoint: '/yelp/reviews' },
+	'table.tripadvisor.search': { provider: 'litescrape', endpoint: '/tripadvisor/search' },
+	'table.tripadvisor.reviews': { provider: 'litescrape', endpoint: '/tripadvisor/reviews' },
+	'table.idealist.organizations': { provider: 'idealist', endpoint: '/search_organizations' },
+	'table.wellfound.jobs': { provider: 'wellfound', endpoint: '/search_jobs' },
+	'table.google.maps': { provider: 'dataforseo', endpoint: '/serp/google-maps' },
+	'table.greenhouse.jobs': { provider: 'litescrape', endpoint: '/greenhouse/jobs' },
+	'table.lever.jobs': { provider: 'litescrape', endpoint: '/lever/jobs' },
+	'table.homes.agents': { provider: 'homes.com', endpoint: '/search_agents' },
+	'table.googleplay.search': { provider: 'dataforseo', endpoint: '/google-play/search' },
+	'table.appstore.search': { provider: 'litescrape', endpoint: '/app-store/search' },
+	'table.googleplay.reviews': { provider: 'dataforseo', endpoint: '/google-play/app-reviews' },
+	'table.appstore.reviews': { provider: 'litescrape', endpoint: '/app-store/reviews' },
+	'table.fundable.deals': { provider: 'fundable', endpoint: '/deals' },
+	'table.fundable.companies': { provider: 'fundable', endpoint: '/companies' },
+	'table.fundable.investors': { provider: 'fundable', endpoint: '/investors' },
+	'table.fundable.investor-deals': { provider: 'fundable', endpoint: '/investor/deals' },
+	'table.zillow.sale': { provider: 'zillow', endpoint: '/search_homes_for_sale' },
+	'table.zillow.rent': { provider: 'zillow', endpoint: '/search_homes_for_rent' },
+	'table.zillow.agents': { provider: 'zillow', endpoint: '/search_agents' },
+	'table.fundmomentum.funds': { provider: 'fundmomentum', endpoint: '/funds' },
+	'table.thomasnet.search': { provider: 'everyinfra', endpoint: '/thomasnet/search' },
+	'table.tendata.importers': { provider: 'tendata', endpoint: '/v2/trade/importers' },
+	'table.tendata.exporters': { provider: 'tendata', endpoint: '/v2/trade/exporters' },
+	'table.tendata.hs-code': { provider: 'tendata', endpoint: '/v2/trade/hs-code' },
+	'table.tiktok.search': { provider: 'everyinfra', endpoint: '/tiktok/user_search' },
+	'table.g2.search-software': { provider: 'g2', endpoint: '/search_software' },
+	'table.g2.reviews': { provider: 'g2', endpoint: '/get_product_reviews' },
+	'table.capterra.search-software': { provider: 'capterra', endpoint: '/search_software' },
+	'table.capterra.reviews': { provider: 'capterra', endpoint: '/get_product_reviews' },
+	'table.amazon.products': { provider: 'dataforseo', endpoint: '/amazon/products' },
+	'table.amazon.sellers': { provider: 'dataforseo', endpoint: '/amazon/sellers' },
 } as const satisfies Record<MonidOperationName, { provider: string; endpoint: string }>;
+/** The operation names admins may assign to a draft definition. Endpoint paths remain private and code-owned. */
+export function registeredMonidOperations(): MonidOperationName[] { return Object.keys(MONID_OPERATIONS) as MonidOperationName[]; }
 export interface MonidRun {
 	runId: string;
 	provider: string;
