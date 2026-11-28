@@ -19,7 +19,7 @@ async function verifyMonid(key: string): Promise<NonNullable<KeyVerification['mo
 
 /** The connection check is read-only. The optional inference probe runs only when explicitly requested in Settings. */
 export async function POST(request: Request) {
-	const access = await routeAccess(request);
+	const access = await routeAccess(request, { allowExplicitKeyOverrides: true });
 	if (access instanceof Response) return access;
 	const query = new URL(request.url).searchParams;
 	const only = query.get('openaiOnly') === 'true' ? ['openai'] : query.get('only')?.split(',');

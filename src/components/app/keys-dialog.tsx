@@ -2,7 +2,7 @@
 
 import Image from 'next/image';
 import { useMemo, useState, type ReactNode } from 'react';
-import { CheckCircle2, ExternalLink, XCircle } from 'lucide-react';
+import { CheckCircle2, ExternalLink, Eye, EyeOff, XCircle } from 'lucide-react';
 import { trackEvent } from '@/lib/analytics';
 import type { Settings } from '@/lib/keys';
 import { providerField, type Provider } from '@/lib/organization-settings';
@@ -30,9 +30,16 @@ function CheckLine({ checking, check, error, provider }: { checking: boolean; ch
 }
 
 function KeyField({ label, link, value, onChange, placeholder, help, required, autoFocus }: { label: string; link?: string; value: string; onChange: (value: string) => void; placeholder: string; help?: string; required?: boolean; autoFocus?: boolean }) {
+	const [revealed, setRevealed] = useState(false);
 	return (
 		<Field label={label} required={required} help={help} labelAction={link && <a href={link} target="_blank" rel="noopener noreferrer" className="ml-auto inline-flex items-center gap-1 text-caption text-brand hover:underline">Get a key <ExternalLink aria-hidden="true" className="size-3" strokeWidth={1.75} /></a>}>
-			{(id) => <Input id={id} aria-label={label} autoFocus={autoFocus} required={required} type="password" autoComplete="off" spellCheck={false} value={value} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} />}
+			{(id) => <div className="relative">
+				<Input id={id} aria-label={label} autoFocus={autoFocus} required={required} type={revealed ? 'text' : 'password'} autoComplete="off" spellCheck={false} value={value} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} className="pr-24" />
+				<button type="button" aria-label={`${revealed ? 'Hide' : 'Reveal'} ${label}`} aria-pressed={revealed} onClick={() => setRevealed((current) => !current)} className="absolute inset-y-0 right-2 inline-flex items-center gap-1 rounded-md px-2 text-caption text-fg-subtle hover:bg-tint/[0.05] hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand max-md:min-h-11">
+					{revealed ? <EyeOff aria-hidden="true" className="size-3.5" /> : <Eye aria-hidden="true" className="size-3.5" />}
+					<span>{revealed ? 'Hide' : 'Reveal'}</span>
+				</button>
+			</div>}
 		</Field>
 	);
 }

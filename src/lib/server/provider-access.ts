@@ -21,6 +21,7 @@ import { assertWorkspaceActive, withDatabase } from './database';
 import { OrganizationStore, organizationPersistenceEnabled } from './organization-store';
 import { localCredentialVault } from './local-credential-store';
 import { purchaseGate } from './stripe-billing';
+import { WorkspaceError } from '../workspace';
 
 /* Provider access resolves only an explicit verification key or the encrypted workspace vault. */
 
@@ -318,10 +319,12 @@ export async function serverKeyAvailability(request: Request) {
 
 /* ───────────── Route preamble ───────────── */
 
-/** Browser provider access with the OpenAI endpoint already checked, or the error response. */
-export async function routeAccess(request: Request): Promise<ProviderAccess | Response> {
+/** Browser provider access with the OpenAI endpoint checked. One-shot key verification may explicitly use its submitted key. */
+export async function routeAccess(request: Request, { allowExplicitKeyOverrides = false }: { allowExplicitKeyOverrides?: boolean } = {}): Promise<ProviderAccess | Response> {
 	try {
-		const access = await browserAccess(request);
+		const inputs = allowExplicitKeyOverrides ? await browserInputs(request) : null;
+		if (inputs && !inputs.account) throw new WorkspaceError('Sign in required.', 401);
+		const access = inputs ? resolveAccess(BROWSER_POLICY, inputs) : await browserAccess(request);
 		await access.checkEndpoint();
 		return access;
 	} catch (error) {
