@@ -64,10 +64,15 @@ export function FindRowsComposer({ draft, onDraftChange, onSubmit, busy = false,
 	const tableTypes = useTableTypes();
 	const definition = tableTypes.find((item) => item.id === draft.tableTypeId) ?? tableTypes.find((item) => item.entity === entity) ?? defaultTableTypeForEntity(entity);
 	const availableTypes = ['companies', 'people', 'websites'].map((kind) => tableTypes.find((item) => item.entity === kind) ?? defaultTableTypeForEntity(kind as EntityKind));
-	const moreTypes = tableTypes.filter((item) => item.entity === 'records');
+	const companyTypes = tableTypes.filter((item) => item.id === 'companies' || item.category === 'Companies & Organizations');
+	const peopleTypes = tableTypes.filter((item) => item.id === 'people' || item.category === 'People');
+	const primaryTabEntity = definition.entity !== 'records'
+		? definition.entity
+		: definition.category === 'Companies & Organizations' ? 'companies' : definition.category === 'People' ? 'people' : null;
+	const primaryTypes = primaryTabEntity === 'companies' ? companyTypes : primaryTabEntity === 'people' ? peopleTypes : [];
+	const moreTypes = tableTypes.filter((item) => item.entity === 'records' && !['Companies & Organizations', 'People'].includes(item.category));
 	const categories = [...new Set(moreTypes.map((item) => item.category))];
-	const [moreCategory, setMoreCategory] = useState(definition.entity === 'records' ? definition.category : categories[0] ?? '');
-	const selectedCategory = definition.entity === 'records' ? definition.category : moreCategory;
+	const selectedCategory = definition.entity === 'records' && categories.includes(definition.category) ? definition.category : '';
 	const categoryTypes = moreTypes.filter((item) => item.category === selectedCategory);
 	const tableTypeRowCap = tableTypeRowLimit(definition.id, draft.inputs ?? {});
 	const extraInputs = definition.requiredInputs.filter((input) => input.key !== 'query' && input.key !== 'countries');
@@ -107,14 +112,17 @@ export function FindRowsComposer({ draft, onDraftChange, onSubmit, busy = false,
 				{onClose && <button type="button" aria-label="Close" onClick={onClose} className="populate-close"><X aria-hidden size={16} /></button>}
 				<fieldset disabled={busy} className="populate-front">
 					<div className="populate-picker">
-						<Segmented label="What to find" value={entity as Exclude<EntityKind, 'records'>} size="sm" onChange={(value) => { const selected = availableTypes.find((item) => item.entity === value); if (selected) onDraftChange({ ...draft, entity: value, tableTypeId: selected.id, picked: true }); }} options={availableTypes.filter((item) => item.entity !== 'records').map((item) => ({ value: item.entity as Exclude<EntityKind, 'records'>, label: <><EntityGlyph entity={item.entity as Exclude<EntityKind, 'records'>} active={entity === item.entity} />{item.name}</> }))} />
-						{categories.length > 0 && <div className="ml-2 flex min-w-0 items-center gap-1.5">
-							<Select id="find-rows-category" variant="pill" aria-label="More categories" value={selectedCategory} onValueChange={(category) => { setMoreCategory(category); const first = moreTypes.find((item) => item.category === category); if (first) onDraftChange({ ...draft, entity: 'records', tableTypeId: first.id, picked: true, inputs: {} }); }}>
+						<Segmented label="What to find" value={(primaryTabEntity ?? '') as Exclude<EntityKind, 'records'>} size="sm" onChange={(value) => { const selected = availableTypes.find((item) => item.entity === value); if (selected) onDraftChange({ ...draft, entity: value, tableTypeId: selected.id, picked: true, inputs: {} }); }} options={availableTypes.filter((item) => item.entity !== 'records').map((item) => ({ value: item.entity as Exclude<EntityKind, 'records'>, label: <><EntityGlyph entity={item.entity as Exclude<EntityKind, 'records'>} active={primaryTabEntity === item.entity} />{item.name}</> }))} />
+						{(primaryTypes.length > 1 || categories.length > 0) && <div className="ml-2 flex min-w-0 items-center gap-1.5">
+							{primaryTypes.length > 1 && <Select id="find-rows-primary-type" variant="pill" aria-label={`${primaryTabEntity === 'companies' ? 'Company' : 'People'} search type`} value={primaryTypes.some((item) => item.id === definition.id) ? definition.id : ''} onValueChange={(id) => { const selected = primaryTypes.find((item) => item.id === id); if (selected) onDraftChange({ ...draft, entity: selected.entity as EntityKind, tableTypeId: selected.id, picked: true, inputs: {} }); }}>
+								{primaryTypes.map((item) => <option key={item.id} value={item.id}>{item.id === 'companies' ? 'Company search' : item.id === 'people' ? 'People search' : item.name}</option>)}
+							</Select>}
+							{categories.length > 0 && <Select id="find-rows-category" variant="pill" aria-label="More categories" value={selectedCategory} onValueChange={(category) => { const first = moreTypes.find((item) => item.category === category); if (first) onDraftChange({ ...draft, entity: 'records', tableTypeId: first.id, picked: true, inputs: {} }); }}>
 								<option value="">More</option>{categories.map((category) => <option key={category} value={category}>{category}</option>)}
-							</Select>
-							<Select id="find-rows-table-type" variant="pill" aria-label="Table type" value={definition.entity === 'records' ? definition.id : ''} onValueChange={(id) => { const selected = moreTypes.find((item) => item.id === id); if (selected) onDraftChange({ ...draft, entity: 'records', tableTypeId: selected.id, picked: true, inputs: {} }); }}>
-								<option value="">Table type</option>{categoryTypes.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-							</Select>
+							</Select>}
+							{selectedCategory && <Select id="find-rows-table-type" variant="pill" aria-label="Table type" value={definition.id} onValueChange={(id) => { const selected = moreTypes.find((item) => item.id === id); if (selected) onDraftChange({ ...draft, entity: 'records', tableTypeId: selected.id, picked: true, inputs: {} }); }}>
+								{categoryTypes.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+							</Select>}
 						</div>}
 					</div>
 					<div className="populate-entry">
