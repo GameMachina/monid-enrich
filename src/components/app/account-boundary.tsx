@@ -1,6 +1,7 @@
 'use client';
 
 import { createContext, useContext, type ReactNode } from 'react';
+import { SignOutButton } from '@clerk/nextjs';
 import { CLERK_ISSUER, SELF_HOSTED_ISSUER, type Account } from '@/lib/auth-identity';
 import { setStorageAccount } from '@/lib/account-storage';
 import { connectWorkspace, openAccountDatabase, refreshWorkspace } from '@/lib/db';
@@ -88,7 +89,9 @@ export function AccountBoundary({ account, children }: { account: Account & { se
 				<p role="alert" className="text-fg">{state.error}</p>
 				<div className="flex gap-2">
 					<Button size="sm" variant="brand" onClick={session.refresh}>Retry</Button>
-					{account.issuer !== SELF_HOSTED_ISSUER && <form action="/api/auth/logout" method="post"><Button type="submit" size="sm">Sign out</Button></form>}
+					{account.issuer === CLERK_ISSUER
+						? <SignOutButton redirectUrl="/sign-in"><Button size="sm">Sign out</Button></SignOutButton>
+						: account.issuer !== SELF_HOSTED_ISSUER && <form action="/api/auth/logout" method="post"><Button type="submit" size="sm">Sign out</Button></form>}
 				</div>
 			</div>
 		</main>

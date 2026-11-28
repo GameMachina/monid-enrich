@@ -21,7 +21,7 @@ const USAGE_CTE = `WITH provider_runs AS (
 		AND ($5::text IS NULL OR r.sheet_id=$5)
 		AND ($6::bigint IS NULL OR r.created_at >= $6)
 		AND ($7::bigint IS NULL OR r.created_at < $7)
-		AND ($8::text IS NULL OR concat_ws(' ',r.id,r.integration,r.operation,r.endpoint,r.status,r.actor_id,r.sheet_name) ILIKE $8)
+		AND ($8::text IS NULL OR concat_ws(' ',r.id,r.integration,r.operation,r.endpoint,r.status,r.actor_id,s.data->>'name') ILIKE $8)
 )`;
 
 const optionalText = (value: string | null) => value ? value.slice(0, 128) : null;

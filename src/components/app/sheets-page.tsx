@@ -24,6 +24,7 @@ import { accountHeaders, accountStorageKey } from '@/lib/account-storage';
 import { useFolders } from './folders-context';
 import { useTableTypes } from './table-types-context';
 import { defaultTableTypeForEntity } from '@/lib/table-types';
+import { AccessRequiredDialog } from './access-required';
 
 // The sheet page still imports NameDialog from here.
 export { NameDialog };
@@ -74,41 +75,51 @@ export function SheetsPage() {
 		return map;
 	}, []);
 	const [dialog, setDialog] = useState<null | 'new' | 'import'>(null);
+	const [accessUnlock, setAccessUnlock] = useState<null | 'sheets' | 'rows' | 'organization'>(null);
 	const [creationFolderId, setCreationFolderId] = useState<string | undefined>();
 	const creationQueryHandled = useRef<string | null>(null);
 	const [renaming, setRenaming] = useState<Sheet | null>(null);
 	const [deleting, setDeleting] = useState<Sheet | null>(null);
 	const [billing, setBilling] = useState<{ required: boolean; fullAccess: boolean; requiresPurchase: boolean; trial: null | { sheetsUsed: number; sheetLimit: number; rowsUsed: number; rowLimit: number } } | null>(null);
+	const [billingChecked, setBillingChecked] = useState(false);
 	const count = sheets?.length ?? 0;
 	useEffect(() => {
 		const controller = new AbortController();
 		void fetch('/api/billing', { headers: accountHeaders(), cache: 'no-store', signal: controller.signal })
 			.then(async (response) => response.ok ? await response.json() as NonNullable<typeof billing> : null)
 			.then((data) => { if (!controller.signal.aborted && data) setBilling(data); })
+			.finally(() => { if (!controller.signal.aborted) setBillingChecked(true); })
 			.catch(() => {});
 		return () => controller.abort();
 	}, []);
 	const trial = billing?.required && !billing.fullAccess ? billing.trial : null;
 	const organizationLocked = Boolean(billing?.required && !billing.fullAccess && billing.requiresPurchase);
 	const trialSheetLocked = organizationLocked || Boolean(trial && trial.sheetsUsed >= trial.sheetLimit);
-	const openAccess = () => router.push(`/access-required?unlock=${organizationLocked ? 'organization' : 'sheets'}`);
+	const openAccess = (reason: 'sheets' | 'rows' = 'sheets') => {
+		setDialog(null);
+		setAccessUnlock(organizationLocked ? 'organization' : reason);
+	};
 	useEffect(() => {
 		const launch = searchParams.get('createSheet') === '1';
 		if (!launch) { creationQueryHandled.current = null; return; }
-		if (foldersLoading) return;
+		if (foldersLoading || !billingChecked) return;
 		const requested = searchParams.get('folderId');
 		const launchKey = requested ?? 'default';
-		if (creationQueryHandled.current === launchKey) return;
-		creationQueryHandled.current = launchKey;
-		const folder = folders.find((entry) => entry.id === requested) ?? folders.find((entry) => entry.isDefault);
-		setCreationFolderId(folder?.id);
-		setDialog('new');
-		router.replace('/app', { scroll: false });
-	}, [folders, foldersLoading, router, searchParams]);
+		const timer = window.setTimeout(() => {
+			if (creationQueryHandled.current === launchKey) return;
+			creationQueryHandled.current = launchKey;
+			const folder = folders.find((entry) => entry.id === requested) ?? folders.find((entry) => entry.isDefault);
+			setCreationFolderId(folder?.id);
+			if (trialSheetLocked) setAccessUnlock(organizationLocked ? 'organization' : 'sheets');
+			else setDialog('new');
+			router.replace('/app', { scroll: false });
+		}, 0);
+		return () => window.clearTimeout(timer);
+	}, [billingChecked, folders, foldersLoading, organizationLocked, router, searchParams, trialSheetLocked]);
 
 	/** One empty row to type into, created with the sheet. */
 	async function createBlank() {
-		if (organizationLocked) { openAccess(); return; }
+		if (trialSheetLocked) { openAccess('sheets'); return; }
 		try {
 			const columns = [newColumn({ name: 'Name', type: 'source' }), newColumn({ name: 'Website', type: 'source', format: 'url' })];
 			const sheetId = id();
@@ -120,7 +131,7 @@ export function SheetsPage() {
 
 	/** A free onboarding sheet. Every company and URL is explicitly fictional and uses the reserved .example domain. */
 	async function createSample() {
-		if (organizationLocked) { openAccess(); return; }
+		if (trialSheetLocked) { openAccess('sheets'); return; }
 		try {
 			const values = [
 				['Aster Loop (fictional)', 'https://aster-loop.example', '20–50', 'Recently raised a seed round'],
@@ -148,7 +159,7 @@ export function SheetsPage() {
 
 	/** The sheet exists only once the user asks for rows. Discovery keeps streaming into it after navigation. */
 	async function findRows(request: PopulateRequest) {
-		if (organizationLocked) { openAccess(); return; }
+		if (trialSheetLocked) { openAccess('sheets'); return; }
 		const tableType = tableTypes.find((item) => item.id === request.tableTypeId) ?? defaultTableTypeForEntity(request.entity);
 		const taken = new Set(sheets?.map((sheet) => sheet.name.toLowerCase()));
 		const base = sheetNameFromPrompt(request.query) || ({ companies: 'Companies', people: 'People', websites: 'Websites', records: tableType.name }[request.entity]);
@@ -163,7 +174,7 @@ export function SheetsPage() {
 		router.push(`/app/sheets/${sheet.id}?find=1&entity=${request.entity}`);
 	}
 
-	const starts = { onFind: findRows, providerReady, onNeedKeys: () => openKeys('monid'), onImport: () => { if (organizationLocked) openAccess(); else setDialog('import'); }, onBlank: () => { setDialog(null); void createBlank(); }, onSample: () => { setDialog(null); void createSample(); } };
+	const starts = { onFind: findRows, providerReady, onNeedKeys: () => openKeys('monid'), onUnlock: () => openAccess('rows'), onImport: () => { if (trialSheetLocked) openAccess('sheets'); else setDialog('import'); }, onBlank: () => { setDialog(null); void createBlank(); }, onSample: () => { setDialog(null); void createSample(); } };
 
 	return (
 		<PageColumn>
@@ -177,7 +188,7 @@ export function SheetsPage() {
 			</header>
 			{organizationLocked && <section className="flex flex-col gap-2 rounded-xl border border-line bg-surface p-5 sm:flex-row sm:items-center sm:justify-between" aria-label="Organization access required">
 				<div><h2 className="text-body font-medium text-fg">This organization needs its own unlock</h2><p className="text-body-sm text-fg-muted">The free trial applies only to your first organization. One $37 purchase unlocks this workspace for all its members.</p></div>
-				<Button size="sm" variant="brand" onClick={openAccess}><Sparkles className="size-4" />Unlock · $37 once</Button>
+				<Button size="sm" variant="brand" onClick={() => openAccess()}><Sparkles className="size-4" />Unlock · $37 once</Button>
 			</section>}
 			{trial && <p className="text-caption text-fg-subtle">Trial: one sheet and up to five populated rows. A one-time $37 purchase unlocks more sheets and larger searches; Monid usage is billed separately.</p>}
 			{count > 0 && <FirstRunChecklist
@@ -244,6 +255,7 @@ export function SheetsPage() {
 					<NewSheet {...starts} autoFocus onClose={() => setDialog(null)} />
 				</Dialog>
 			)}
+			{accessUnlock && <AccessRequiredDialog unlock={accessUnlock} onClose={() => setAccessUnlock(null)} />}
 			{dialog === 'import' && <ImportCsvDialog folderId={creationFolderId} onClose={() => setDialog(null)} onImported={(sheetId) => router.push(`/app/sheets/${sheetId}`)} />}
 			{renaming && <NameDialog title="Rename sheet" initial={renaming.name} confirmLabel="Rename" onClose={() => setRenaming(null)} onSubmit={(name) => updateSheet(renaming.id, { name })} />}
 			{deleting && (
@@ -324,7 +336,7 @@ async function requiredKeyIssue(): Promise<{ error: string; issue: ConnectionIss
 }
 
 /** Find rows into a new sheet, or start from a CSV or a blank sheet. */
-function NewSheet({ onFind, providerReady, onNeedKeys, onImport, onBlank, onSample, onClose, autoFocus }: { onFind: (request: PopulateRequest) => Promise<void>; providerReady: (provider: 'monid') => boolean; onNeedKeys: () => void; onImport: () => void; onBlank: () => void; onSample: () => void; onClose?: () => void; autoFocus?: boolean }) {
+function NewSheet({ onFind, providerReady, onNeedKeys, onUnlock, onImport, onBlank, onSample, onClose, autoFocus }: { onFind: (request: PopulateRequest) => Promise<void>; providerReady: (provider: 'monid') => boolean; onNeedKeys: () => void; onUnlock: () => void; onImport: () => void; onBlank: () => void; onSample: () => void; onClose?: () => void; autoFocus?: boolean }) {
 	const [draft, setDraft] = useState<FindRowsDraft>({ entity: 'companies', tableTypeId: 'companies', query: '', countries: [], target: 5 });
 	const [state, setState] = useState<{ status: 'idle' | 'creating' } | { status: 'failed'; error: string; issue?: ConnectionIssue }>({ status: 'idle' });
 	// One sheet per submit, even if Cmd+Enter and a click land before the busy state renders.
@@ -341,7 +353,7 @@ function NewSheet({ onFind, providerReady, onNeedKeys, onImport, onBlank, onSamp
 		} catch (error) { setState({ status: 'failed', error: message(error, 'Could not create the sheet. Try again.') }); inFlight.current = false; }
 	}
 	return (
-		<FindRowsComposer draft={draft} onDraftChange={(next) => { setDraft(next); if (state.status === 'failed') setState({ status: 'idle' }); }} onSubmit={(request) => void submit(request)} busy={state.status === 'creating'} error={state.status === 'failed' ? state.error : null} errorAction={state.status === 'failed' && state.issue && <FailureFix issue={state.issue} />} onClose={onClose} autoFocus={autoFocus}>
+		<FindRowsComposer draft={draft} onDraftChange={(next) => { setDraft(next); if (state.status === 'failed') setState({ status: 'idle' }); }} onSubmit={(request) => void submit(request)} busy={state.status === 'creating'} error={state.status === 'failed' ? state.error : null} errorAction={state.status === 'failed' && state.issue && <FailureFix issue={state.issue} />} onUnlock={onUnlock} onClose={onClose} autoFocus={autoFocus}>
 			<p className="populate-shelf">
 				<span>or</span>
 				<button type="button" onClick={onSample}>Open fictional sample</button>

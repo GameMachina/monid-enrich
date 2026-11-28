@@ -75,4 +75,4 @@ export function proxy(request: NextRequest, event?: NextFetchEvent) {
 	return standaloneProxy(request);
 }
 
-export const config = { matcher: ['/login', '/app/:path*', '/api/:path*', '/sign-in/:path*', '/sign-up/:path*', '/__clerk/:path*'] };
+export const config = { matcher: ['/login', '/app/:path*', '/api/:path*', '/sign-in/:path*', '/sign-up/:path*', '/access-required/:path*', '/workspace-closed/:path*', '/__clerk/:path*'] };

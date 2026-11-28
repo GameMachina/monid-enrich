@@ -1,6 +1,6 @@
 'use client';
 
-import { OrganizationSwitcher, UserButton } from '@clerk/nextjs';
+import { OrganizationSwitcher, SignOutButton, UserButton } from '@clerk/nextjs';
 import { CreditsRemaining } from './credits-remaining';
 import { Logo } from '@/components/ui/logo';
 import clsx from 'clsx';
@@ -200,6 +200,17 @@ export function Sidebar({ account, managedAuth = false, platformAdmin = false }:
 					<Users className={iconClass(pathname.startsWith('/app/team'))} strokeWidth={1.75} />
 					<span className="min-w-0 flex-1 truncate">Team</span>
 				</Link>}
+				{managedAuth
+					? <SignOutButton redirectUrl="/sign-in"><button type="button" className={linkClass(false, 'h-11 md:h-8 pr-2 pl-3 w-full')}>
+						<LogOut className={iconClass(false)} strokeWidth={1.75} />
+						<span className="min-w-0 flex-1 truncate text-left">Sign out</span>
+					</button></SignOutButton>
+					: account.issuer !== SELF_HOSTED_ISSUER && <form action="/api/auth/logout" method="post" className="w-full">
+						<button type="submit" className={linkClass(false, 'h-11 md:h-8 pr-2 pl-3 w-full')}>
+							<LogOut className={iconClass(false)} strokeWidth={1.75} />
+							<span className="min-w-0 flex-1 truncate text-left">Sign out</span>
+						</button>
+					</form>}
 				<div className="mt-3 flex flex-col">
 					<CreditsRemaining />
 				</div>
@@ -214,7 +225,6 @@ export function Sidebar({ account, managedAuth = false, platformAdmin = false }:
 							<p className="truncate font-medium" title={account.user.email}>{account.user.name || account.user.email || 'Account'}</p>
 							<p className="mt-0.5 truncate text-fg-subtle" title={account.organization.name}>{account.organization.name}</p>
 						</div>
-						<form action="/api/auth/logout" method="post" className="shrink-0"><button type="submit" aria-label="Sign out" title="Sign out" className="grid size-11 place-items-center rounded-md text-fg-subtle md:size-7 transition-colors hover:bg-tint/[0.05] hover:text-fg"><LogOut className="size-3.5" strokeWidth={1.75} /></button></form>
 					</div>}
 			</div>
 		</>

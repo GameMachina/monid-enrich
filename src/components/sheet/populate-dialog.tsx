@@ -58,7 +58,7 @@ function sheetChanges(sheet: Sheet, entity: EntityKind, rowCount: number, tableT
  * The Find rows prompt: what to find, a description, and countries. The row count comes from the prompt
  * ("Find 50 …"), 5 by default and up to the active trial/provider limit. Shared by the Sheets page and the sheet's Find rows dialog.
  */
-export function FindRowsComposer({ draft, onDraftChange, onSubmit, busy = false, error, errorAction, notice, fallbackEntity = 'companies', onClose, autoFocus, children }: { draft: FindRowsDraft; onDraftChange: (draft: FindRowsDraft) => void; onSubmit: (request: PopulateRequest) => void; busy?: boolean; error?: string | null; errorAction?: ReactNode; notice?: string | null; fallbackEntity?: EntityKind; onClose?: () => void; autoFocus?: boolean; children?: ReactNode }) {
+export function FindRowsComposer({ draft, onDraftChange, onSubmit, busy = false, error, errorAction, notice, fallbackEntity = 'companies', onClose, onUnlock, autoFocus, children }: { draft: FindRowsDraft; onDraftChange: (draft: FindRowsDraft) => void; onSubmit: (request: PopulateRequest) => void; busy?: boolean; error?: string | null; errorAction?: ReactNode; notice?: string | null; fallbackEntity?: EntityKind; onClose?: () => void; onUnlock?: () => void; autoFocus?: boolean; children?: ReactNode }) {
 	const countryId = useId();
 	const messageId = useId();
 	const { entity, query, countries } = draft;
@@ -108,7 +108,7 @@ export function FindRowsComposer({ draft, onDraftChange, onSubmit, busy = false,
 	const rowsRemaining = trial ? Math.max(0, (billing?.trial?.rowLimit ?? 5) - (billing?.trial?.rowsUsed ?? 0)) : MAX_POPULATE_LIMIT;
 	const limitError = populateLimitError(target) ?? (target > tableTypeRowCap ? `${definition.name} supports up to ${tableTypeRowCap.toLocaleString()} rows per search with its current Monid source.` : null);
 	const trialMessage = trial && target > rowLimit ? `The free trial includes up to ${rowLimit} rows. Unlock larger searches for $37 once.` : trial && rowsRemaining === 0 ? 'The five-row trial is complete. Unlock more rows and sheets for $37 once.' : null;
-	const message = limitError ?? trialMessage ?? inputError ?? error;
+	const message = limitError ?? inputError ?? error;
 	const ready = query.trim().length >= 3 && !limitError && !trialMessage && !inputError && !busy;
 	const submit = (event?: FormEvent) => {
 		event?.preventDefault();
@@ -142,7 +142,7 @@ export function FindRowsComposer({ draft, onDraftChange, onSubmit, busy = false,
 						</div>}
 					</div>
 					<div className="populate-entry">
-						<AutoTextarea aria-label={queryInput?.label ?? 'Describe the rows you want'} title={queryInput?.description || definition.description} aria-invalid={!!limitError || !!trialMessage || !!inputError} aria-describedby={message || notice ? messageId : undefined} rows={2} maxRows={10} autoFocus={autoFocus} value={query} onChange={(event) => { const next = event.target.value; const inferredType = draft.manualType ? null : inferTableTypeFromPrompt(next, tableTypes); const nextEntity = draft.manualType ? entity : inferredType?.entity as EntityKind | undefined ?? promptEntity(next) ?? fallbackEntity; const selected = inferredType ?? availableTypes.find((item) => item.entity === nextEntity); const nextTypeId = draft.manualType ? draft.tableTypeId : selected?.id ?? draft.tableTypeId; onDraftChange({ ...draft, query: next, target: draft.targetPicked ? target : promptResultCount(next) ?? 5, entity: nextEntity, tableTypeId: nextTypeId, inputs: nextTypeId === draft.tableTypeId ? draft.inputs : {} }); }} onKeyDown={(event) => {
+						<AutoTextarea aria-label={queryInput?.label ?? 'Describe the rows you want'} title={queryInput?.description || definition.description} aria-invalid={!!limitError || !!inputError} aria-describedby={message || notice ? messageId : undefined} rows={2} maxRows={10} autoFocus={autoFocus} value={query} onChange={(event) => { const next = event.target.value; const inferredType = draft.manualType ? null : inferTableTypeFromPrompt(next, tableTypes); const nextEntity = draft.manualType ? entity : inferredType?.entity as EntityKind | undefined ?? promptEntity(next) ?? fallbackEntity; const selected = inferredType ?? availableTypes.find((item) => item.entity === nextEntity); const nextTypeId = draft.manualType ? draft.tableTypeId : selected?.id ?? draft.tableTypeId; onDraftChange({ ...draft, query: next, target: draft.targetPicked ? target : promptResultCount(next) ?? 5, entity: nextEntity, tableTypeId: nextTypeId, inputs: nextTypeId === draft.tableTypeId ? draft.inputs : {} }); }} onKeyDown={(event) => {
 							if (event.key !== 'Enter' || !(event.metaKey || event.ctrlKey)) return;
 							event.preventDefault();
 							if (!isImeComposing(event)) submit();
@@ -173,7 +173,7 @@ export function FindRowsComposer({ draft, onDraftChange, onSubmit, busy = false,
 					</div>
 				</fieldset>
 			</div>
-			{trialMessage && <div className="mt-2 flex flex-wrap items-center gap-3 text-caption text-warning" role="status"><span>{trialMessage}</span>{billing?.canManage !== false && <button type="button" onClick={() => router.push('/access-required?unlock=rows')} className="font-medium text-brand underline underline-offset-2">Unlock with $37 once</button>}</div>}
+			{trialMessage && <div className="mt-2 flex flex-wrap items-center gap-3 text-caption text-warning" role="status"><span>{trialMessage}</span>{billing?.canManage !== false && <button type="button" onClick={onUnlock ?? (() => router.push('/access-required?unlock=rows'))} className="font-medium text-brand underline underline-offset-2">Unlock with $37 once</button>}</div>}
 			{trial && rowsRemaining > 0 && target <= rowLimit && <p className="populate-provider-note">Trial: one sheet · {rowsRemaining} of {rowLimit} rows available. Upgrade to search more and add sheets.</p>}
 			{connections.monid.state === 'missing' || connections.monid.state === 'expired'
 				? <p role="status" className="populate-provider-note">Connect Monid in Configuration before searching.</p>
