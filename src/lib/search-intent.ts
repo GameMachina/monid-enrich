@@ -132,14 +132,18 @@ function numberValue(value: string | undefined) {
 export function inferPromptConstraints(query: string) {
 	const employee: { min?: number; max?: number } = {};
 	const experience: { min?: number; max?: number } = {};
-	const employeeUnit = '(?:employees?|people|staff|team members?|headcount|person companies)';
-	const employeeRange = query.match(new RegExp(`\\b(?:between\\s+)?(\\d[\\d,]*)\\s*(?:-|–|to|and)\\s*(\\d[\\d,]*)\\s+${employeeUnit}\\b`, 'i'));
+	const employeeUnit = '(?:employees?|staff|team members?|headcount)';
+	const employeeRange = query.match(new RegExp(`\\b(?:between\\s+)?(\\d[\\d,]*)\\s*(?:-|–|to|and)\\s*(\\d[\\d,]*)\\s+${employeeUnit}\\b`, 'i'))
+		?? query.match(/\bcompanies?\b[\s\S]{0,50}?\b(?:with|of|are|between)?\s*(\d[\d,]*)\s*(?:-|–|to|and)\s*(\d[\d,]*)\s+people\b/i)
+		?? query.match(/\b(\d[\d,]*)\s*(?:-|–|to|and)\s*(\d[\d,]*)\s+person companies\b/i);
 	if (employeeRange) {
 		employee.min = numberValue(employeeRange[1]);
 		employee.max = numberValue(employeeRange[2]);
 	} else {
-		const max = query.match(new RegExp(`\\b(?:under|below|fewer than|less than|up to)\\s+(\\d[\\d,]*)\\s+${employeeUnit}\\b`, 'i'));
-		const min = query.match(new RegExp(`\\b(?:over|above|more than|at least|minimum of)\\s+(\\d[\\d,]*)\\s+${employeeUnit}\\b`, 'i'));
+		const max = query.match(new RegExp(`\\b(?:under|below|fewer than|less than|up to)\\s+(\\d[\\d,]*)\\s+${employeeUnit}\\b`, 'i'))
+			?? query.match(/\bcompanies?\b[\s\S]{0,50}?\b(?:under|below|fewer than|less than|up to)\s+(\d[\d,]*)\s+people\b/i);
+		const min = query.match(new RegExp(`\\b(?:over|above|more than|at least|minimum of)\\s+(\\d[\\d,]*)\\s+${employeeUnit}\\b`, 'i'))
+			?? query.match(/\bcompanies?\b[\s\S]{0,50}?\b(?:over|above|more than|at least|minimum of)\s+(\d[\d,]*)\s+people\b/i);
 		if (max) employee.max = numberValue(max[1]);
 		if (min) employee.min = numberValue(min[1]);
 	}
