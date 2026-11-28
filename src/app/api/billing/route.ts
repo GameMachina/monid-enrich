@@ -2,7 +2,10 @@ import { apiRoute, requireWorkspaceAdmin } from '@/lib/server/api-route';
 import { billingSnapshot, createCheckout } from '@/lib/server/stripe-billing';
 import { WorkspaceError } from '@/lib/workspace';
 
-export const GET = apiRoute('billing.get', ({ account, database }) => billingSnapshot(account, database));
+export const GET = apiRoute('billing.get', async ({ account, database }) => ({
+	...await billingSnapshot(account, database),
+	canManage: account.role === 'owner' || account.role === 'admin',
+}));
 
 export const POST = apiRoute('billing.checkout', async ({ account, database, request }) => {
 	requireWorkspaceAdmin(account);

@@ -4,18 +4,20 @@ import type { EnrichFailure, EntityKind, PopulateRequest, Sheet } from '@/lib/ty
 import { columnsEntity } from '@/lib/column-roles';
 import { deleteSheet } from '@/lib/db';
 import { foundRowColumns } from '@/lib/found-rows';
-import { DEFAULT_POPULATE_LIMIT, MAX_POPULATE_LIMIT, populateLimitError, promptEntity, promptResultCount } from '@/lib/populate-limit';
+import { MAX_POPULATE_LIMIT, populateLimitError, promptEntity, promptResultCount } from '@/lib/populate-limit';
 import { populateRunner, type PopulateState } from '@/lib/populate-runner';
 import { Dialog } from '@/components/ui/dialog';
 import { Segmented } from '@/components/ui/field';
 import { AutoTextarea } from '@/components/ui/auto-textarea';
 import { CountryPicker } from '@/components/ui/country-picker';
+import { Select } from '@/components/ui/select';
 import { useToast } from '@/components/ui/toast';
 import { isImeComposing } from '@/components/ui/keyboard';
 import { trackEvent } from '@/lib/analytics';
 import { useSettings } from '@/components/app/settings-context';
 import { ArrowRight, Info, TriangleAlert, X } from 'lucide-react';
 import { useRouter } from 'next/navigation';
+import { accountHeaders } from '@/lib/account-storage';
 import { FailureFix } from './halted-banner';
 import './populate-dialog.css';
 import { type FormEvent, type ReactNode, type RefObject, useEffect, useEffectEvent, useId, useState } from 'react';
@@ -36,7 +38,9 @@ function sheetEntity(sheet: Sheet): EntityKind {
 }
 
 /** Until `picked` (a click in the picker), the prompt chooses what to find: "heads of growth at …" finds people. */
-export interface FindRowsDraft { entity: EntityKind; query: string; countries: string[]; picked?: boolean }
+export interface FindRowsDraft { entity: EntityKind; query: string; countries: string[]; target?: number; targetPicked?: boolean; picked?: boolean }
+
+type BillingAccess = { required: boolean; fullAccess: boolean; canManage: boolean; trial: null | { rowsUsed: number; rowLimit: number; sheetsUsed: number; sheetLimit: number } };
 
 /** "Adds Website, Description columns · skips rows already in the sheet": what Find rows changes in a sheet that has rows or columns. */
 function sheetChanges(sheet: Sheet, entity: EntityKind, rowCount: number) {
@@ -55,10 +59,24 @@ export function FindRowsComposer({ draft, onDraftChange, onSubmit, busy = false,
 	const messageId = useId();
 	const { entity, query, countries } = draft;
 	const { connections } = useSettings();
-	const target = promptResultCount(query) ?? DEFAULT_POPULATE_LIMIT;
+	const router = useRouter();
+	const [billing, setBilling] = useState<BillingAccess | null>(null);
+	useEffect(() => {
+		const controller = new AbortController();
+		void fetch('/api/billing', { headers: accountHeaders(), cache: 'no-store', signal: controller.signal })
+			.then(async (response) => response.ok ? await response.json() as BillingAccess : null)
+			.then((data) => { if (!controller.signal.aborted && data) setBilling(data); })
+			.catch(() => {});
+		return () => controller.abort();
+	}, []);
+	const target = draft.target ?? promptResultCount(query) ?? 5;
+	const trial = billing ? billing.required && !billing.fullAccess : true;
+	const rowLimit = trial ? billing?.trial?.rowLimit ?? 5 : MAX_POPULATE_LIMIT;
+	const rowsRemaining = trial ? Math.max(0, (billing?.trial?.rowLimit ?? 5) - (billing?.trial?.rowsUsed ?? 0)) : MAX_POPULATE_LIMIT;
 	const limitError = populateLimitError(target);
-	const message = limitError ?? error;
-	const ready = query.trim().length >= 3 && !limitError && !busy;
+	const trialMessage = trial && target > rowLimit ? `The free trial includes up to ${rowLimit} rows. Unlock larger searches for $37 once.` : trial && rowsRemaining === 0 ? 'The five-row trial is complete. Unlock more rows and sheets for $37 once.' : null;
+	const message = limitError ?? trialMessage ?? error;
+	const ready = query.trim().length >= 3 && !limitError && !trialMessage && !busy;
 	const submit = (event?: FormEvent) => {
 		event?.preventDefault();
 		if (ready) onSubmit({ query: query.trim(), entity, target, countries, dataProvider: 'monid', idempotencyKey: crypto.randomUUID() });
@@ -76,14 +94,18 @@ export function FindRowsComposer({ draft, onDraftChange, onSubmit, busy = false,
 						] as const).map((option) => ({ ...option, label: <><EntityGlyph entity={option.value} active={entity === option.value} />{option.label}</> }))} />
 					</div>
 					<div className="populate-entry">
-						<AutoTextarea aria-label="Describe the rows you want" aria-invalid={!!limitError} aria-describedby={message || notice ? messageId : undefined} rows={2} maxRows={10} autoFocus={autoFocus} value={query} onChange={(event) => { const next = event.target.value; onDraftChange({ ...draft, query: next, entity: draft.picked ? entity : promptEntity(next) ?? fallbackEntity }); }} onKeyDown={(event) => {
+						<AutoTextarea aria-label="Describe the rows you want" aria-invalid={!!limitError || !!trialMessage} aria-describedby={message || notice ? messageId : undefined} rows={2} maxRows={10} autoFocus={autoFocus} value={query} onChange={(event) => { const next = event.target.value; onDraftChange({ ...draft, query: next, target: draft.targetPicked ? target : promptResultCount(next) ?? 5, entity: draft.picked ? entity : promptEntity(next) ?? fallbackEntity }); }} onKeyDown={(event) => {
 							if (event.key !== 'Enter' || !(event.metaKey || event.ctrlKey)) return;
 							event.preventDefault();
 							if (!isImeComposing(event)) submit();
 						}} placeholder={`Describe the ${NOUNS[entity][1]} you want, e.g. ${EXAMPLES[entity]}`} className="populate-prompt" />
 					</div>
 					<div className="populate-bottom">
-						<span className="populate-summary">{limitError ? '—' : entityCount(entity, target)}<span className="populate-cap"> · up to {MAX_POPULATE_LIMIT}</span></span>
+						<span className="populate-summary">{limitError ? '—' : entityCount(entity, target)}<span className="populate-cap"> · up to {trial ? rowLimit : MAX_POPULATE_LIMIT.toLocaleString()}</span></span>
+						<label className="sr-only" htmlFor="find-rows-target">Rows to find</label>
+						<Select id="find-rows-target" variant="pill" aria-label="Rows to find" value={String(target)} onValueChange={(value) => onDraftChange({ ...draft, target: Number(value), targetPicked: true })}>
+							{[5, 10, 20, 50, 100, 250, 500, 1000].map((count) => <option key={count} value={count}>{count.toLocaleString()} rows</option>)}
+						</Select>
 						<span className="populate-actions">
 							<span className="rounded-full bg-surface-secondary px-3 py-2 text-caption text-fg-muted">Monid · workspace wallet</span>
 							<span className="populate-country">
@@ -95,6 +117,8 @@ export function FindRowsComposer({ draft, onDraftChange, onSubmit, busy = false,
 					</div>
 				</fieldset>
 			</div>
+			{trialMessage && <div className="mt-2 flex flex-wrap items-center gap-3 text-caption text-warning" role="status"><span>{trialMessage}</span>{billing?.canManage !== false && <button type="button" onClick={() => router.push('/access-required?unlock=rows')} className="font-medium text-brand underline underline-offset-2">Unlock with $37 once</button>}</div>}
+			{trial && rowsRemaining > 0 && target <= rowLimit && <p className="populate-provider-note">Trial: one sheet · {rowsRemaining} of {rowLimit} rows available. Upgrade to search more and add sheets.</p>}
 			{connections.monid.state === 'missing' || connections.monid.state === 'expired'
 				? <p role="status" className="populate-provider-note">Connect Monid in Configuration before searching.</p>
 				: <p className="populate-provider-note">Searches are billed to your workspace Monid wallet.</p>}
@@ -110,7 +134,7 @@ export function PopulateDialog({ sheet, rowCount, initialEntity, onClose, onGene
 	const { toast } = useToast();
 	const router = useRouter();
 	// A sheet with rows keeps its kind; an empty one follows the prompt until the user picks.
-	const [draft, setDraft] = useState<FindRowsDraft>(() => ({ entity: initialEntity ?? sheetEntity(sheet), query: sheet.populate?.query ?? '', countries: sheet.populate?.countries ?? [], picked: Boolean(initialEntity) || rowCount > 0 }));
+	const [draft, setDraft] = useState<FindRowsDraft>(() => ({ entity: initialEntity ?? sheetEntity(sheet), query: sheet.populate?.query ?? '', countries: sheet.populate?.countries ?? [], target: sheet.populate?.target ?? promptResultCount(sheet.populate?.query ?? '') ?? 5, picked: Boolean(initialEntity) || rowCount > 0 }));
 	// A search handed off from the Sheets page is already streaming: stay collapsed until it settles.
 	const [view, setView] = useState<View>(() => { const run = populateRunner.getSnapshot(sheet.id); return run.handoff && run.running ? 'hidden' : 'form'; });
 	// The Sheets page created this sheet for its search; if nothing came of it, closing removes the empty sheet.

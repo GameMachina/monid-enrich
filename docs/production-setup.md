@@ -26,6 +26,7 @@ Use separate Clerk, Neon, Stripe, and Vercel environments for staging and produc
 | Neon/Postgres | Pooled `DATABASE_URL` for runtime; migration access available during build | Keep production, staging, and preview on separate branches/databases. Apply and review migrations on staging first. |
 | Clerk | Publishable and secret keys; enable Organizations and configure sign-in/up | The Team screen uses Clerk's organization management UI. Verify invite, role, removal, recovery, and session behavior with test users. |
 | Stripe | Webhook signing secret, active $37 USD one-time Price ID, Payment Link ID and URL, public app URL | New purchases use a signed webhook and verified-email claim; they do not require a Stripe API secret key. Start in test mode. Do not enable recurring billing or automatic tax unless separately required. `STRIPE_SECRET_KEY` is optional and only supports legacy subscription management. Monid usage remains separate. |
+| Trial access | `ENRICHABLE_BILLING_EXEMPT_EMAILS` | Set verified email allowlist entries for the owner and invited beta testers. Other workspaces get one sheet and five populated trial rows; the $37 one-time purchase unlocks more sheets and searches up to 1,000 rows. |
 | Vercel Cron | `CRON_SECRET` | Use a high-entropy secret of at least 32 characters. Vercel sends it as a bearer token to the worker route. |
 
 Set these project variables in each relevant Vercel environment. `.env.example` is the local template; never commit actual values.
@@ -40,6 +41,7 @@ ENRICHABLE_MCP_ENCRYPTION_SECRET=<stable random secret, 32+ characters>
 # ENRICHABLE_MCP_ENCRYPTION_PREVIOUS_SECRET=<old root, only during rotation>
 ENRICHABLE_APP_URL=https://your-production-host
 ENRICHABLE_BILLING_REQUIRED=true
+ENRICHABLE_BILLING_EXEMPT_EMAILS=jalendnelson@gmail.com
 STRIPE_WEBHOOK_SECRET=whsec_…
 STRIPE_ONE_TIME_PRICE_ID=price_…
 STRIPE_PAYMENT_LINK_ID=plink_…
@@ -70,7 +72,7 @@ Do not put a platform Monid key into the deployment environment for customer use
 4. Verify one-time checkout, payment-link email claim, successful and failed asynchronous payments, refunds, disputes, webhook retries, and workspace access after each state change. Confirm Stripe shows a non-recurring $37 USD Price.
 5. Repeat with production Stripe objects only after staging passes. Never reuse test keys or test database records in production.
 
-The hosted product currently has one $37 USD one-time lifetime-access purchase. The app does not configure automatic tax, subscriptions for new customers, usage tiers, or multiple plans. Existing legacy subscriptions remain visible and manageable until they are canceled in Stripe.
+The hosted product currently has one $37 USD one-time lifetime-access purchase. Before redirecting a Payment Link back to the app, set its success URL to `https://your-host/access-required?billing=success&session_id={CHECKOUT_SESSION_ID}`; the app verifies the signed webhook and claims the payment against the signed-in admin's verified email. A verified-email allowlist can grant full access to the owner and beta testers. Everyone else can use one sheet and up to five trial rows; full access unlocks additional sheets and searches up to 1,000 rows. Monid provider usage stays separately billed. The app does not configure automatic tax, subscriptions for new customers, usage tiers, or multiple plans. Existing legacy subscriptions remain visible and manageable until they are canceled in Stripe.
 
 ## Database, migrations, and previews
 

@@ -336,7 +336,7 @@ export async function routeAccess(request: Request, { allowExplicitKeyOverrides 
 }
 
 /** Parses the JSON body against `schema`, then resolves provider access. Every failure is a ready response. */
-export async function routeInput<S extends z.ZodType>(request: Request, schema: S): Promise<{ input: z.output<S>; access: ProviderAccess } | Response> {
+export async function routeInput<S extends z.ZodType>(request: Request, schema: S, options: { requirePurchase?: boolean } = {}): Promise<{ input: z.output<S>; access: ProviderAccess } | Response> {
 	let body: unknown;
 	try {
 		body = await request.json();
@@ -347,8 +347,10 @@ export async function routeInput<S extends z.ZodType>(request: Request, schema: 
 	if (!parsed.success) return jsonError(`Invalid request: ${parsed.error.issues[0]?.message ?? 'bad input'}`, 400, failure('input_invalid'));
 	const access = await routeAccess(request);
 	if (access instanceof Response) return access;
-	const billingBlock = await purchaseGate(access.account);
-	if (billingBlock) return billingBlock;
+	if (options.requirePurchase !== false) {
+		const billingBlock = await purchaseGate(access.account);
+		if (billingBlock) return billingBlock;
+	}
 	if (access.account && !await reservePaidRequest(access.account)) {
 		return new Response(JSON.stringify({ error: 'This workspace reached its enrichment request limit. Wait a minute and try again.' }), { status: 429, headers: { ...NO_STORE_HEADERS, 'retry-after': '60' } });
 	}

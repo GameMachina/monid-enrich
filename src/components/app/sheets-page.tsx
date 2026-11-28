@@ -11,7 +11,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { ArrowUpRight, Check, Copy, MoreHorizontal, Pencil, Plus, Sparkles, Trash2, X } from 'lucide-react';
 import Dexie from 'dexie';
 import { useRouter } from 'next/navigation';
-import { type ReactNode, useRef, useState, useSyncExternalStore } from 'react';
+import { type ReactNode, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { PageColumn } from './page-header';
 import { useSettings } from './settings-context';
 import { ImportCsvDialog } from '@/components/sheet/import-csv-dialog';
@@ -20,7 +20,7 @@ import { FailureFix, type ConnectionIssue } from '@/components/sheet/halted-bann
 import { populateRunner } from '@/lib/populate-runner';
 import { sheetNameFromPrompt } from '@/lib/populate-limit';
 import { trackEvent } from '@/lib/analytics';
-import { accountStorageKey } from '@/lib/account-storage';
+import { accountHeaders, accountStorageKey } from '@/lib/account-storage';
 
 // The sheet page still imports NameDialog from here.
 export { NameDialog };
@@ -70,7 +70,18 @@ export function SheetsPage() {
 	const [dialog, setDialog] = useState<null | 'new' | 'import'>(null);
 	const [renaming, setRenaming] = useState<Sheet | null>(null);
 	const [deleting, setDeleting] = useState<Sheet | null>(null);
+	const [billing, setBilling] = useState<{ required: boolean; fullAccess: boolean; trial: null | { sheetsUsed: number; sheetLimit: number; rowsUsed: number; rowLimit: number } } | null>(null);
 	const count = sheets?.length ?? 0;
+	useEffect(() => {
+		const controller = new AbortController();
+		void fetch('/api/billing', { headers: accountHeaders(), cache: 'no-store', signal: controller.signal })
+			.then(async (response) => response.ok ? await response.json() as NonNullable<typeof billing> : null)
+			.then((data) => { if (!controller.signal.aborted && data) setBilling(data); })
+			.catch(() => {});
+		return () => controller.abort();
+	}, []);
+	const trial = billing?.required && !billing.fullAccess ? billing.trial : null;
+	const trialSheetLocked = Boolean(trial && trial.sheetsUsed >= trial.sheetLimit);
 
 	/** One empty row to type into, created with the sheet. */
 	async function createBlank() {
@@ -133,13 +144,14 @@ export function SheetsPage() {
 					<div className="flex min-w-0 items-baseline gap-3">
 						<h1 className="text-h4 text-fg">Sheets</h1>
 					</div>
-					{!!count && <Button variant="brand" size="sm" onClick={() => setDialog('new')} className="max-sm:min-h-11"><Plus strokeWidth={1.75} /> New sheet</Button>}
+					{!!count && <Button variant="brand" size="sm" onClick={() => trialSheetLocked ? router.push('/access-required?unlock=sheets') : setDialog('new')} className="max-sm:min-h-11">{trialSheetLocked ? <Sparkles strokeWidth={1.75} /> : <Plus strokeWidth={1.75} />}{trialSheetLocked ? 'Unlock more sheets · $37 once' : 'New sheet'}</Button>}
 				</div>
 			</header>
+			{trial && <p className="text-caption text-fg-subtle">Trial: one sheet and up to five populated rows. A one-time $37 purchase unlocks more sheets and larger searches; Monid usage is billed separately.</p>}
 			{count > 0 && <FirstRunChecklist
 				hasSheet={count > 0}
 				hasProvider={providerReady('monid')}
-				openSheet={() => setDialog('new')}
+				openSheet={() => trialSheetLocked ? router.push('/access-required?unlock=sheets') : setDialog('new')}
 				openConnections={() => openKeys()}
 			/>}
 			{sheets === undefined ? (
@@ -241,7 +253,7 @@ function FirstRunChecklist({ hasSheet, hasProvider, openSheet, openConnections }
 		<div className="flex items-start justify-between gap-4">
 			<div className="min-w-0">
 				<h2 id="first-run-title" className="text-body font-medium text-fg">A safe first run</h2>
-				<p className="mt-1 text-body-sm text-fg-muted">Start small. Find rows returns up to 5 per search while testing; review the selected provider before running a paid operation.</p>
+				<p className="mt-1 text-body-sm text-fg-muted">Try a search for up to five rows on one sheet. Choose a larger row limit after unlocking full access; provider usage is billed separately.</p>
 			</div>
 			<button type="button" aria-label="Hide first-run checklist" onClick={() => {
 				setHidden(true);
@@ -281,7 +293,7 @@ async function requiredKeyIssue(): Promise<{ error: string; issue: ConnectionIss
 
 /** Find rows into a new sheet, or start from a CSV or a blank sheet. */
 function NewSheet({ onFind, providerReady, onNeedKeys, onImport, onBlank, onSample, onClose, autoFocus }: { onFind: (request: PopulateRequest) => Promise<void>; providerReady: (provider: 'monid') => boolean; onNeedKeys: () => void; onImport: () => void; onBlank: () => void; onSample: () => void; onClose?: () => void; autoFocus?: boolean }) {
-	const [draft, setDraft] = useState<FindRowsDraft>({ entity: 'companies', query: '', countries: [] });
+	const [draft, setDraft] = useState<FindRowsDraft>({ entity: 'companies', query: '', countries: [], target: 5 });
 	const [state, setState] = useState<{ status: 'idle' | 'creating' } | { status: 'failed'; error: string; issue?: ConnectionIssue }>({ status: 'idle' });
 	// One sheet per submit, even if Cmd+Enter and a click land before the busy state renders.
 	const inFlight = useRef(false);

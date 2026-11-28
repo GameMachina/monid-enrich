@@ -13,6 +13,7 @@ import { runPopulate } from './populate';
 import { withDatabase, workspaceId, type Database, type Sql } from './database';
 import { WorkspaceStore } from './workspace-store';
 import { acquireDurableWorkerSlot, releaseDurableWorkerSlot } from './durable-slots';
+import { billingSnapshot } from './stripe-billing';
 
 const ACTIVE = "status IN ('queued','running')";
 const TERMINAL = new Set(['succeeded', 'failed', 'uncertain', 'cancelled']);
@@ -29,6 +30,7 @@ function jobFingerprint(sheetId: string, request: PopulateRequest) {
 export async function enqueuePopulate(actor: Account, sheetId: string, input: PopulateRequest) {
 	if (!input.idempotencyKey) throw new WorkspaceError('A durable Find rows idempotency key is required.', 400);
 	const request = PopulateRequestSchema.parse(Object.fromEntries(REQUEST_FIELDS.map((field) => [field, input[field]])));
+	const billing = await withDatabase((database) => billingSnapshot(actor, database));
 	const fingerprint = jobFingerprint(sheetId, request), id = randomUUID();
 	return withDatabase(async (database) => {
 		const store = new WorkspaceStore(database);
@@ -45,7 +47,16 @@ export async function enqueuePopulate(actor: Account, sheetId: string, input: Po
 			) active_jobs`, [workspace, actor.user.id])).rows[0];
 			if (Number(counts?.member_count ?? 0) >= MAX_ACTIVE_PER_MEMBER) throw new WorkspaceError('You already have 100 enrichment runs queued or running. Wait for some to finish before adding more.', 429);
 			if (Number(counts?.workspace_count ?? 0) >= MAX_ACTIVE_PER_WORKSPACE) throw new WorkspaceError('This workspace already has 500 enrichment runs queued or running. Wait for some to finish before adding more.', 429);
-			const savedRequest = Object.fromEntries(REQUEST_FIELDS.map((field) => [field, request[field]]));
+			let effectiveRequest = request;
+			if (billing.trial) {
+				if (request.target > billing.trial.rowLimit) throw new WorkspaceError(`The free trial includes up to ${billing.trial.rowLimit} rows. Unlock larger searches with lifetime access for $37 once.`, 402);
+				const reserved = Number((await sql.query(`SELECT COALESCE(sum((request->>'target')::int),0)::int AS reserved_rows
+					FROM enrichable.populate_jobs WHERE workspace_id=$1 AND sheet_id=$2 AND ${ACTIVE} AND request IS NOT NULL`, [workspace, sheetId])).rows[0]?.reserved_rows ?? 0);
+				const remaining = Math.max(0, billing.trial.rowLimit - billing.trial.rowsUsed - reserved);
+				if (!remaining) throw new WorkspaceError(`The free trial is complete. Unlock more rows with lifetime access for $37 once.`, 402);
+				effectiveRequest = { ...request, target: Math.min(request.target, remaining) };
+			}
+			const savedRequest = Object.fromEntries(REQUEST_FIELDS.map((field) => [field, effectiveRequest[field]]));
 			const inserted = await sql.query(`INSERT INTO enrichable.populate_jobs (workspace_id,id,idempotency_key,input_fingerprint,actor_id,sheet_id,request,status)
 				VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,'queued') ON CONFLICT (workspace_id,idempotency_key) DO NOTHING RETURNING id,status`, [workspace, id, request.idempotencyKey, fingerprint, actor.user.id, sheetId, JSON.stringify(savedRequest)]);
 			const job = inserted.rows[0] ?? (await sql.query('SELECT id,status,input_fingerprint FROM enrichable.populate_jobs WHERE workspace_id=$1 AND idempotency_key=$2', [workspace, request.idempotencyKey])).rows[0];
@@ -114,7 +125,9 @@ async function processClaimed(database: Database, job: Job) {
 	const store = new WorkspaceStore(database), grid = await store.snapshot(actor, job.sheet_id);
 	const keyColumn = foundRowColumns(request.entity, grid.sheet.columns).key;
 	const count = grid.rows.length;
-	const availableRows = Math.max(0, MAX_ROWS - count);
+	const billing = await billingSnapshot(actor, database);
+	const trialCapacity = billing.trial ? Math.max(0, billing.trial.rowLimit - billing.trial.rowsUsed) : MAX_ROWS;
+	const availableRows = Math.min(MAX_ROWS - count, trialCapacity);
 	if (!availableRows) {
 		await updateJob(database, job, { status: 'failed', progress: 'Sheet row limit reached.', error: `This sheet already has ${MAX_ROWS.toLocaleString()} rows. Delete rows before finding more.`, clearRequest: true });
 		return;

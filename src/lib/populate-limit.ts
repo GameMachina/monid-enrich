@@ -1,17 +1,17 @@
 import type { EntityKind } from './types';
 
 export const DEFAULT_POPULATE_LIMIT = 5;
-/** Bounded per request to keep a single user action's provider spend predictable. */
-export const MAX_POPULATE_LIMIT = 5;
+/** Server-side ceiling; hosted trial and full-access limits are applied separately. */
+export const MAX_POPULATE_LIMIT = 1000;
 
 export function promptResultCount(query: string): number | undefined {
 	const match = query.match(/\b(?:find|show|get|give|return|list|search\s+for)(?:\s+me)?(?:\s+(?:the|top|first|exactly|up\s+to))*\s+(\d[\d,]*)(?![\d,.])\b/i);
 	return match ? Number(match[1].replaceAll(',', '')) : undefined;
 }
 
-export function populateLimitError(limit: number): string | null {
-	if (limit > MAX_POPULATE_LIMIT) return 'A single Find rows request can return up to 5 rows while testing.';
-	if (!Number.isInteger(limit) || limit < 1) return 'Choose a limit between 1 and 5 while testing.';
+export function populateLimitError(limit: number, maximum = MAX_POPULATE_LIMIT): string | null {
+	if (limit > maximum) return `A single Find rows request can return up to ${maximum.toLocaleString()} rows.`;
+	if (!Number.isInteger(limit) || limit < 1) return `Choose a limit between 1 and ${maximum.toLocaleString()}.`;
 	return null;
 }
 

@@ -10,8 +10,30 @@ import { admittedCell, fitGuessedFormat, invalidCell, redefinedColumns } from '.
 import { foundRecords, foundRowColumns, foundRowKey } from '../found-rows';
 import { inferredFormat } from '../column-roles';
 import { workspaceId, type Database, type Sql } from './database';
+import { billingRequired, billingSnapshot } from './stripe-billing';
 
 type Actor = Pick<Account, 'issuer' | 'user' | 'organization'>;
+
+const TRIAL_SHEET_LIMIT = 1;
+const TRIAL_ROW_LIMIT = 5;
+const hasRowData = (row: Row) => Object.values(row.cells).some((cell) => cell.v !== null && cell.v !== '' && !(Array.isArray(cell.v) && cell.v.length === 0));
+
+async function countTrialRows(sql: Sql, workspace: string, sheetId?: string) {
+	const scope = sheetId ? ' AND r.sheet_id=$2' : '';
+	const values = sheetId ? [workspace, sheetId] : [workspace];
+	const result = await sql.query(`SELECT count(*)::int AS row_count FROM enrichable.sheet_rows r
+		WHERE r.workspace_id=$1${scope} AND EXISTS (
+			SELECT 1 FROM jsonb_each(r.data->'cells') cell
+			WHERE cell.value->'v' IS NOT NULL AND cell.value->'v' <> 'null'::jsonb AND cell.value->>'v' <> ''
+		)`, values);
+	return Number(result.rows[0]?.row_count ?? 0);
+}
+
+async function trialLimits(actor: Actor, database: Database) {
+	if (!billingRequired()) return null;
+	const billing = await billingSnapshot(actor, database);
+	return billing.fullAccess ? null : { sheetLimit: TRIAL_SHEET_LIMIT, rowLimit: TRIAL_ROW_LIMIT };
+}
 
 export function collaboratorIdentity(account: Account) {
 	const userId = createHash('sha256').update(JSON.stringify([account.issuer, account.user.id])).digest('hex');
@@ -71,6 +93,7 @@ ON CONFLICT (workspace_id,client_id) DO UPDATE SET sheet_id=excluded.sheet_id,na
 	/** Persist one provider batch into the shared sheet before reporting its progress to a browser. */
 	async appendFoundRows(actor: Account, id: string, entity: EntityKind, input: readonly FoundRow[], meta?: CellMeta, mergeExisting = false, persist?: (sql: Sql, result: { added: number; updated: number }) => Promise<void>) {
 		if (!input.length) return { added: 0, updated: 0 };
+		const limits = await trialLimits(actor, this.database);
 		return this.database.transaction(async (client, workspace) => {
 			const record = await client.query('SELECT data FROM enrichable.sheets WHERE workspace_id=$1 AND id=$2', [workspace, id]);
 			if (!record.rows.length) throw new WorkspaceError('Sheet not found in this workspace.', 404);
@@ -153,6 +176,7 @@ ON CONFLICT (workspace_id,client_id) DO UPDATE SET sheet_id=excluded.sheet_id,na
 			if (columns.length !== sheet.columns.length || rowsToWrite.length) {
 				await client.query('UPDATE enrichable.sheets SET data=$3::jsonb,revision=revision+1,updated_by=$4 WHERE workspace_id=$1 AND id=$2', [workspace, id, JSON.stringify({ ...sheet, ...(columns.length !== sheet.columns.length ? { columns } : {}), updatedAt: Date.now() }), actor.user.id]);
 			}
+			if (limits && await countTrialRows(client, workspace) > limits.rowLimit) throw new WorkspaceError(`The free trial includes up to ${limits.rowLimit} rows in one sheet. Unlock more rows with lifetime access for $37 once.`, 402);
 			const result = { added: added.length, updated: changed.size };
 			await persist?.(client, result);
 			return result;
@@ -161,7 +185,13 @@ ON CONFLICT (workspace_id,client_id) DO UPDATE SET sheet_id=excluded.sheet_id,na
 	async create(actor: Actor, input: unknown) {
 		const { sheet, rows } = parseInput(createSheetSchema, input, 'Invalid sheet data.');
 		this.validateRows(sheet, rows);
+		const limits = await trialLimits(actor, this.database);
+		if (limits && rows.filter(hasRowData).length > limits.rowLimit) throw new WorkspaceError(`The free trial allows up to ${limits.rowLimit} populated rows. Unlock more with lifetime access for $37 once.`, 402);
 		return this.database.transaction(async (client, workspace) => {
+			if (limits) {
+				const count = Number((await client.query('SELECT count(*)::int AS sheet_count FROM enrichable.sheets WHERE workspace_id=$1', [workspace])).rows[0]?.sheet_count ?? 0);
+				if (count >= limits.sheetLimit) throw new WorkspaceError(`The free trial includes one sheet. Unlock additional sheets with lifetime access for $37 once.`, 402);
+			}
 			const created = await client.query('INSERT INTO enrichable.sheets (workspace_id, id, data, created_by, updated_by) VALUES ($1,$2,$3::jsonb,$4,$4) ON CONFLICT DO NOTHING RETURNING id', [workspace, sheet.id, JSON.stringify(sheet), actor.user.id]);
 			if (!created.rows.length) throw new WorkspaceError('This sheet already exists.', 409);
 			await this.putRows(client, workspace, sheet.id, rows);
@@ -172,6 +202,7 @@ ON CONFLICT (workspace_id,client_id) DO UPDATE SET sheet_id=excluded.sheet_id,na
 		const patch = parseInput(patchSheetSchema, input, 'Invalid sheet data.');
 		if (patch.sheet.id !== id) throw new WorkspaceError('Sheet ID mismatch.');
 		this.validateRows(patch.sheet, patch.rows);
+		const limits = await trialLimits(actor, this.database);
 		return this.database.transaction(async (client, workspace) => {
 			const record = await client.query('SELECT revision, data FROM enrichable.sheets WHERE workspace_id=$1 AND id=$2', [workspace, id]);
 			if (!record.rows.length) throw new WorkspaceError('Sheet not found in this workspace.', 404);
@@ -179,6 +210,7 @@ ON CONFLICT (workspace_id,client_id) DO UPDATE SET sheet_id=excluded.sheet_id,na
 			await this.validateValues(client, workspace, record.rows[0].data as Sheet, patch);
 			await client.query('DELETE FROM enrichable.sheet_rows WHERE workspace_id=$1 AND sheet_id=$2 AND id=ANY($3::text[])', [workspace, id, patch.deleted]);
 			await this.putRows(client, workspace, id, patch.rows);
+			if (limits && await countTrialRows(client, workspace) > limits.rowLimit) throw new WorkspaceError(`The free trial includes up to ${limits.rowLimit} populated rows in one sheet. Unlock more with lifetime access for $37 once.`, 402);
 			const sheet = { ...patch.sheet, updatedAt: Date.now() };
 			const result = await client.query('UPDATE enrichable.sheets SET data=$3::jsonb, revision=revision+1, updated_by=$4 WHERE workspace_id=$1 AND id=$2 RETURNING revision', [workspace, id, JSON.stringify(sheet), actor.user.id]);
 			return { revision: Number(result.rows[0].revision), updatedAt: sheet.updatedAt };

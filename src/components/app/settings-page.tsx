@@ -242,7 +242,8 @@ function WorkspaceData() {
 }
 
 type ProductBilling = {
-	configured: boolean; required: boolean; priceUsd: number; hasAccess: boolean; purchaseStatus: string | null; legacyPortalAvailable: boolean;
+	configured: boolean; required: boolean; priceUsd: number; hasAccess: boolean; fullAccess: boolean; exempt: boolean; purchaseStatus: string | null; legacyPortalAvailable: boolean;
+	trial: null | { active: boolean; sheetsUsed: number; rowsUsed: number; sheetLimit: number; rowLimit: number };
 	purchase: null | { status: 'paid'; amountUsd: number; currency: string; purchasedAt: string };
 	legacySubscription: null | { status: string; currentPeriodEnd: number | null; cancelAtPeriodEnd: boolean; active: boolean };
 };
@@ -299,7 +300,7 @@ function AccessBilling() {
 		<div className="flex min-w-0 flex-col gap-1">
 			<h2 id="product-billing-title" className="text-body text-fg">Monid Enrich access</h2>
 			<p className="text-body-sm text-fg-muted">One payment of $37 USD gives this workspace lifetime access. Monid and optional OpenAI usage remain billed separately by their providers.</p>
-			{billing && <p className="text-caption text-fg-subtle">{!billing.configured ? 'Stripe payments are not configured for this deployment.' : purchased ? `Lifetime access purchased · $${billing.purchase?.amountUsd.toFixed(2)} USD` : legacyActive ? `Legacy subscription active${billing.legacySubscription?.currentPeriodEnd ? ` through ${new Date(billing.legacySubscription.currentPeriodEnd * 1000).toLocaleDateString()}` : ''}` : billing.purchaseStatus === 'refunded' ? 'The purchase was refunded; workspace access is inactive.' : billing.purchaseStatus === 'disputed' ? 'The purchase is in dispute; workspace access is inactive.' : 'No purchase is recorded for this workspace.'}</p>}
+			{billing && <p className="text-caption text-fg-subtle">{billing.exempt ? 'Owner or beta tester access is enabled for this verified account.' : purchased ? `Lifetime access purchased · $${billing.purchase?.amountUsd.toFixed(2)} USD` : legacyActive ? `Legacy subscription active${billing.legacySubscription?.currentPeriodEnd ? ` through ${new Date(billing.legacySubscription.currentPeriodEnd * 1000).toLocaleDateString()}` : ''}` : billing.purchaseStatus === 'refunded' ? 'The purchase was refunded; workspace access is inactive.' : billing.purchaseStatus === 'disputed' ? 'The purchase is in dispute; workspace access is inactive.' : billing.trial ? `Trial active · ${billing.trial.sheetsUsed}/${billing.trial.sheetLimit} sheet · ${billing.trial.rowsUsed}/${billing.trial.rowLimit} populated rows${billing.configured ? '' : ' · Stripe checkout is not configured'}` : 'No purchase is recorded for this workspace.'}</p>}
 			{notice && <p role="status" className="text-caption text-success">{notice}</p>}
 			{error && <p role="alert" className="text-caption text-danger">{error}</p>}
 		</div>

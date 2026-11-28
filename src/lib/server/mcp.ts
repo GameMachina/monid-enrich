@@ -9,6 +9,7 @@ import { mcpTools, McpOperations, operationGuidance } from './mcp-tools';
 import { mcpAccess } from './provider-access';
 import type { McpStore } from './mcp-store';
 import type { WorkspaceStore } from './workspace-store';
+import { purchaseGate } from './stripe-billing';
 
 export async function handleMcpRequest(request: Request, services: { keys: McpStore; sheets: WorkspaceStore; organization?: OrganizationStore }) {
 	const trace = newTrace('mcp');
@@ -16,6 +17,8 @@ export async function handleMcpRequest(request: Request, services: { keys: McpSt
 		const origin = request.headers.get('origin');
 		if (origin && origin !== new URL(request.url).origin) throw new WorkspaceError('Invalid origin.', 403);
 		const actor = await services.keys.authenticate(request.headers.get('authorization'));
+		const billingBlock = await purchaseGate(actor);
+		if (billingBlock) return billingBlock;
 		const access = await mcpAccess(request.headers, actor, services.organization);
 		return await serveMcp(request, new McpOperations(services.sheets, services.keys, actor, access), trace);
 	} catch (error) {

@@ -353,7 +353,7 @@ export const PopulateRequestSchema = z.object({
 });
 /** The temporary per-request limit applies only when starting a new Find rows search. */
 export const FindRowsRequestSchema = PopulateRequestSchema.extend({
-	target: z.number().int().min(1).max(5, 'A single Find rows request can return up to 5 rows while testing.').default(5),
+	target: z.number().int().min(1).max(1000, 'A single Find rows request can return up to 1,000 rows.').default(5),
 	sheetId: z.string().min(1).max(128).optional(),
 });
 export type PopulateRequest = Omit<z.infer<typeof PopulateRequestSchema>, 'dataProvider' | 'enrichFullProfiles'> & {

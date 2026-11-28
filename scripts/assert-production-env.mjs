@@ -14,6 +14,7 @@ requireValue('NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY', (value) => value.startsWith('p
 requireValue('CLERK_SECRET_KEY', (value) => value.startsWith('sk_live_'));
 requireValue('CLERK_WEBHOOK_SIGNING_SECRET', (value) => value.startsWith('whsec_'));
 requireValue('ENRICHABLE_BILLING_REQUIRED', (value) => value === 'true');
+requireValue('ENRICHABLE_BILLING_EXEMPT_EMAILS', (value) => value.split(',').some((email) => email.trim().toLowerCase() === 'jalendnelson@gmail.com'));
 requireValue('STRIPE_WEBHOOK_SECRET', (value) => value.startsWith('whsec_'));
 requireValue('STRIPE_ONE_TIME_PRICE_ID', (value) => value.startsWith('price_'));
 requireValue('STRIPE_PAYMENT_LINK_ID', (value) => value.startsWith('plink_'));

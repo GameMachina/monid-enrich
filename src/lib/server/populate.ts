@@ -3,7 +3,7 @@ import { profileUrl } from '../profile-photo';
 import { planPeopleInput, populatePeopleList } from './populate-people-list';
 import { companyContextForQuery } from './company-context';
 import 'server-only';
-import { populateLimitError, promptResultCount } from '../populate-limit';
+import { populateLimitError } from '../populate-limit';
 import { fundingLabel } from '../funding';
 
 import { generateText, isStepCount, type StopCondition, tool, type ToolSet } from 'ai';
@@ -59,7 +59,7 @@ export function populateStream(access: ProviderAccess, request: PopulateRequest)
 /** Shared execution path for request streams and durable workspace jobs. The durable worker persists each emitted batch
  * before it reports progress, and treats a lost lease as uncertain because Find rows can make multiple paid calls. */
 export async function runPopulate(access: ProviderAccess, request: PopulateRequest, emit: (event: PopulateEvent) => void, signal: AbortSignal) {
-	const requestedTarget = promptResultCount(request.query) ?? request.target;
+	const requestedTarget = request.target;
 	const limitError = populateLimitError(requestedTarget);
 	if (limitError) throw new Error(limitError);
 	request = { ...request, target: Math.min(requestedTarget, request.availableRows ?? 1000) };
