@@ -5,6 +5,7 @@ import { personEnrichmentInput, listedPersonRow, type ListedPerson } from '../..
 import type { PopulateEvent } from '../../src/lib/types';
 import { rowSchema } from '../../src/lib/workspace';
 import { testAccess } from './access-fixture';
+import { monidFixtureRequest, monidFixtureResponse } from './monid-fixture';
 
 const access = testAccess({ keys: { openai: 'test-openai', context: 'test-context' }, model: 'test-model', openaiBaseUrl: 'https://model.example/v1' });
 const person = (name: string, companyDomain: string | null = null): ListedPerson => ({ name, firstName: name.split(' ')[0], lastName: name.split(' ').slice(1).join(' ') || null, companyDomain, companyName: null, email: null, profileUrls: [], city: null, region: null, country: null, school: null });
@@ -20,11 +21,13 @@ test('list routing enriches supplied people separately and retains unmatched and
    assert.ok(!JSON.stringify(body.response_format).includes('\"format\":\"uri\"'));
    return completion(JSON.stringify({ mode: 'list', people }));
   }
-  if (request.url.endsWith('/people/search')) return Response.json({ request_id: 'search', results: [] });
-  assert.equal(request.url, 'https://api.context.dev/v1/people/enrich');
-  requests.push(await request.json());
-  if (requests.length !== 3) return Response.json({ match: { status: 'not_found', person: null, score: null } });
-  return Response.json({ match: { status: 'candidate', score: 0.96, person: { name: { full: 'Anicet Nougaret' }, avatar_url: 'https://cdn.example.com/anicet.jpg', current_role_status: 'present', current_role: { title: 'Founder', organization: { name: 'Boat', domain: 'boat.dev' } }, education: [], experience: [], skills: ['Rust'], social_urls: ['https://www.linkedin.com/in/anicet'], website_urls: [], bio: 'Founder of Boat' } } });
+  const monid = await monidFixtureRequest(request);
+  assert.equal(request.url, 'https://api.monid.ai/v1/run');
+  if (monid.endpoint === '/people/search') return monidFixtureResponse(monid, { request_id: 'search', results: [] });
+  assert.equal(monid.endpoint, '/people/enrich');
+  requests.push(monid.input.body ?? {});
+  if (requests.length !== 3) return monidFixtureResponse(monid, { match: { status: 'not_found', person: null, score: null } });
+  return monidFixtureResponse(monid, { match: { status: 'candidate', score: 0.96, person: { name: { full: 'Anicet Nougaret' }, avatar_url: 'https://cdn.example.com/anicet.jpg', current_role_status: 'present', current_role: { title: 'Founder', organization: { name: 'Boat', domain: 'boat.dev' } }, education: [], experience: [], skills: ['Rust'], social_urls: ['https://www.linkedin.com/in/anicet'], website_urls: [], bio: 'Founder of Boat' } } });
  });
  const events: PopulateEvent[] = (await new Response(populateStream(access, { query: 'Nikhil Radosevich - context.dev\nAdeline Kim - Aside\nAnicet Nougaret - boat.dev\nName Only', entity: 'people', target: 1, availableRows: 100 })).text()).trim().split('\n').map(line => JSON.parse(line));
  assert.deepEqual(events.filter(e => e.type === 'error'), []);
@@ -65,10 +68,12 @@ test('an API failure keeps the supplied person and continues with the next perso
  t.mock.method(globalThis, 'fetch', async (input: string | URL | Request, options?: RequestInit) => {
   const request = new Request(input, options);
   if (request.url === 'https://model.example/v1/chat/completions') return completion(JSON.stringify({ mode: 'list', people: [person('First Person', 'first.example'), person('Second Person', 'second.example')] }));
-  if (request.url.endsWith('/people/search')) return Response.json({ request_id: 'search', results: [] });
+  const monid = await monidFixtureRequest(request);
+  if (monid.endpoint === '/people/search') return monidFixtureResponse(monid, { request_id: 'search', results: [] });
+  assert.equal(monid.endpoint, '/people/enrich');
   calls++;
   if (calls === 1) return Response.json({ error: { message: 'Invalid identity' } }, { status: 422 });
-  return Response.json({ match: { status: 'not_found', person: null, score: null } });
+  return monidFixtureResponse(monid, { match: { status: 'not_found', person: null, score: null } });
  });
  const events: PopulateEvent[] = (await new Response(populateStream(access, { query: 'First Person and Second Person', entity: 'people', target: 3 })).text()).trim().split('\n').map(line => JSON.parse(line));
  assert.equal(calls, 2);
@@ -89,10 +94,13 @@ test('identity clues are passed together and former employers are not presented 
 test('list processing respects sheet capacity and cancellation', async (t) => {
  const { populatePeopleList } = await import('../../src/lib/server/populate-people-list');
  let calls = 0;
- t.mock.method(globalThis, 'fetch', async (input: string | URL | Request) => {
-  if (new Request(input).url.endsWith('/people/search')) return Response.json({ request_id: 'search', results: [] });
+ t.mock.method(globalThis, 'fetch', async (input: string | URL | Request, options?: RequestInit) => {
+  const request = new Request(input, options);
+  const monid = await monidFixtureRequest(request);
+  if (monid.endpoint === '/people/search') return monidFixtureResponse(monid, { request_id: 'search', results: [] });
+  assert.equal(monid.endpoint, '/people/enrich');
   calls++;
-  return Response.json({ match: { status: 'not_found', person: null, score: null } });
+  return monidFixtureResponse(monid, { match: { status: 'candidate', score: 1, person: { name: { full: 'First Person' }, current_role_status: 'present', current_role: { organization: { name: 'First' } }, social_urls: [], website_urls: [], education: [], experience: [], skills: [] } } });
  });
  const people = [person('First Person', 'first.example'), person('Second Person', 'second.example')];
  const events: PopulateEvent[] = [];
@@ -111,13 +119,15 @@ test('supplied people are looked up a few at a time, emitted in order, and never
  let active = 0, maxActive = 0, calls = 0;
  t.mock.method(globalThis, 'fetch', async (input: string | URL | Request, options?: RequestInit) => {
   const request = new Request(input, options);
-  if (request.url.endsWith('/people/search')) return Response.json({ request_id: 'search', results: [] });
+  const monid = await monidFixtureRequest(request);
+  if (monid.endpoint === '/people/search') return monidFixtureResponse(monid, { request_id: 'search', results: [] });
+  assert.equal(monid.endpoint, '/people/enrich');
   calls++; active++; maxActive = Math.max(maxActive, active);
-  const { company } = await request.json();
+	  const company = monid.input.body?.company as { domain?: string } | undefined;
   // Later people answer first; rows must still arrive in the supplied order.
-  await new Promise(resolve => setTimeout(resolve, 40 - Number(company.domain.split('.')[0].slice(1)) * 3));
+	  await new Promise(resolve => setTimeout(resolve, 40 - Number(company?.domain?.split('.')[0].slice(1)) * 3));
   active--;
-  return Response.json({ match: { status: 'not_found', person: null, score: null } });
+  return monidFixtureResponse(monid, { match: { status: 'not_found', person: null, score: null } });
  });
  const people = Array.from({ length: 10 }, (_, i) => person(`Person ${i}`, `p${i}.example`));
  const events: PopulateEvent[] = [];

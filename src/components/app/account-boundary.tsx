@@ -47,7 +47,10 @@ function watchSession(account: Account & { sessionId: string }, dispatch: (event
 				else window.location.replace(loginHref(window.location));
 				return;
 			}
-			setStorageAccount(account);
+			// The account prop can change during a client-side Clerk organization switch.
+			// Keep the old local database and vault state isolated until a full reload
+			// recreates every account-scoped client store for the newly verified scope.
+			if (!setStorageAccount(account)) { window.location.reload(); return; }
 			openAccountDatabase();
 			if (!loaded) { await connectWorkspace(cloudSheets); loaded = true; if (live()) stopRealtime = startWorkspaceRealtime(); }
 			send({ type: 'loaded' });

@@ -61,7 +61,8 @@ function confidenceOf(root: unknown): number | undefined {
 function emailCandidate(root: unknown) {
 	const raw = firstString(root, ['email', 'workEmail', 'work_email', 'professional_email', 'address']);
 	const address = emailValue(raw);
-	const status = firstString(root, ['verificationStatus', 'verification_status', 'email_status', 'emailVerificationStatus']) || 'unknown';
+	const data = obj(obj(root).data ?? root);
+	const status = firstString(root, ['verificationStatus', 'verification_status', 'email_status', 'emailVerificationStatus']) || str(obj(data.verification).status) || 'unknown';
 	const verified = ['valid', 'verified', 'good'].includes(status.toLowerCase()) || Boolean(firstString(root, ['emailVerifiedUtc', 'email_verified_utc']));
 	return { email: address, status, verified, confidence: confidenceOf(root), sources: sourceUrls(root) };
 }

@@ -65,19 +65,20 @@ test('fallback composer excludes formulas and retains the original request', asy
  assert.equal(result.op.kind, 'ai');
 });
 
-test('formula and column handlers redact provider errors containing server keys', async (t) => {
+test('formula and column handlers do not use legacy server keys or password authorization', async (t) => {
 	const { POST: compose } = await import('../../src/app/api/compose-column/route');
 	const values = { NODE_ENV: 'production', ENRICHABLE_APP_URL: 'https://self-hosted.example', ENRICHABLE_DEV_AUTH: '', ENRICHABLE_PASSWORD: 'test-password', OPENAI_API_KEY: 'sk-demonstration-not-real', OPENAI_BASE_URL: '' };
 	const previous = Object.fromEntries(Object.keys(values).map((key) => [key, process.env[key]]));
 	Object.assign(process.env, values);
 	delete process.env.OPENAI_BASE_URL;
 	t.after(() => { for (const [key, value] of Object.entries(previous)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; } });
-	t.mock.method(globalThis, 'fetch', async () => Response.json({ error: { message: `Invalid API key: ${values.OPENAI_API_KEY}`, type: 'invalid_request_error', code: 'invalid_api_key' } }, { status: 401 }));
+	let providerCalls = 0;
+	t.mock.method(globalThis, 'fetch', async () => { providerCalls++; return Response.json({}); });
 	for (const [handler, body] of [[POST, input], [compose, { ask: 'Find the CEO', columns: [{ name: 'Domain', type: 'source' }] }]] as const) {
 		const response = await handler(new Request('https://self-hosted.example/api/test', { method: 'POST', headers: { 'content-type': 'application/json', 'x-enrichable-password': values.ENRICHABLE_PASSWORD }, body: JSON.stringify(body) }));
-		assert.equal(response.status, 500);
+		assert.equal(response.status, 401);
 		const result = await response.json();
-		assert.ok(!result.error.includes(values.OPENAI_API_KEY));
-		assert.match(result.error, /\[redacted\]/);
+		assert.ok(!JSON.stringify(result).includes(values.OPENAI_API_KEY));
 	}
+	assert.equal(providerCalls, 0);
 });

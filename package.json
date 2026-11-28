@@ -10,7 +10,7 @@
     "lint": "eslint",
     "typecheck": "next typegen && tsc --noEmit",
     "test": "node --test --import tsx tests/*.test.ts && npm run test:server",
-    "test:server": "node --conditions=react-server --test --import tsx tests/server/*.test.ts",
+    "test:server": "node --import tsx --import ./tests/support/server-only-test-hook.mjs --test tests/server/*.test.ts",
     "test:browser": "playwright test",
     "db:migrate": "tsx scripts/migrate-db.ts",
     "smoke:realtime": "tsx scripts/smoke-neon-realtime.ts",

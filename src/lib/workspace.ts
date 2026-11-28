@@ -27,7 +27,7 @@ export const sheetSchema = z.object({
 });
 export const rowSchema = z.object({
 	id: identifier, sheetId: identifier, order: z.number().finite(), createdAt: z.number().finite(),
-	cells: z.record(identifier, z.object({ v: cellValue, f: z.string().optional(), s: z.enum(['idle', 'queued', 'running', 'done', 'error']), e: z.string().optional(), m: z.record(z.string(), z.unknown()).optional(), owner: identifier.optional(), t: z.number().finite() })),
+	cells: z.record(identifier, z.object({ v: cellValue, f: z.string().optional(), s: z.enum(['idle', 'queued', 'running', 'done', 'error']), e: z.string().optional(), m: z.record(z.string(), z.unknown()).optional(), owner: identifier.optional(), run: z.object({ inputFingerprint: z.string().min(1), idempotencyKey: z.string().min(1), createdAt: z.number().finite() }).optional(), t: z.number().finite() })),
 });
 export const createSheetSchema = z.object({ sheet: sheetSchema, rows: z.array(rowSchema).max(MAX_ROWS).default([]) });
 export const patchSheetSchema = z.object({ revision: z.number().int().positive(), sheet: sheetSchema, rows: z.array(rowSchema).max(MAX_ROWS), deleted: z.array(identifier).max(MAX_ROWS) });

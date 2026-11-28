@@ -6,7 +6,6 @@ import { z } from 'zod';
 import { CreditBudgetError, CreditLedger, DOLLAR_NANO, LEDGER_KINDS, LEDGERS, meteredCall, RESERVATION_LEASE_SECONDS, type BudgetReason } from '../../src/lib/server/credit-ledger';
 import { providerAccess } from '../../src/lib/server/provider-access';
 import { requestGrant } from './access-fixture';
-import { accountFromIdentity, seal, SESSION_COOKIE } from '../../src/lib/server/auth';
 import { trialCharge, trialInputBound, trialMiddleware, trialEnabled } from '../../src/lib/server/openai-trial';
 import { actor, ledgerFixture } from './ledger-fixture';
 
@@ -169,26 +168,20 @@ test('trial provider failure retains credit, and exhausted budgets stop calls be
 	assert.equal(calls, 1);
 });
 
-test('sponsored credentials require a verified session, pin model and endpoint, and preserve BYOK', async (t) => {
-	const values = { ENRICHABLE_OPENAI_TRIAL_ENABLED: 'true', OPENAI_API_KEY: 'test-server-secret', ENRICHABLE_APP_URL: 'https://www.enrichable.io', ENRICHABLE_SESSION_SECRET: 'test-session-secret-with-at-least-32-characters', CONTEXT_IDENTITY_ISSUER: 'https://identity.example.com' };
+test('hosted OpenAI trial is disabled while caller-owned OpenAI credentials still resolve', async (t) => {
+	const values = { NODE_ENV: 'production', ENRICHABLE_AUTH_MODE: 'self-hosted', ENRICHABLE_OPENAI_TRIAL_ENABLED: 'true', OPENAI_API_KEY: 'test-server-secret', ENRICHABLE_APP_URL: 'https://enrich.autonomousgtm.xyz', CONTEXT_OAUTH_CLIENT_ID: 'legacy-client', CONTEXT_OAUTH_CLIENT_SECRET: 'legacy-client-secret' };
 	const previous = Object.fromEntries(Object.keys(values).map((key) => [key, process.env[key]]));
 	Object.assign(process.env, values);
 	t.after(() => { for (const [key, value] of Object.entries(previous)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; } });
-	await assert.rejects(requestGrant(new Request('https://www.enrichable.io/api/enrich')), /Sign in/);
-	const account = accountFromIdentity(actor());
-	const cookie = `${SESSION_COOKIE}=${seal({ ...account, sessionId: 'x'.repeat(40) }, 'session', 60)}`;
-	const headers = { cookie, 'x-openai-model': 'gpt-6-astra', 'x-openai-base-url': 'https://other-provider.example.com/v1' };
-	const sponsored = await requestGrant(new Request('https://www.enrichable.io/api/enrich', { headers }));
-	assert.equal(sponsored.model, 'gpt-6-luna');
-	assert.equal(sponsored.openaiBaseUrl, null);
-	assert.equal(sponsored.trialAccount?.organization.id, account.organization.id);
-	assert.equal(providerAccess(sponsored).openai('gpt-6-astra').modelId, 'gpt-6-luna');
-	const manual = await requestGrant(new Request('https://www.enrichable.io/api/enrich', { headers: { ...headers, 'x-openai-key': 'test-own-key' } }));
+	assert.equal(trialEnabled(), false, 'the legacy Context OAuth trial path is disabled in Monid Enrich');
+	const url = 'https://enrich.autonomousgtm.xyz/api/enrich';
+	const withoutKey = await requestGrant(new Request(url));
+	assert.equal(withoutKey.keys.openai, undefined);
+	assert.equal(withoutKey.trialAccount, undefined, 'a deployment OpenAI key is never offered to browser requests');
+	const manual = await requestGrant(new Request(url, { headers: { 'x-openai-key': 'test-own-key', 'x-openai-model': 'caller-model', 'x-openai-base-url': 'https://models.example/v1' } }));
+	assert.equal(manual.keys.openai, 'test-own-key');
 	assert.equal(manual.trialAccount, undefined);
-	assert.equal(manual.model, 'gpt-6-astra');
-	assert.equal(manual.openaiBaseUrl, headers['x-openai-base-url']);
-	const copiedServerKey = await requestGrant(new Request('https://www.enrichable.io/api/enrich', { headers: { ...headers, 'x-openai-key': 'test-server-secret' } }));
-	assert.ok(copiedServerKey.trialAccount, 'passing the sponsored key back must not bypass metering');
-	process.env.OPENAI_API_KEY = 'REPLACE_WITH_OPENAI_API_KEY';
-	assert.equal(trialEnabled(), false, 'the deployment placeholder must never activate paid requests');
+	assert.equal(manual.model, 'caller-model');
+	assert.equal(manual.openaiBaseUrl, 'https://models.example/v1');
+	assert.equal(providerAccess(manual).key('openai'), 'test-own-key');
 });

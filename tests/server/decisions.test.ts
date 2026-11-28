@@ -79,5 +79,5 @@ test('the decider preference comes from the resolved access, not from options th
 	assert.equal(preferOpenAI.decider('openai'), 'openai');
 	assert.equal((await decideNoul(preferOpenAI, 'openai', 'State.', 'Question?')).engine, 'openai');
 	assert.equal(testAccess({ ...base, classifierModel: 'classifier' }).decider('openai'), 'openai', 'a classifier model forces OpenAI');
-	await assert.rejects(decideNoul(testAccess(), 'openai', 'State.', 'Question?'), /TypeSafe or OpenAI key/);
+	await assert.rejects(decideNoul(testAccess(), 'openai', 'State.', 'Question?'), /Add your OpenAI API key in Configuration/);
 });

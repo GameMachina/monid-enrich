@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { APICallError } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
 import type { Account } from '../../src/lib/auth-identity';
+import { contextClient } from '../../src/lib/server/context';
 import { workspaceId } from '../../src/lib/server/database';
 import { CompanyContextStore, COMPANY_CONTEXT_TTL } from '../../src/lib/server/company-context-store';
 import { companyContextForQuery, companyResearchPages, explicitCompanyDomain, lookupCompanyOnAuthorization, needsCompanyContext, researchCompany } from '../../src/lib/server/company-context';
@@ -12,6 +13,8 @@ import { testDatabase } from '../support/database';
 
 const actor = (org = 'one', user = 'alice'): Account => ({ issuer: 'https://test.invalid', user: { id: user, email: `${user}@example.com`, email_verified: true }, organization: { id: org, name: org }, partition: user });
 const access = testAccess({ account: actor(), model: 'test' });
+// Use the provided PGlite store; do not open Monid's persistent local database from unit tests.
+const contextWithoutRunPersistence = (key: string, _email?: string, spend?: Spend) => contextClient(key, undefined, spend);
 async function fixture(t: { after(fn: () => Promise<void>): void }) {
  const { db, database } = await testDatabase(t);
  for (const a of [actor(), actor('two')]) await db.query('INSERT INTO enrichable.workspaces (id,issuer,organization_id,name) VALUES ($1,$2,$3,$4)', [workspaceId(a), a.issuer, a.organization.id, a.organization.name]);
@@ -30,8 +33,8 @@ test('authorization brand lookup is claimed once across members and negative res
  let calls = 0;
  globalThis.fetch = async () => { calls++; return Response.json({ error: { code: 'FREE_EMAIL_DETECTED', message: 'FREE_EMAIL_DETECTED' } }, { status: 422 }); };
  t.after(async () => { globalThis.fetch = original; });
- await Promise.all([lookupCompanyOnAuthorization(actor(), 'test-key', store), lookupCompanyOnAuthorization(actor('one', 'bob'), 'test-key', store)]);
- await lookupCompanyOnAuthorization(actor(), 'test-key', store);
+ await Promise.all([lookupCompanyOnAuthorization(actor(), 'test-key', store, contextWithoutRunPersistence), lookupCompanyOnAuthorization(actor('one', 'bob'), 'test-key', store, contextWithoutRunPersistence)]);
+ await lookupCompanyOnAuthorization(actor(), 'test-key', store, contextWithoutRunPersistence);
  assert.equal(calls, 1);
  assert.equal((await store.get(actor()))?.lookup_status, 'FREE_EMAIL_DETECTED');
  assert.equal(await store.get(actor('two')), null);
@@ -43,12 +46,16 @@ test('successful authorization saves brand without crawling or researching', asy
  const store = await fixture(t);
  const original = globalThis.fetch;
  const urls: string[] = [];
- globalThis.fetch = async (input) => { urls.push(input instanceof Request ? input.url : String(input)); return Response.json({ status: 'ok', brand: { domain: 'acme.example', title: 'Acme', description: 'Widgets' } }); };
+	globalThis.fetch = async (input, init) => {
+		const request = new Request(input, init), body = await request.json() as { endpoint: string };
+		urls.push(request.url);
+		return Response.json({ runId: 'brand-test', provider: 'context.dev', endpoint: body.endpoint, status: 'COMPLETED', output: { brand: { domain: 'acme.example', title: 'Acme', description: 'Widgets' } } });
+	};
  t.after(async () => { globalThis.fetch = original; });
- await lookupCompanyOnAuthorization(actor(), 'another-test-key', store);
- await lookupCompanyOnAuthorization(actor('one', 'bob'), 'another-test-key', store);
+ await lookupCompanyOnAuthorization(actor(), 'another-test-key', store, contextWithoutRunPersistence);
+ await lookupCompanyOnAuthorization(actor('one', 'bob'), 'another-test-key', store, contextWithoutRunPersistence);
  assert.equal(urls.length, 1);
- assert.match(urls[0], /brand\/retrieve/);
+	assert.equal(urls[0], 'https://api.monid.ai/v1/run');
  const saved = await store.get(actor());
  assert.equal(saved?.brand?.domain, 'acme.example');
  assert.equal(saved?.profile, null);
@@ -88,25 +95,27 @@ test('first relevant research reads a bounded website, saves a brief, and concur
  await store.finishLookup(actor(), 'ready', { domain: 'research.example', title: 'Research Co' });
  const original = globalThis.fetch;
  let scrapes = 0, summaries = 0;
- globalThis.fetch = async (input, init) => {
+	let runId = 0;
+	globalThis.fetch = async (input, init) => {
   const request = new Request(input, init);
-  const body = await request.json();
-  if (request.url.endsWith('/web/scrape')) {
+	  const body = await request.json() as { endpoint: string; input: { body?: { url?: string } } };
+	  if (body.endpoint === '/web/scrape') {
    scrapes++;
-   return Response.json({ markdown: { success: true, data: body.url === 'https://research.example' ? 'We sell widgets. [About](/about) [Customers](/customers) [Pricing](/pricing) [Product](/product) [Other](/services)' : 'Widgets for manufacturers. Customers include Sample Manufacturing.' }, metadata: { title: 'Research Co' } });
+	   const url = body.input.body?.url;
+	   return Response.json({ runId: `scrape-${++runId}`, provider: 'everyinfra', endpoint: body.endpoint, status: 'COMPLETED', cost: { value: 0.001, currency: 'USD' }, output: { markdown: { success: true, data: url === 'https://research.example' ? 'We sell widgets. [About](/about) [Customers](/customers) [Pricing](/pricing) [Product](/product) [Other](/services)' : 'Widgets for manufacturers. Customers include Sample Manufacturing.' }, metadata: { title: 'Research Co' } } });
   }
   if (request.url.endsWith('/responses')) {
    summaries++;
    assert.match(JSON.stringify(body), /Widgets for manufacturers/);
    return Response.json({ id: 'resp_company', created_at: 1, model: 'test', status: 'completed', output: [{ id: 'msg_company', type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'Research Co sells widgets to manufacturers. Source: https://research.example', annotations: [] }] }], usage: { input_tokens: 10, output_tokens: 20, total_tokens: 30 } });
   }
-  throw new Error(`Unexpected request: ${request.url}`);
+	  throw new Error(`Unexpected request: ${request.url} ${JSON.stringify(body)}`);
  };
  t.after(async () => { globalThis.fetch = original; });
- const connected = testAccess({ account: actor(), keys: { context: 'research-key', openai: 'model-key' }, model: 'test' });
+	const connected = testAccess({ account: actor(), keys: { monid: 'research-key', openai: 'model-key' }, model: 'test' }, { context: contextWithoutRunPersistence });
  const [first, concurrent] = await Promise.all([researchCompany(connected, store), researchCompany(connected, store)]);
  assert.deepEqual(concurrent, first);
- assert.equal(scrapes, 5);
+	assert.equal(scrapes, 5);
  assert.equal(summaries, 1);
  assert.equal(first.sources.length, 5);
  assert.deepEqual(await researchCompany(connected, store), first);
@@ -146,12 +155,16 @@ test('research spends under the cell’s run: a refusal after paid reads is fina
  const store = await fixture(t);
  await store.claimLookup(actor());
  await store.finishLookup(actor(), 'ready', { domain: 'research-fails.example' });
- t.mock.method(globalThis, 'fetch', async () => Response.json({ markdown: { success: true, data: 'We sell widgets.' }, metadata: {}, key_metadata: { credits_consumed: 1 } }));
+	let runId = 0;
+	t.mock.method(globalThis, 'fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+		const request = new Request(input, init), body = await request.json() as { endpoint: string };
+		return Response.json({ runId: `research-spend-${++runId}`, provider: 'everyinfra', endpoint: body.endpoint, status: 'COMPLETED', billedUnits: 1, cost: { value: 0.01, currency: 'USD' }, output: { markdown: { success: true, data: 'We sell widgets.' }, metadata: {} } });
+	});
  const limited = () => new APICallError({ message: 'Rate limited', url: 'https://api.openai.com/v1/responses', requestBodyValues: {}, statusCode: 429, responseBody: '', isRetryable: true });
- const connected = testAccess({ account: actor(), keys: { context: 'research-fails-key', openai: 'model-key' }, model: 'test' }, { openai: () => new MockLanguageModelV4({ doGenerate: async () => { throw limited(); } }) });
+	const connected = testAccess({ account: actor(), keys: { monid: 'research-fails-key', openai: 'model-key' }, model: 'test' }, { context: contextWithoutRunPersistence, openai: () => new MockLanguageModelV4({ doGenerate: async () => { throw limited(); } }) });
  const researcher = new Spend();
  const failed = await researchCompany(connected.withSpend(researcher), store).catch((error: unknown) => error);
- assert.deepEqual([researcher.paid, researcher.credits], [true, 1], 'the homepage read is the cell’s spend');
+	assert.deepEqual([researcher.paid, researcher.monidRuns[0]?.billedUnits], [true, 1], 'the homepage read is the cell’s spend');
  assert.deepEqual(afterSpend(classifyFailure(failed, 'openai')!, researcher.paid), { reason: 'rate_limited', retryable: false, provider: 'openai' });
  const waiting = new Spend();
  const blocked = await researchCompany(connected.withSpend(waiting), store).catch((error: unknown) => error);

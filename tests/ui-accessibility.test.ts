@@ -96,7 +96,7 @@ test('every response carries a report-only CSP that keeps outbound connections a
 	assert.deepEqual(directives['base-uri'], ["'none'"]);
 	assert.deepEqual(directives['frame-ancestors'], ["'none'"]);
 	assert.deepEqual(directives['form-action'], ["'self'"]);
-	assert.deepEqual(directives['connect-src'], ["'self'", 'https://basket.databuddy.cc', 'https://api.databuddy.cc']);
+	assert.deepEqual(directives['connect-src'], ["'self'", 'https://basket.databuddy.cc', 'https://api.databuddy.cc', 'https://*.clerk.accounts.dev', 'https://*.clerk.com']);
 	assert.ok(directives['script-src'].includes("'wasm-unsafe-eval'"));
 	assert.ok(directives['script-src'].includes('https://cdn.databuddy.cc'));
 	assert.equal(headers.some((header) => header.key === 'Content-Security-Policy'), false);

@@ -30,11 +30,11 @@ export function lookupFailure(error: unknown) {
 }
 
 /** Only called after authorization. The durable claim also records negative/failed attempts. */
-export async function lookupCompanyOnAuthorization(actor: Account, key: string, store: CompanyContextStore) {
+export async function lookupCompanyOnAuthorization(actor: Account, key: string, store: CompanyContextStore, makeContextClient: typeof contextClient = contextClient) {
 	if (!actor.user.email) return;
  if (!await store.claimLookup(actor)) return;
  try {
-  const client = contextClient(key, actor.user.email, undefined, actor);
+  const client = makeContextClient(key, actor.user.email, undefined, actor);
   const result = await client.brand.retrieve({ type: 'by_email', email: actor.user.email, timeoutOpts: { milliseconds: 45_000, behavior: 'return-partial' } }, { maxRetries: 0, timeout: 50_000 });
   const brand = result.brand;
   const domain = brand?.domain?.toLowerCase().replace(/^www\./, '');

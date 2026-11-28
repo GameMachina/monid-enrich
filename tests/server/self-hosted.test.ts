@@ -3,7 +3,7 @@ import { test, type TestContext } from 'node:test';
 import { NextRequest } from 'next/server';
 import { proxy } from '../../src/proxy';
 import { authConfig, newSecret, readSession, SESSION_COOKIE } from '../../src/lib/server/auth';
-import { contextSignInEnabled } from '../../src/lib/server/deployment';
+import { contextSignInEnabled, managedAuthEnabled } from '../../src/lib/server/deployment';
 import { serverKeyAvailability } from '../../src/lib/server/provider-access';
 import { requestGrant } from './access-fixture';
 import { workspaceId } from '../../src/lib/server/database';
@@ -11,7 +11,7 @@ import { trialEnabled } from '../../src/lib/server/openai-trial';
 import { SELF_HOSTED_SECONDS } from '../../src/lib/server/self-hosted';
 
 function configure(t: TestContext) {
- const values = { NODE_ENV: 'production', ENRICHABLE_APP_URL: '', ENRICHABLE_SESSION_SECRET: '', ENRICHABLE_DEV_AUTH: '', CONTEXT_OAUTH_CLIENT_ID: '', CONTEXT_OAUTH_CLIENT_SECRET: '', ENRICHABLE_OPENAI_TRIAL_ENABLED: 'true', OPENAI_API_KEY: 'server-key', ENRICHABLE_ALLOW_SERVER_KEYS_WITHOUT_PASSWORD: 'false', ENRICHABLE_PASSWORD: '' };
+ const values = { NODE_ENV: 'production', ENRICHABLE_AUTH_MODE: 'self-hosted', ENRICHABLE_APP_URL: '', ENRICHABLE_SESSION_SECRET: '', ENRICHABLE_DEV_AUTH: '', CONTEXT_OAUTH_CLIENT_ID: '', CONTEXT_OAUTH_CLIENT_SECRET: '', ENRICHABLE_OPENAI_TRIAL_ENABLED: 'true', OPENAI_API_KEY: 'server-key', ENRICHABLE_ALLOW_SERVER_KEYS_WITHOUT_PASSWORD: 'false', ENRICHABLE_PASSWORD: '' };
  const previous = Object.fromEntries(Object.keys(values).map(key => [key, process.env[key]]));
  Object.assign(process.env, values);
  t.after(() => { for (const [key,value] of Object.entries(previous)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; } });
@@ -67,13 +67,13 @@ test('self-hosted deployments use manual keys, ignore inherited OAuth credential
  process.env.CONTEXT_OAUTH_CLIENT_ID = 'enrichable';
  process.env.CONTEXT_OAUTH_CLIENT_SECRET = 'c'.repeat(32);
  assert.equal(contextSignInEnabled(), false);
- assert.throws(authConfig, /only available/);
+	assert.throws(authConfig, /not available in Monid Enrich/);
  assert.equal(trialEnabled(), false);
  for (const path of ['start', 'callback', 'logout', 'dev']) assert.equal(proxy(new NextRequest(`${origin}/api/auth/${path}`)).status, 404);
- const request = new Request(`${origin}/api/enrich`, { headers: { 'x-openai-key': 'my-openai', 'x-context-key': 'my-context' } });
+ const request = new Request(`${origin}/api/enrich`, { headers: { 'x-openai-key': 'my-openai', 'x-monid-key': 'my-monid' } });
  const credentials = await requestGrant(request);
  assert.equal(credentials.keys.openai, 'my-openai');
- assert.equal(credentials.keys.context, 'my-context');
+ assert.equal(credentials.keys.monid, 'my-monid');
  assert.equal(credentials.trialAccount, undefined);
  const availability = await serverKeyAvailability(request);
  assert.equal(availability.contextConnected, false);
@@ -81,14 +81,16 @@ test('self-hosted deployments use manual keys, ignore inherited OAuth credential
  assert.equal(availability.openai, false);
 });
 
-test('production OAuth is restricted to official domains and cannot accept a self-hosted cookie', t => {
+test('Clerk is explicit in production and old Context OAuth cannot accept self-hosted cookies', t => {
  configure(t);
- for (const host of ['www.enrichable.io', 'enrichable.io']) {
+ process.env.ENRICHABLE_AUTH_MODE = 'clerk';
+ for (const host of ['autonomousgtm.xyz', 'www.autonomousgtm.xyz', 'enrich.autonomousgtm.xyz']) {
   process.env.ENRICHABLE_APP_URL = `https://${host}`;
-  assert.equal(contextSignInEnabled(), true);
+  assert.equal(managedAuthEnabled(), true);
+  assert.equal(contextSignInEnabled(), false);
   assert.equal(readSession(`local.${newSecret()}`), null);
  }
- for (const host of ['enrichable.io.attacker.test', 'my-copy.vercel.app', 'localhost']) {
+ for (const host of ['autonomousgtm.xyz.attacker.test', 'my-copy.vercel.app', 'localhost']) {
   process.env.ENRICHABLE_APP_URL = `https://${host}`;
   assert.equal(contextSignInEnabled(), false);
  }

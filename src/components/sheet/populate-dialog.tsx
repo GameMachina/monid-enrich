@@ -88,7 +88,7 @@ export function FindRowsComposer({ draft, onDraftChange, onSubmit, busy = false,
 	const queryInput = definition.requiredInputs.find((input) => input.key === 'query');
 	const countryInput = definition.requiredInputs.find((input) => input.key === 'countries' && input.type === 'country-list');
 	const supportsCountries = Boolean(countryInput);
-	const inputError = tableTypeInputError(definition, { query, countries: effectiveCountries, inputs: effectiveInputs });
+	const inputError = query.trim().length >= 3 ? tableTypeInputError(definition, { query, countries: effectiveCountries, inputs: effectiveInputs }) : null;
 	const { connections } = useSettings();
 	const router = useRouter();
 	const [billing, setBilling] = useState<BillingAccess | null>(null);

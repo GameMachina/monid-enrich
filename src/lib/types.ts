@@ -288,6 +288,8 @@ export interface Cell {
 	m?: CellMeta;
 	/** Who is running it: a browser tab or an MCP request (see `startCell`). Only running cells carry one. */
 	owner?: string;
+	/** Idempotency receipt for this pending run. Kept separate from settled result metadata. */
+	run?: { inputFingerprint: string; idempotencyKey: string; createdAt: number };
 	t: number;
 }
 

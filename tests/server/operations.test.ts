@@ -5,6 +5,7 @@ import { PROVIDERS, type Provider } from '../../src/lib/organization-settings';
 import { runOp } from '../../src/lib/server/enrich';
 import type { ColumnOp } from '../../src/lib/types';
 import { testAccess } from './access-fixture';
+import { monidFixtureRequest, monidFixtureResponse } from './monid-fixture';
 
 const row = { Name: 'Ada Lovelace', Domain: 'example.com', Email: 'ada@example.com', Website: 'https://example.com' };
 const page = { type: 'column', column: 'Website' } as const;
@@ -31,7 +32,14 @@ const SAMPLES: Array<[string, ColumnOp]> = [
 ];
 
 /** Every request succeeds with a page of text, so runs reach each credential check and fail only on content. */
-const respond = async () => Response.json({ markdown: { success: true, data: 'Page text: free plan, Ada' }, highlights: { success: true, data: ['Page text'] } });
+const respond = async (input: string | URL | Request, init?: RequestInit) => {
+	const request = new Request(input, init);
+	if (request.url === 'https://api.monid.ai/v1/run') {
+		const run = await monidFixtureRequest(request);
+		return monidFixtureResponse(run, { markdown: { success: true, data: 'Page text: free plan, Ada' }, highlights: { success: true, data: ['Page text'] } });
+	}
+	return Response.json({ id: 'fixture', created_at: 1, model: 'test', status: 'completed', output: [{ id: 'message', type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: '{"value":"yes","confidence":1,"sources":[]}', annotations: [] }] }], usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } });
+};
 const keysExcept = (excluded: readonly Provider[]) => Object.fromEntries(PROVIDERS.filter((provider) => !excluded.includes(provider)).map((provider) => [provider, `test-${provider}-key`]));
 const reason = async (op: ColumnOp, excluded: readonly Provider[]) => (await runOp(testAccess({ keys: keysExcept(excluded), model: 'test' }), op, row)).failure?.reason;
 

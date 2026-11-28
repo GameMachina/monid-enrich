@@ -338,7 +338,10 @@ export async function runMonid(apiKey: string, provider: string, endpoint: strin
 		if (error instanceof MonidError && error.uncertain) options.spend?.recordMonid({ provider, endpoint, status: 'UNCERTAIN' });
 		throw error;
 	}
-	if (!run.runId) throw new MonidError('Monid returned no run ID. The result could not be confirmed; it was not retried.', response.status, undefined, true, run);
+	if (!run.runId) {
+		options.spend?.recordMonid({ provider, endpoint, status: 'UNCERTAIN' });
+		throw new MonidError('Monid returned no run ID. The result could not be confirmed; it was not retried.', response.status, undefined, true, run);
+	}
 	options.spend?.recordMonid({ runId: run.runId, provider, endpoint, status: run.status, costUsd: costOf(run), billedUnits: run.billedUnits, price: run.price, resultCount: run.resultCount ?? undefined, completedAt: run.completedAt });
 	try { await persistRun(options.actor, run, input, apiKey, costOf(run), options.spend?.attribution); }
 	catch (cause) { throw new MonidError(`Monid created run ${run.runId}, but its receipt could not be saved. It was not resubmitted; check this run in Monid before retrying.`, undefined, run.runId, true, cause); }

@@ -231,3 +231,50 @@ test('Amazon seller lookup is single-call and never exceeds its verified US scop
 	assert.equal(count, 1);
 	assert.equal(events.flatMap((event) => event.type === 'rows' ? event.rows : []).length, 1);
 });
+
+test('each runnable records type returns five uniquely identified rows through the bounded runner', async () => {
+	const types = DEFAULT_TABLE_TYPES.filter((definition) => definition.entity === 'records' && definition.status === 'published' && tableTypeRunnableError(definition) === null);
+	assert.ok(types.length >= 20);
+	const fixtureItems = (id: string) => Array.from({ length: 5 }, (_, index) => ({
+		id: `${id}-${index}`, offerId: `${id}-offer-${index}`, product_id: `${id}-product-${index}`, asin: `B0ABCDEF0${index}`,
+		trackId: String(100000 + index), place_id: String(200000 + index), objectID: `${id}-org-${index}`,
+		name: `${id} record ${index}`, title: `${id} title ${index}`, text: `${id} review ${index}`, review: `${id} review ${index}`,
+		url: `https://example.test/${id}/${index}`, profile_url: `https://example.test/${id}/profile/${index}`,
+		username: `${id}-user-${index}`, importer: `${id} importer ${index}`, exporter: `${id} exporter ${index}`,
+		hsCode: `85414${index}`, rating: 5, date: `2026-11-${String(index + 1).padStart(2, '0')}`,
+		author_name: `${id} author ${index}`, reviewer_name: `${id} reviewer ${index}`, seller_id: `${id}-seller-${index}`,
+	}));
+	const inputValues: Record<string, string> = {
+		store: 'allbirds', location: 'Austin, Texas', 'business-url': 'https://www.yelp.com/biz/sample-business',
+		'place-id': '12345', coordinates: '30.2672,-97.7431', board: 'stripe', 'investor-domain': 'a16z.com',
+		'app-id': '123456789', 'product-slug': 'notion', 'product-id': '1234', 'product-name': 'Notion',
+		'date-start': '2026-01-01', 'date-end': '2026-11-01', 'hs-code': '854140',
+		'country-origin': 'CHN', 'country-destination': 'USA', asin: 'B09B8V1LZ3',
+	};
+	for (const definition of types) {
+		const inputs: Record<string, string> = {};
+		for (const spec of definition.requiredInputs) {
+			if (spec.key === 'query' || spec.key === 'countries') continue;
+			if (spec.type === 'select') inputs[spec.key] = spec.options?.[0]?.value ?? '';
+			else if ((spec.required || ['location', 'business-url', 'place-id', 'app-id', 'product-slug'].includes(spec.key)) && inputValues[spec.key]) inputs[spec.key] = inputValues[spec.key]!;
+		}
+		const items = fixtureItems(definition.id);
+		const output = Object.fromEntries([
+			'offers', 'products', 'local_results', 'results', 'reviews', 'search_results', 'jobs', 'agents', 'hits',
+			'listings', 'homes', 'companies', 'deals', 'investors', 'funds', 'users', 'items', 'organic_results', 'sellers',
+		].map((key) => [key, items]));
+		const events: PopulateEvent[] = [];
+		await runMonidTableSearch(
+			testAccess({ keys: { monid: 'fixture-key' } }),
+			request(definition.id, { query: `five ${definition.name} fixture rows`, target: 5, inputs }),
+			(event) => { events.push(event); },
+			new AbortController().signal,
+			async () => monidRun(output),
+		);
+		const rows = events.flatMap((event) => event.type === 'rows' ? event.rows : []);
+		assert.equal(rows.length, 5, definition.id);
+		const keys = rows.map((row) => foundRowKey(typeof row[definition.identity.sourceField] === 'string' ? row[definition.identity.sourceField] as string : null));
+		assert.ok(keys.every(Boolean), `${definition.id} emits its configured identity`);
+		assert.equal(new Set(keys).size, 5, `${definition.id} fixture rows deduplicate independently`);
+	}
+});

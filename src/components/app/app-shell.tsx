@@ -3,6 +3,7 @@
 import { ToastProvider } from '@/components/ui/toast';
 import { type ReactNode, Suspense, useEffect } from 'react';
 import { accountStorageKey } from '@/lib/account-storage';
+import { ACCOUNT_CHANGED_MESSAGE } from '@/lib/account-messages';
 import { KeysDialog } from './keys-dialog';
 import { SettingsProvider, useSettings } from './settings-context';
 import { NavigationProvider, Sidebar } from './sidebar';
@@ -40,7 +41,9 @@ function ShellAlerts() {
 			{warning && <p role="status" className="bg-warning-soft px-4 py-2 text-body-sm text-fg">{warning}</p>}
 			{settingsError && <div role="alert" className="flex flex-wrap items-center gap-x-3 gap-y-1 bg-danger-soft px-4 py-2 text-body-sm text-danger">
 				<span className="min-w-0 flex-1">{settingsError}</span>
-				<button type="button" onClick={retrySettings} className="font-medium underline-offset-4 hover:underline">Retry</button>
+				{settingsError === ACCOUNT_CHANGED_MESSAGE
+					? <button type="button" onClick={() => window.location.reload()} className="font-medium underline-offset-4 hover:underline">Reload</button>
+					: <button type="button" onClick={retrySettings} className="font-medium underline-offset-4 hover:underline">Retry</button>}
 			</div>}
 		</div>
 	);

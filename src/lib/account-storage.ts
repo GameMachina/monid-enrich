@@ -3,8 +3,9 @@
 let account: { partition: string; sessionId: string } | null = null;
 
 export function setStorageAccount(next: { partition: string; sessionId: string }) {
-	if (account && (account.partition !== next.partition || account.sessionId !== next.sessionId)) throw new Error('Reload before switching accounts');
+	if (account && (account.partition !== next.partition || account.sessionId !== next.sessionId)) return false;
 	account = next;
+	return true;
 }
 
 export function accountStorageKey(key: string) {

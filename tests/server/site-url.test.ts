@@ -15,16 +15,17 @@ function configure(t: TestContext, values: Record<string, string>) {
 	});
 }
 
-test('the official apex and www resolve to the canonical www origin and are indexable', (t) => {
-	for (const host of ['enrichable.io', 'www.enrichable.io']) {
+test('the official site and app resolve to the canonical app origin and are indexable', (t) => {
+	for (const host of ['autonomousgtm.xyz', 'www.autonomousgtm.xyz', 'enrich.autonomousgtm.xyz']) {
 		configure(t, { ENRICHABLE_APP_URL: `https://${host}` });
+		assert.equal(OFFICIAL_SITE_URL, 'https://enrich.autonomousgtm.xyz');
 		assert.equal(siteUrl().origin, OFFICIAL_SITE_URL);
 		assert.equal(indexingEnabled(), true);
 	}
 });
 
 test('forks and lookalike hosts keep their own origin and stay out of search by default', (t) => {
-	for (const host of ['my-copy.vercel.app', 'enrichable.io.attacker.test']) {
+	for (const host of ['my-copy.vercel.app', 'autonomousgtm.xyz.attacker.test']) {
 		configure(t, { NEXT_PUBLIC_SITE_URL: `https://${host}/path` });
 		assert.equal(siteUrl().origin, `https://${host}`);
 		assert.equal(indexingEnabled(), false);
@@ -36,7 +37,7 @@ test('forks and lookalike hosts keep their own origin and stay out of search by 
 });
 
 test('previews never index and invalid URLs fall back to localhost', (t) => {
-	configure(t, { ENRICHABLE_APP_URL: 'https://www.enrichable.io', VERCEL_ENV: 'preview' });
+	configure(t, { ENRICHABLE_APP_URL: 'https://enrich.autonomousgtm.xyz', VERCEL_ENV: 'preview' });
 	assert.equal(indexingEnabled(), false);
 	configure(t, { NEXT_PUBLIC_SITE_URL: 'not a url' });
 	assert.equal(siteUrl().origin, 'http://localhost:3000');

@@ -21,12 +21,14 @@ function settled(cell: Cell, at: number): Cell {
 /** A failure keeps the result its run started from (a failure's own metadata is not one), so a failed or stale re-run
     never erases a value; otherwise it records the failure's metadata. */
 function failed(cell: Cell, e: string, m: CellMeta | undefined, at: number): Cell {
+	const runMeta = cell.s === 'running' && cell.run ? { inputFingerprint: cell.run.inputFingerprint, jobIdempotencyKey: cell.run.idempotencyKey, jobIdempotencyCreatedAt: cell.run.createdAt } : undefined;
 	if (cell.v !== null || (cell.m && cell.s !== 'error')) {
 		// Keep the previous value, but attach this attempt's provider/run receipt so the cell detail reflects what just failed.
-		const meta = cell.s === 'running' && m ? { ...cell.m, ...m } : cell.m;
+		const meta = cell.s === 'running' && (m || runMeta) ? { ...cell.m, ...runMeta, ...m } : cell.m;
 		return { v: cell.v, ...(meta ? { m: meta } : {}), s: 'error', e, t: at };
 	}
-	return { v: null, s: 'error', e, ...(m ? { m } : {}), t: at };
+	const meta = cell.s === 'running' && (m || runMeta) ? { ...runMeta, ...m } : m;
+	return { v: null, s: 'error', e, ...(meta ? { m: meta } : {}), t: at };
 }
 
 /** The only place an enrichment changes a cell's status. A pending cell keeps its last settled value and metadata,

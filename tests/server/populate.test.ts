@@ -5,6 +5,7 @@ import { normalizeDiscoveryQuery, populateStream } from '../../src/lib/server/po
 import type { PopulateEvent } from '../../src/lib/types';
 import { rowSchema } from '../../src/lib/workspace';
 import { testAccess } from './access-fixture';
+import { monidFixtureRequest, monidFixtureResponse } from './monid-fixture';
 
 const access = testAccess({ keys: { openai: 'test-openai', context: 'test-context' }, model: 'test-model', openaiBaseUrl: 'https://model.example/v1' });
 
@@ -38,8 +39,10 @@ test('company discovery skips companies the sheet lists and maps funding rounds 
 				usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 },
 			});
 		}
-		assert.equal(request.url, 'https://api.context.dev/v1/company/search');
-		return Response.json({ results: [
+		const monid = await monidFixtureRequest(request);
+		assert.equal(request.url, 'https://api.monid.ai/v1/run');
+		assert.equal(monid.endpoint, '/company/search');
+		return monidFixtureResponse(monid, { results: [
 			{ name: 'Already listed', domain: 'WWW.Listed.example' },
 			{ name: 'Latest round only', domain: 'latest.example', funding: { stage: null, latest_round: { type: 'series_b', date: '2026-03-02', amount_usd: 25_000_000 } } },
 			{ name: 'Current stage', domain: 'current.example', funding: { stage: 'series_c', latest_round: { type: 'series_b' } } },
@@ -65,8 +68,8 @@ test('the agent serializes parallel tool calls, shrinks the last web request, an
 	let modelCalls = 0;
 	t.mock.method(globalThis, 'fetch', async (input: string | URL | Request, options?: RequestInit) => {
 		const request = new Request(input, options);
-		const body = await request.json();
 		if (request.url === 'https://model.example/v1/chat/completions') {
+			const body = await request.json();
 			modelCalls++;
 			return Response.json({
 				id: 'completion-test', object: 'chat.completion', created: 0, model: 'test-model',
@@ -80,15 +83,18 @@ test('the agent serializes parallel tool calls, shrinks the last web request, an
 				usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 },
 			});
 		}
-		assert.equal(request.url, 'https://api.context.dev/v1/web/search');
+		const monid = await monidFixtureRequest(request);
+		assert.equal(request.url, 'https://api.monid.ai/v1/run');
+		assert.equal(monid.endpoint, '/web/search');
 		active++;
 		maxActive = Math.max(maxActive, active);
 		const batch = requested.length;
-		requested.push(body.numResults);
+		const numResults = Number(monid.input.body?.numResults);
+		requested.push(numResults);
 		// Yield to allow overlapping tool executions to start if they aren't locked.
 		await new Promise((resolve) => setTimeout(resolve, 10));
 		active--;
-		return Response.json({ results: Array.from({ length: body.numResults }, (_, i) => ({
+		return monidFixtureResponse(monid, { results: Array.from({ length: numResults }, (_, i) => ({
 			// Five results in the second batch repeat the first batch.
 			url: `https://site-${batch === 1 && i < 5 ? 0 : batch}-${i}.example`,
 			title: `Site ${batch}-${i}`, description: 'Homelab networking',
@@ -113,10 +119,11 @@ test('people discovery enriches accepted profiles for inline photos without enri
 			if (++modelCalls === 1) return Response.json({ id: 'plan', object: 'chat.completion', created: 0, model: 'test-model', usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 }, choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: JSON.stringify({ mode: 'discovery', people: [] }) } }] });
 			return Response.json({ id: 'search', object: 'chat.completion', created: 0, model: 'test-model', usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 }, choices: [{ index: 0, finish_reason: 'tool_calls', message: { role: 'assistant', content: null, tool_calls: [{ id: 'people', type: 'function', function: { name: 'searchPeople', arguments: JSON.stringify({ query: 'Founders' }) } }] } }] });
 		}
-		if (request.url.endsWith('/people/search')) return Response.json({ request_id: 'search', results: ['Ada Lovelace', 'Grace Hopper'].map(name => ({ name, profiles: [`https://linkedin.com/in/${name.split(' ')[0]}`], role: { title: 'Founder', company: null }, location: {}, schools: [], skills: [], description: '', years_of_experience: 3 })) });
-		assert.ok(request.url.endsWith('/people/enrich'));
-		profiles.push((await request.json()).social_urls);
-		return Response.json({ request_id: 'enrich', match: { status: 'candidate', person: { avatar_url: 'https://cdn.example/ada.png' } } });
+		const monid = await monidFixtureRequest(request);
+		if (monid.endpoint === '/people/search') return monidFixtureResponse(monid, { request_id: 'search', results: ['Ada Lovelace', 'Grace Hopper'].map(name => ({ name, profiles: [`https://linkedin.com/in/${name.split(' ')[0]}`], role: { title: 'Founder', company: null }, location: {}, schools: [], skills: [], description: '', years_of_experience: 3 })) });
+		assert.equal(monid.endpoint, '/people/enrich');
+		profiles.push(monid.input.body?.social_urls as string[]);
+		return monidFixtureResponse(monid, { request_id: 'enrich', match: { status: 'candidate', person: { avatar_url: 'https://cdn.example/ada.png' } } });
 	});
 	const events: PopulateEvent[] = (await new Response(populateStream(access, { query: 'Find founders', entity: 'people', target: 1 })).text()).trim().split('\n').map(line => JSON.parse(line));
 	assert.deepEqual(events.filter(e => e.type === 'error'), []);

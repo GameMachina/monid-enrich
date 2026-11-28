@@ -133,10 +133,11 @@ test('results are stamped, admitted to the current format, and kept only while t
 	assert.deepEqual({ ...stale, cell: { ...stale.cell, t: 0 } }, { outcome: 'stale', cell: { v: 0.5, m: { reasoning: 'Earlier' }, s: 'error', e: 'Inputs or instructions changed during enrichment. Run this cell again.', t: 0 } }, 'a stale re-run keeps the previous value');
 	const superseded = settleCell(plan, grid([name, { ...out, op: template('{{Name}}!') }], 'Ada'), result, marker);
 	assert.deepEqual({ ...superseded, cell: { ...superseded.cell, t: 1 } }, { outcome: 'superseded', cell: previous }, 'a new rule restores the previous value');
-	assert.deepEqual(failureCell(plan, 'Rate limited', { credits: 1 }, 4, marker), { v: 0.5, m: { reasoning: 'Earlier' }, s: 'error', e: 'Rate limited', t: 4 }, 'a failed re-run keeps the previous value');
+	assert.deepEqual(failureCell(plan, 'Rate limited', { credits: 1 }, 4, marker), { v: 0.5, m: { reasoning: 'Earlier', credits: 1 }, s: 'error', e: 'Rate limited', t: 4 }, 'a failed re-run keeps the value and records the attempt receipt');
 	assert.deepEqual(failureCell(plan, 'Rate limited', { credits: 1 }, 4, startCell(planCell({ sheet: sheetOf([name, out]), rows: [rowOf('r', 0, { name: done('Ada') })] }, { rowId: 'r', columnId: 'out' })!)), { v: null, s: 'error', e: 'Rate limited', m: { credits: 1 }, t: 4 });
 	const refused = settleCell(plan, grid([name, out], 'Ada'), resultCell(plan, 'not a percentage', undefined, 3), marker);
-	assert.deepEqual([refused.cell.v, refused.cell.s, refused.cell.m], [0.5, 'error', { reasoning: 'Earlier' }], 'an answer the format refuses keeps the previous value');
+	assert.deepEqual([refused.cell.v, refused.cell.s, refused.cell.m?.reasoning], [0.5, 'error', 'Earlier'], 'an answer the format refuses keeps the previous value');
+	assert.equal(refused.cell.m?.inputFingerprint, inputFingerprint(plan.version), 'the format error retains the attempt fingerprint');
 });
 
 test('a source person-name column is enriched in place: the name stays, the match adds its photo', () => {

@@ -1,15 +1,18 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { MockLanguageModelV4 } from 'ai/test';
 import type ContextDev from 'context.dev';
 import { ENTITY_FIELDS, entityFieldOp } from '../../src/lib/entity-fields';
 import { ColumnOpSchema, type Column } from '../../src/lib/types';
 import { runOp } from '../../src/lib/server/enrich';
+import type { AccessAdapters } from '../../src/lib/server/provider-access';
 import { testAccess } from './access-fixture';
 
 type Params = Record<string, unknown> & { url?: string; parseParams?: { parser?: string } };
 /** An in-memory Context.dev client behind the access adapter: no SDK wire payloads or network. */
-const contextWith = (web: { scrape?: (params: Params) => unknown; mapUrls?: (params: Params) => unknown }) => testAccess({ keys: { context: 'test-web-actions' }, model: 'test-model' }, {
+const contextWith = (web: { scrape?: (params: Params) => unknown; mapUrls?: (params: Params) => unknown }, openai?: AccessAdapters['openai']) => testAccess({ keys: { context: 'test-web-actions', ...(openai ? { openai: 'test-openai' } : {}) }, model: 'test-model' }, {
 	context: (apiKey) => { assert.equal(apiKey, 'test-web-actions'); return { web: { scrape: async (params: Params) => web.scrape!(params), mapUrls: async (params: Params) => web.mapUrls!(params) } } as unknown as ContextDev; },
+	...(openai ? { openai } : {}),
 });
 const source: Column = { id: 'web', name: 'Webpage', type: 'source', format: 'webpage', width: 240, createdAt: 1 };
 
@@ -53,7 +56,11 @@ test('web actions use the row URL and the correct Context output without OpenAI'
 	const map = ENTITY_FIELDS.website[0].fields.find((field) => field.field === 'map')!;
 	const result = await runOp(access, entityFieldOp({ ...source, name: 'Website', format: 'website' }, [], map), { Website: 'example.com' });
 	assert.deepEqual(result.value, ['https://example.com/pricing']);
-	const extraction = await runOp(access, { kind: 'scrape', page: { type: 'column', column: 'Webpage' }, mode: 'extract', fields: [{ name: 'product', description: 'Product name' }], maxChars: 2000 }, { Webpage: 'https://example.com/docs?lang=en' });
+	const extractionAccess = contextWith({ scrape: () => ({ markdown: { success: true, data: '# Example product' } }) }, () => new MockLanguageModelV4({ doGenerate: async (params) => {
+		assert.equal(params.responseFormat?.type, 'json');
+		return { content: [{ type: 'text', text: JSON.stringify({ product: 'Example' }) }], finishReason: { unified: 'stop', raw: undefined }, usage: { inputTokens: { total: 10, noCache: 10, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 5, text: 5, reasoning: 0 } }, warnings: [] };
+	} }));
+	const extraction = await runOp(extractionAccess, { kind: 'scrape', page: { type: 'column', column: 'Webpage' }, mode: 'extract', fields: [{ name: 'product', description: 'Product name' }], maxChars: 2000 }, { Webpage: 'https://example.com/docs?lang=en' });
 	assert.equal(extraction.value, 'Example');
 });
 

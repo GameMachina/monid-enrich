@@ -1,35 +1,34 @@
-# Enrichable
+# Monid Enrich
 
-> Enrichable is a free, open-source (MIT) AI spreadsheet for data enrichment. Describe the companies or people you want and it finds them, then AI columns research every row with live web data and keep their sources. Built by Context.dev.
+> Monid Enrich is a spreadsheet for natural-language company, people, website, and supported table-type searches, followed by row-by-row enrichment. Monid handles data-provider operations and billing; OpenAI is optional and uses a key supplied by the workspace.
 
-- Website: https://www.enrichable.io
-- App: https://www.enrichable.io/app
-- Source code: https://github.com/context-dot-dev/enrichable
-- MCP endpoint: https://www.enrichable.io/mcp (Streamable HTTP, `Authorization: Bearer <organization key>`)
+- Website: https://autonomousgtm.xyz
+- App: https://enrich.autonomousgtm.xyz/app
+- Source code: https://github.com/GameMachina/monid-enrich
+- MCP endpoint: https://enrich.autonomousgtm.xyz/mcp (Streamable HTTP, `Authorization: Bearer <workspace key>`)
 
 ## What it does
 
-- Builds lead lists from a prompt, for example "every solar company in the US with 50+ employees". Rows are deduplicated by domain.
+- Builds company, people, and website lists from natural-language prompts. New searches are limited to five rows while testing and never exceed 1,000 rows per search.
 - Adds AI columns that answer a plain-English question for every row (web research, page reads, company and person data) and cite their sources.
 - Runs true/false checks, categories and scores with a probability or confidence on each call.
-- Finds work emails with a waterfall across Hunter, Prospeo, Apollo, QuickEnrich and ContactOut.
+- Supports published Monid table types for product offers, reviews, jobs, trade, and other verified data operations.
 - Drafts personalized emails and branded PDFs per row.
 - Calculates Excel-style formulas locally with IronCalc (WebAssembly), with no API calls.
 - Exports CSV, Excel (.xlsx) and JSON.
-- Exposes an MCP server so Claude Code, Cursor and other MCP clients can read sheets, add columns and run enrichment.
+- Exposes an MCP server so compatible clients can read sheets, add columns, and run enrichment.
 
 ## Facts
 
-- License: MIT. Free to use and self-host.
-- Data providers: Context.dev API (web search, scraping, company and people data), OpenAI (reasoning), TypeSafe (optional calibrated classification), optional email providers.
-- Self-hosting: Vercel plus Neon Postgres, or locally with Node.js 22. Requires a Context.dev API key and an OpenAI API key.
-- Limits: 10 sheets per workspace and 1,000 rows per sheet by default; self-hosted copies can change them.
+- Access: $37 one-time lifetime access; an unpaid workspace can try one sheet with up to five populated rows. The workspace owner can test without purchase.
+- Data providers: Monid for search and enrichment, and an optional workspace-provided OpenAI key for reasoning and generation.
+- Hosting: Vercel with Neon Postgres, or locally with Node.js 22.
+- Limits: searches are capped at 1,000 records. The unpaid trial is limited to one sheet and five populated rows.
 - Stack: Next.js 16, React 19, TypeScript, Tailwind CSS 4, Neon Postgres, IndexedDB, Vercel AI SDK, Model Context Protocol.
 
 ## Docs
 
-- [README](https://github.com/context-dot-dev/enrichable#readme): overview, self-hosting and API keys
-- [Usage](https://github.com/context-dot-dev/enrichable/blob/main/docs/usage.md): column operations, formulas and providers
-- [MCP](https://github.com/context-dot-dev/enrichable/blob/main/docs/mcp.md): agent setup, keys and tools
-- [Deploy](https://github.com/context-dot-dev/enrichable/blob/main/docs/deploy.md): Vercel and Neon setup
-- [Email enrichment](https://github.com/context-dot-dev/enrichable/blob/main/docs/email-enrichment.md): the email provider waterfall
+- [README](https://github.com/GameMachina/monid-enrich#readme): overview, self-hosting and setup
+- [Usage](https://github.com/GameMachina/monid-enrich/blob/main/docs/usage.md): columns, formulas, and providers
+- [MCP](https://github.com/GameMachina/monid-enrich/blob/main/docs/mcp.md): agent setup, keys, and tools
+- [Production setup](https://github.com/GameMachina/monid-enrich/blob/main/docs/production-setup.md): Vercel and Neon setup

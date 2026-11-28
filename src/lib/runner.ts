@@ -100,6 +100,8 @@ interface Task {
 	/** Stable across transport retries and used to reconcile this cell's current execution. */
 	idempotencyKey?: string;
 	idempotencyFingerprint?: string;
+	/** Settled cell to restore if this run is stopped or superseded; null represents a previously empty cell. */
+	restoreCell: Cell | null;
 	state: TaskState;
 	unsaved?: Unsaved;
 }
@@ -142,6 +144,18 @@ function sleep(ms: number, signal: AbortSignal) {
 		const timer = setTimeout(done, ms);
 		signal.addEventListener('abort', done, { once: true });
 	});
+}
+
+/** Recover a tab's own persisted running marker after reload. Runtime retry fields aren't settled cell metadata. */
+function restorePendingCell(cell: Cell): Cell {
+	const meta = cell.m ? { ...cell.m } : undefined;
+	if (meta && !cell.run) {
+		// Clean markers persisted by older versions, which stored run-only metadata beside the settled receipt.
+		delete meta.inputFingerprint;
+		delete meta.jobIdempotencyKey;
+		delete meta.jobIdempotencyCreatedAt;
+	}
+	return { v: cell.v, ...(meta && Object.keys(meta).length ? { m: meta } : {}), s: cell.v !== null || Boolean(meta && Object.keys(meta).length) ? 'done' : 'idle', t: cell.t };
 }
 
 /** Without a `failure` (an older server, or a request that failed on its way), only a rate limit is plainly refused
@@ -283,7 +297,8 @@ export class Runner {
 				existing.state.controller.abort();
 			}
 			const oldCell = row.cells[column.id];
-			const task: Task = { key, sheetId, rowId: row.id, columnId: column.id, attempts: 0, targetRowIds: options.targetRowIds, basis: existing ? undefined : basisOf(oldCell), unfinished: options.unfinished, idempotencyKey: nanoid(32), state: { phase: 'queued', starting: false } };
+			const restored = existing ? existing.restoreCell : oldCell && isPendingCell(oldCell) && oldCell.owner === this.owner ? restorePendingCell(oldCell) : oldCell ?? null;
+			const task: Task = { key, sheetId, rowId: row.id, columnId: column.id, attempts: 0, targetRowIds: options.targetRowIds, basis: existing ? undefined : basisOf(oldCell), unfinished: options.unfinished, idempotencyKey: nanoid(32), restoreCell: restored, state: { phase: 'queued', starting: false } };
 			this.tasks.delete(key);
 			this.tasks.set(key, task);
 			added.push(task);
@@ -321,7 +336,7 @@ export class Runner {
 			const cell = rows.get(JSON.stringify([task.sheetId, task.rowId]))?.cells[task.columnId];
 			if (!isPendingCell(cell) || cell!.owner !== this.owner) continue;
 			const list = changes.get(task.sheetId) ?? [];
-			list.push({ rowId: task.rowId, columnId: task.columnId, expected: cell, update: () => cellTransition(cell, { type: 'cancel' }) });
+			list.push({ rowId: task.rowId, columnId: task.columnId, expected: cell, update: () => task.restoreCell === null ? cellTransition(undefined, { type: 'cancel' }) : task.restoreCell });
 			changes.set(task.sheetId, list);
 		}
 		await Promise.all([...changes].map(([sheetId, list]) => persist(sheetId, list)));
@@ -610,6 +625,9 @@ export class Runner {
 				if (kind === 'start') return written = (outcome = recheck(plan, grid)) === 'applied' ? next : undefined;
 				const settled = settleCell(plan, grid, next, expected);
 				outcome = settled.outcome;
+				if (outcome === 'superseded') return written = task.restoreCell === null ? cellTransition(undefined, { type: 'cancel' }) : task.restoreCell;
+				if (outcome === 'stale' && task.restoreCell !== null) return written = cellTransition(task.restoreCell, { type: 'stale' }, this.now());
+				if (outcome === 'stale') return written = cellTransition(undefined, { type: 'stale' }, this.now());
 				return written = settled.cell;
 			} }]);
 			// A conflict replays the change on the workspace's version; when the cell changed there, `update` is not called
@@ -663,9 +681,11 @@ export class Runner {
 		const reusablePriorRun = plan.cell?.s === 'error' && priorMeta?.inputFingerprint === currentFingerprint;
 		if (task.idempotencyFingerprint && task.idempotencyFingerprint !== currentFingerprint) task.idempotencyKey = nanoid(32);
 		else if (!task.idempotencyFingerprint && reusablePriorRun && priorMeta?.jobIdempotencyKey && priorMeta.jobIdempotencyCreatedAt && this.now() - priorMeta.jobIdempotencyCreatedAt <= 24 * 60 * 60 * 1000) task.idempotencyKey = priorMeta.jobIdempotencyKey;
+		else if (!task.idempotencyFingerprint && plan.cell?.run?.inputFingerprint === currentFingerprint && this.now() - plan.cell.run.createdAt <= 24 * 60 * 60 * 1000) task.idempotencyKey = plan.cell.run.idempotencyKey;
+		if (!task.idempotencyKey) task.idempotencyKey = nanoid(32);
 		task.idempotencyFingerprint = currentFingerprint;
 		const selectedDataProvider = op.kind === 'email-enrichment' || op.kind === 'phone-enrichment' || op.kind === 'social-enrichment' ? op.dataProvider : undefined;
-		const marker = { ...startedCell, m: { ...(startedCell.m ?? {}), ...(selectedDataProvider ? { dataProvider: selectedDataProvider } : {}), inputFingerprint: currentFingerprint, jobIdempotencyKey: task.idempotencyKey, jobIdempotencyCreatedAt: this.now() } };
+		const marker = { ...startedCell, run: { inputFingerprint: currentFingerprint, idempotencyKey: task.idempotencyKey, createdAt: this.now() }, ...(selectedDataProvider && startedCell.m ? { m: { ...startedCell.m, dataProvider: selectedDataProvider } } : {}) };
 		const started = await commit(marker, 'start');
 		if (started !== 'applied') {
 			// Inputs moved, or someone else changed the cell first: plan it again rather than fail, so a run started
@@ -692,7 +712,7 @@ export class Runner {
 			// A stopped or superseded run leaves the cell as it found it.
 			if (signal.aborted && isPendingCell(current)) {
 				const pending = current;
-				await this.store.updateCells(sheetId, [{ rowId: row.id, columnId: column.id, expected: pending, update: () => cellTransition(pending, { type: 'cancel' }) }]);
+				await this.store.updateCells(sheetId, [{ rowId: row.id, columnId: column.id, expected: pending, update: () => task.restoreCell === null ? cellTransition(undefined, { type: 'cancel' }) : task.restoreCell }]);
 			}
 		}
 	}

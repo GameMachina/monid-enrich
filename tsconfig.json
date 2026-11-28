@@ -38,7 +38,9 @@
     ".next-self-hosted-test/types/**/*.ts",
     ".next-self-hosted-test/dev/types/**/*.ts",
     ".next-mobile-test/types/**/*.ts",
-    ".next-mobile-test/dev/types/**/*.ts"
+    ".next-mobile-test/dev/types/**/*.ts",
+    ".next-browser/types/**/*.ts",
+    ".next-browser/dev/types/**/*.ts"
   ],
   "exclude": [
     "node_modules"

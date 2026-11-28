@@ -4,6 +4,7 @@ import { notifyContextRequest } from './context-credits';
 import { notifyTrialLimit } from './ai-trial';
 import { ApiError, parseFailure, readError } from './api';
 import { keyHeaders } from './keys';
+import { accountHeaders } from './account-storage';
 import type { PopulateEvent, PopulateRequest } from './types';
 
 /** Newline-delimited lines of a streamed body, ending with any unterminated tail. */
@@ -40,7 +41,7 @@ function wait(delay: number, signal?: AbortSignal) {
 async function pollPopulateJob(jobId: string, onEvent: (event: PopulateEvent) => void | Promise<void>, signal?: AbortSignal) {
 	let delayMs = 1_000;
 	while (true) {
-		const response = await fetch(`/api/populate/jobs/${encodeURIComponent(jobId)}`, { cache: 'no-store', signal });
+		const response = await fetch(`/api/populate/jobs/${encodeURIComponent(jobId)}`, { cache: 'no-store', headers: accountHeaders(), signal });
 		if (!response.ok) throw await readError(response);
 		const job = await response.json() as PopulateJob;
 		await onEvent({ type: 'durable', jobId, status: job.status });
@@ -64,14 +65,14 @@ async function pollPopulateJob(jobId: string, onEvent: (event: PopulateEvent) =>
 
 export async function lookupActivePopulateJob(sheetId: string, idempotencyKey: string): Promise<PopulateJob | null> {
 	const query = new URLSearchParams({ sheetId, idempotencyKey });
-	const response = await fetch(`/api/populate/jobs?${query}`, { cache: 'no-store', headers: keyHeaders() });
+	const response = await fetch(`/api/populate/jobs?${query}`, { cache: 'no-store', headers: accountHeaders() });
 	if (!response.ok) throw await readError(response);
 	const result = await response.json() as { job?: PopulateJob | null };
 	return result.job ?? null;
 }
 
 export async function cancelPopulateJob(jobId: string) {
-	const response = await fetch(`/api/populate/jobs/${encodeURIComponent(jobId)}`, { method: 'POST', headers: keyHeaders() });
+	const response = await fetch(`/api/populate/jobs/${encodeURIComponent(jobId)}`, { method: 'POST', headers: accountHeaders() });
 	if (!response.ok) throw await readError(response);
 	return await response.json() as { jobId: string; status: string };
 }

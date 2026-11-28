@@ -43,7 +43,7 @@ test('an older sheet’s Domain column becomes Website once, through the rename:
 	assert.deepEqual(sheet.columns.map((entry) => entry.name), ['Website', 'CEO', 'Pricing']);
 	assert.equal(sheet.dataVersion, SHEET_DATA_VERSION);
 	assert.deepEqual(sheet.columns.map((entry) => entry.op && danglingReferences(entry.op, sheet.columns)).filter(Boolean), [[], []]);
-	assert.deepEqual(sheet.columns[1].op, { kind: 'ai', prompt: 'CEO of {{Website}}?', output: 'text', research: 'web' });
+	assert.deepEqual(sheet.columns[1].op, { kind: 'ai', dataProvider: 'monid', prompt: 'CEO of {{Website}}?', output: 'text', research: 'web' });
 	assert.equal(renderTemplate((sheet.columns[2].op as { template: string }).template, rowToRecord(rows[0], sheet.columns)), 'https://acme.com/pricing');
 	assert.equal(planCell({ sheet, rows }, { rowId: 'legacy-r1', columnId: 'ceo' })?.complete, true, 'a rename changes no input, so the answer is not outdated');
 	assert.equal(sheetHistory.peek('legacy', 'undo'), undefined, 'the upgrade is not an undo step');

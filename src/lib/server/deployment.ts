@@ -1,7 +1,7 @@
 import 'server-only';
 
-export const OFFICIAL_SITE_URL = 'http://localhost:3000';
-const OFFICIAL_HOSTS: string[] = [];
+export const OFFICIAL_SITE_URL = 'https://enrich.autonomousgtm.xyz';
+const OFFICIAL_HOSTS = ['autonomousgtm.xyz', 'www.autonomousgtm.xyz', 'enrich.autonomousgtm.xyz'];
 
 /** Parses a configured URL, naming the variable when it is malformed rather than failing with a bare "Invalid URL". */
 export function configuredUrl(name: string, value: string) {

@@ -177,7 +177,7 @@ test('whole-row AI columns do not outdate each other, and a rename keeps results
 	const { revision } = await sheets.patch(actor(), 'leads', { revision: saved.sheet.revision, sheet: saved.sheet, rows: [{ ...saved.rows[0], cells: { ...saved.rows[0].cells, ask: { ...saved.rows[0].cells.ask, m: { inputFingerprint: legacy } } } }], deleted: [] });
 	await ops.call('configure_column', { sheetId: 'leads', revision, column: { ...saved.sheet.columns[0], name: 'Website' } });
 	const renamed = await sheets.snapshot(actor(), 'leads');
-	assert.deepEqual(renamed.sheet.columns[1].op, { kind: 'ai', prompt: 'Who runs {{Website}}?', output: 'text', research: 'none' });
+	assert.deepEqual(renamed.sheet.columns[1].op, { kind: 'ai', prompt: 'Who runs {{Website}}?', output: 'text', research: 'none', dataProvider: 'monid' });
 	assert.deepEqual([await run('ask', 'ask-3'), await run('check', 'check-3')], ['skipped', 'skipped'], 'a rename changes no input');
 	assert.equal(calls, 2);
 	await ops.call('update_cells', { sheetId: 'leads', revision: renamed.sheet.revision, cells: [{ rowId: 'r1', columnId: 'domain', value: 'changed.com' }] });
@@ -250,13 +250,13 @@ test('agents get the browser’s retry rule: a provider failure after the reques
 	const { keys, sheets } = await fixture(t);
 	let calls = 0;
 	t.mock.method(globalThis, 'fetch', async () => { calls++; return Response.json({ error: 'upstream failed' }, { status: 503 }); });
-	const access = resolveAccess(MCP_POLICY, { account: actor(), headers: new Headers({ 'x-context-key': 'test-context' }) });
+	const access = resolveAccess(MCP_POLICY, { account: actor(), headers: new Headers({ 'x-monid-key': 'test-monid' }) });
 	const ops = new McpOperations(sheets, keys, actor(), access);
 	await seed(ops);
 	await ops.call('configure_column', { sheetId: 'companies', revision: 2, column: { id: 'site', name: 'Site', type: 'enriched', op: { kind: 'search', query: 'retry rule {{Domain}}', pick: 'url', numResults: 1 } } });
 	const result = await ops.call('enrich_cells', { sheetId: 'companies', columnId: 'site', rowIds: ['r1'], idempotencyKey: 'provider-failure' });
 	const [outcome] = result.outcomes as Array<{ status: string; failure?: unknown }>;
-	assert.deepEqual([outcome.status, outcome.failure, calls], ['error', { reason: 'provider_error', retryable: false, provider: 'context' }, 1]);
+	assert.deepEqual([outcome.status, outcome.failure, calls], ['error', { reason: 'provider_error', retryable: false, provider: 'monid' }, 1]);
 });
 
 test('rows start only when their worst case ends before the function limit, and failures stay structured', async (t) => {
@@ -317,7 +317,7 @@ test('real MCP client discovers and calls tools over stateless HTTP; auth and or
 	const preset = await client.callTool({ name: 'create_sheet', arguments: { sheetId: 'preset', name: 'Preset over SDK', template: 'companies', enrichments: [{ id: 'industry', name: 'Industry', op: { kind: 'company', domain: '{{Website}}', field: 'industry' } }] } });
 	assert.ok(!preset.isError);
 	assert.equal((preset.structuredContent as { sheet: { columns: { id: string }[] } }).sheet.columns.length, ENTITY_COLUMNS.companies.length);
-	assert.match(client.getInstructions() ?? '', /Prefer Enrichable built-in operations/);
+	assert.match(client.getInstructions() ?? '', /Use Monid Enrich's built-in operations/);
 	await services.keys.issueKey(actor(), key.version);
 	const revoked = await handleMcpRequest(new Request(url, { method: 'POST', headers: { authorization: `Bearer ${key.secret}` } }), services);
 	assert.equal(revoked.status, 401);
@@ -354,7 +354,7 @@ test('recoverable keys survive server reload, isolate tenants, authenticate ciph
 	const reloaded = new McpStore(database, () => 'test-encryption-root-that-is-shared-across-environments');
 	assert.equal((await reloaded.revealKey(actor('one', 'bob'))).secret, first.secret);
 	await assert.rejects(keys.revealKey(actor('two')), /No organization key/);
-	await assert.rejects(new McpStore(database, () => 'wrong-secret-that-is-at-least-32-characters').revealKey(actor()), /could not be decrypted/);
+	await assert.rejects(new McpStore(database, () => 'wrong-secret-that-is-at-least-32-characters').revealKey(actor()), /unknown encryption key version/);
 	await assert.rejects(new McpStore(database, () => undefined).issueKey(actor('unconfigured')), /Configure the shared/);
 	await db.query('UPDATE enrichable.mcp_keys SET encrypted_secret=NULL');
 	assert.equal((await keys.keyInfo(actor()))?.recoverable, false);
@@ -432,7 +432,7 @@ test('one create_sheet tool reuses app layouts, merges built-in enrichments, val
 	assert.equal(columns.length, ENTITY_COLUMNS.companies.length + 2);
 	assert.equal(columns.filter((c) => c.name === 'Industry').length, 1);
 	assert.equal(columns.find((c) => c.id === 'industry')?.type, 'enriched');
-	assert.match(String(created.operationGuidance), /Prefer Enrichable built-in operations/);
+	assert.match(String(created.operationGuidance), /Use Monid Enrich's built-in operations/);
 	assert.ok((created.availableOperations as Record<string, unknown>).company);
 	assert.equal((await ops.call('create_sheet', args)).existing, true);
 	await assert.rejects(ops.call('create_sheet', { ...args, name: 'Changed' }), /different configuration/);

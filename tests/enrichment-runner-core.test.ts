@@ -136,7 +136,12 @@ test('a failed re-run keeps the previous value with its error', async () => {
 	grid.answer(async () => ({ value: null, error: 'The provider refused this request.', failure: { reason: 'provider_error', retryable: false } }));
 	await grid.runner.enqueue(grid.sheet, grid.rows(), [grid.sheet.columns[1]]);
 	await settled(grid.runner);
-	assert.deepEqual(grid.cell(0, 'out'), { ...previous, s: 'error', e: 'The provider refused this request.', t: grid.cell(0, 'out').t });
+	const failed = grid.cell(0, 'out');
+	assert.deepEqual({ v: failed.v, s: failed.s, e: failed.e }, { v: previous.v, s: 'error', e: 'The provider refused this request.' });
+	assert.notEqual(failed.m?.inputFingerprint, previous.m?.inputFingerprint, 'the failure receipt identifies the new input it tried');
+	assert.match(failed.m?.inputFingerprint ?? '', /^v2:/);
+	assert.ok(failed.m?.jobIdempotencyKey);
+	assert.ok(failed.m?.jobIdempotencyCreatedAt);
 	assert.equal(grid.requests.length, 2);
 });
 

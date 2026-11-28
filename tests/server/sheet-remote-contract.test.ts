@@ -42,7 +42,7 @@ function contract(name: string, scenario: (remote: SheetRemote) => Promise<void>
 
 const notes: Column = { id: 'notes', name: 'Notes', type: 'source', width: 180, createdAt: 0 };
 const site: Column = { id: 'site', name: 'Website', type: 'source', width: 180, format: 'website', createdAt: 0 };
-const sheet = (id: string, columns = [notes, site]): Sheet => ({ id, name: id, columns, filters: [], sort: null, createdAt: 0, updatedAt: 0 });
+const sheet = (id: string, columns = [notes, site]): Sheet => ({ id, name: id, columns, filters: [], sort: null, createdAt: 0, updatedAt: 0, folderId: 'my-sheets' });
 const row = (sheetId: string, id: string, order: number, cells: Record<string, CellValue> = {}): Row => ({ id, sheetId, order, createdAt: 0, cells: Object.fromEntries(Object.entries(cells).map(([column, v]) => [column, { v, s: 'done', t: 1 }])) });
 const status = (code: number, message?: RegExp) => (error: unknown) => refused(error, code) && (!message || message.test(error.message));
 
@@ -79,12 +79,12 @@ contract('written values pass Admission, while values stored earlier never block
 	assert.equal((await remote.read('s'))!.sheet.revision, 2);
 });
 
-contract('a workspace holds ten sheets and a sheet a thousand rows', async (remote) => {
+contract('sheet storage supports more than one thousand rows and preserves folder metadata', async (remote) => {
 	await remote.create(sheet('full'), Array.from({ length: 1000 }, (_, order) => row('full', `r${order}`, order)));
-	await assert.rejects(remote.patch({ revision: 1, sheet: sheet('full'), rows: [row('full', 'extra', 1000)], deleted: [] }), status(422, /1,000 rows/));
-	for (let index = 1; index < 10; index++) await remote.create(sheet(`s${index}`), []);
-	await assert.rejects(remote.create(sheet('eleventh'), []), status(422, /up to 10 sheets/));
-	assert.equal((await remote.list()).length, 10);
+	assert.equal((await remote.patch({ revision: 1, sheet: sheet('full'), rows: [row('full', 'extra', 1000)], deleted: [] }))?.revision, 2);
+	assert.equal((await remote.read('full'))?.rows.length, 1001);
+	for (let index = 1; index < 12; index++) await remote.create(sheet(`s${index}`), []);
+	assert.equal((await remote.list()).length, 12);
 });
 
 contract('a delete at a stale revision keeps the sheet and names its revision; a missing sheet is already deleted', async (remote) => {

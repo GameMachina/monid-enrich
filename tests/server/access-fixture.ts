@@ -5,7 +5,7 @@ export const testAccess = (grant: Partial<AccessGrant> = {}, adapters: AccessAda
 	const keys = { ...grant.keys };
 	// Legacy operation tests model the old Context handle as the single Monid key.
 	if (!keys.monid && keys.context) keys.monid = keys.context;
-	return providerAccess({ keys, ...grant }, { lookup: async () => [{ address: '203.0.113.10' }], ...adapters });
+	return providerAccess({ ...grant, keys }, { lookup: async () => [{ address: '203.0.113.10' }], ...adapters });
 };
 
 /** What the browser policy resolves for a request, as plain data. */

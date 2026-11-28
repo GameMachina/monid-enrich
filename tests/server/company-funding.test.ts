@@ -6,7 +6,7 @@ import { runOp } from '../../src/lib/server/enrich';
 import { rowSchema } from '../../src/lib/workspace';
 import { testAccess } from './access-fixture';
 
-const access = (context = 'test-context') => testAccess({ keys: { context }, model: 'test-model' });
+const access = (monid = 'test-monid') => testAccess({ keys: { monid }, model: 'test-model' });
 const funding = {
 	total_usd: 40_000_000, stage: 'series_c', round_count: 3,
 	latest_round: { type: 'series_b', date: '2026-03-02', amount_usd: 25_000_000 },
@@ -20,13 +20,15 @@ test('every Funding menu option binds to its row and returns a persistable value
 	let requests = 0;
 	t.mock.method(globalThis, 'fetch', async (input: string | URL | Request, options?: RequestInit) => {
 		const request = new Request(input, options);
-		assert.equal(request.url, 'https://api.context.dev/v1/company/search');
-		assert.equal((await request.json()).query, 'example.com');
+		assert.equal(request.url, 'https://api.monid.ai/v1/run');
+		const body = await request.json() as { endpoint: string; input: { body: { query: string } } };
+		assert.equal(body.endpoint, '/company/search');
+		assert.equal(body.input.body.query, 'example.com');
 		requests++;
-		return Response.json({ results: [
+		return Response.json({ runId: `funding-${requests}`, provider: 'context.dev', endpoint: body.endpoint, status: 'COMPLETED', billedUnits: 2, cost: { value: 0.01, currency: 'USD' }, output: { results: [
 			{ name: 'Wrong company', domain: 'other.example', funding: { total_usd: 999 } },
 			{ name: 'Example', domain: 'www.example.com', funding },
-		], key_metadata: { credits_consumed: 2 } });
+		] } });
 	});
 	const values = [];
 	for (const field of fields) {
@@ -34,17 +36,18 @@ test('every Funding menu option binds to its row and returns a persistable value
 		const result = await runOp(access(), op, { Company: 'Example', Domain: 'example.com' });
 		assert.equal(result.error, undefined);
 		assert.deepEqual(result.meta?.raw, funding);
-		assert.equal(result.meta?.credits ?? 0, values.length === 0 ? 2 : 0);
+		assert.equal(result.meta?.monidCostUsd ?? 0, 0.01);
 		rowSchema.parse({ id: 'r1', sheetId: 's1', order: 0, createdAt: 1, cells: { funding: { v: result.value, s: 'done', t: 1, m: result.meta } } });
 		values.push(result.value);
 	}
 	assert.deepEqual(values, [40_000_000, 'Series C', 'Series B', '2026-03-02', 25_000_000, 3]);
-	assert.equal(requests, 1);
+	assert.equal(requests, fields.length, 'each funding field performs its own Monid lookup');
 });
 
 test('funding fields preserve zeroes and return empty cells for missing data or unrelated matches', async (t) => {
 	let results: unknown[] = [{ name: 'Example', domain: 'example.com', funding: { total_usd: 0, stage: null, latest_round: null, round_count: 0 } }];
-	t.mock.method(globalThis, 'fetch', async () => Response.json({ results }));
+	let run = 0;
+	t.mock.method(globalThis, 'fetch', async () => Response.json({ runId: `funding-dynamic-${++run}`, provider: 'context.dev', endpoint: '/company/search', status: 'COMPLETED', cost: { value: 0, currency: 'USD' }, output: { results } }));
 	const get = async (index: number) => runOp(access(`missing-funding-${JSON.stringify(results)}`), entityFieldOp(column, [column, domain], fields[index]), { Domain: 'example.com' });
 	assert.equal((await get(0)).value, 0);
 	assert.equal((await get(1)).value, null);

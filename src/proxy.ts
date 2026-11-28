@@ -4,6 +4,7 @@ import { clerkScope, newSecret, sessionConfig, readSession, safeRedirectUrl, saf
 import { contextSignInEnabled, managedAuthEnabled, selfHostedEnabled } from '@/lib/server/deployment';
 import { selfHostedCookieOptions } from '@/lib/server/self-hosted';
 import { CREDIT_REPORT_PATH, creditReportAuthorized } from '@/lib/server/credit-report';
+import { ACCOUNT_CHANGED_MESSAGE } from '@/lib/account-messages';
 
 const clerkProxy = clerkMiddleware(async (auth, request) => {
 	const path = request.nextUrl.pathname;
@@ -16,7 +17,7 @@ const clerkProxy = clerkMiddleware(async (auth, request) => {
 		return NextResponse.next();
 	}
 	if (path === '/login') return NextResponse.redirect(new URL('/app', request.url));
-	if (api && path !== '/api/auth/session' && (request.headers.get('x-enrichable-account') !== clerkScope(session).partition || request.headers.get('x-enrichable-session') !== clerkScope(session).sessionId)) return NextResponse.json({ error: 'Your account changed. Reload to continue.' }, { status: 409, headers: { 'Cache-Control': 'no-store' } });
+	if (api && path !== '/api/auth/session' && (request.headers.get('x-enrichable-account') !== clerkScope(session).partition || request.headers.get('x-enrichable-session') !== clerkScope(session).sessionId)) return NextResponse.json({ error: ACCOUNT_CHANGED_MESSAGE }, { status: 409, headers: { 'Cache-Control': 'no-store' } });
 	if (api && !['GET', 'HEAD', 'OPTIONS'].includes(request.method) && path !== '/api/stripe/webhook') {
 		const origin = request.headers.get('origin');
 		if (!origin || origin !== request.nextUrl.origin) return NextResponse.json({ error: 'Invalid origin.' }, { status: 403, headers: { 'Cache-Control': 'no-store' } });
@@ -49,8 +50,8 @@ function standaloneProxy(request: NextRequest) {
 		response.headers.set('Cache-Control', 'private, no-store');
 		return response;
 	}
-	if (!account) return api ? NextResponse.json({ error: selfHosted ? 'Open the app to initialize your workspace.' : 'Sign in with Context.dev to continue.' }, { status: 401 }) : NextResponse.redirect(new URL(`/login?returnTo=${encodeURIComponent(safeReturnTo(request.nextUrl.pathname + request.nextUrl.search))}`, request.url));
-	if (api && request.nextUrl.pathname !== '/api/auth/session' && (request.headers.get('x-enrichable-account') !== account.partition || request.headers.get('x-enrichable-session') !== account.sessionId)) return NextResponse.json({ error: 'Your account changed. Reload to continue.' }, { status: 409 });
+	if (!account) return api ? NextResponse.json({ error: selfHosted ? 'Open the app to initialize your workspace.' : 'Sign in to continue.' }, { status: 401, headers: { 'Cache-Control': 'no-store' } }) : NextResponse.redirect(new URL(`/login?returnTo=${encodeURIComponent(safeReturnTo(request.nextUrl.pathname + request.nextUrl.search))}`, request.url));
+	if (api && request.nextUrl.pathname !== '/api/auth/session' && (request.headers.get('x-enrichable-account') !== account.partition || request.headers.get('x-enrichable-session') !== account.sessionId)) return NextResponse.json({ error: ACCOUNT_CHANGED_MESSAGE }, { status: 409, headers: { 'Cache-Control': 'no-store' } });
 	// NextURL normalizes loopback IPs to localhost. Preserve the incoming Host
 	// when checking browser origins (also supports custom self-hosted domains).
 	const origin = selfHosted ? `${request.nextUrl.protocol}//${request.headers.get('host') || request.nextUrl.host}` : sessionConfig().origin;

@@ -61,7 +61,7 @@ test('MCP answers corrupt stored settings as unavailable, never as a caller erro
 	assert.equal(listed.isError, true);
 	assert.deepEqual(listed.structuredContent, { status: 503, error: UNAVAILABLE });
 	assert.deepEqual(entries.map((entry) => entry.operation), ['mcp.list_sheets']);
-	await db.query('INSERT INTO enrichable.organization_settings (workspace_id, preferences) VALUES ($1, $2::jsonb)', [workspaceId(actor), JSON.stringify({ concurrency: 'lots' })]);
+	await db.query('INSERT INTO enrichable.organization_settings (workspace_id, preferences) VALUES ($1, $2::jsonb) ON CONFLICT (workspace_id) DO UPDATE SET preferences=excluded.preferences', [workspaceId(actor), JSON.stringify({ concurrency: 'lots' })]);
 	const response = await handleMcpRequest(new Request('http://localhost/mcp', { method: 'POST', headers: { authorization: `Bearer ${key.secret}` } }), services);
 	assert.equal(response.status, 503);
 	assert.deepEqual(await response.json(), { error: UNAVAILABLE });

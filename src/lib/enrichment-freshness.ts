@@ -100,13 +100,29 @@ function digest(version: string): string {
 export const inputFingerprint = (version: string) => `${FINGERPRINT}${digest(version)}`;
 export const isLegacyFingerprint = (fingerprint: string | undefined) => Boolean(fingerprint?.startsWith('v1:'));
 
+/** V2 rules saved before Monid became an explicit default are equivalent to today's rules with that default omitted. */
+function matchesImplicitMonidDefault(fingerprint: string, version: string): boolean {
+	try {
+		const parsed = JSON.parse(version) as { op?: Record<string, unknown> };
+		if (parsed.op?.dataProvider !== 'monid') return false;
+		const op = { ...parsed.op };
+		delete op.dataProvider;
+		return fingerprint === inputFingerprint(canonicalJson({ ...parsed, op })!);
+	} catch { return false; }
+}
+
 /** What `v1:` fingerprints hash: the operation as written, and the record's referenced entries by column name (all of
     them when the operation reads its row). Never change it. */
 function legacyVersion(op: ColumnOp, record: Record<string, CellValue>, wholeRow = false): string {
 	const references = opDependencies(op);
 	const usesRowContext = wholeRow || readsRowContext(op);
 	const entries = Object.entries(record).filter(([name]) => usesRowContext || references.some((ref) => sameName(ref, name)));
-	return canonicalJson({ op, record: Object.fromEntries(entries) })!;
+	// Current schemas add Monid as the default data provider when old saved operations are parsed. It was implicit in v1
+	// fingerprints, so omit that default while comparing legacy results; explicitly selected providers remain meaningful.
+	const legacyOp = 'dataProvider' in op && op.dataProvider === 'monid'
+		? Object.fromEntries(Object.entries(op).filter(([key]) => key !== 'dataProvider'))
+		: op;
+	return canonicalJson({ op: legacyOp, record: Object.fromEntries(entries) })!;
 }
 
 /** Whether a `v1:` fingerprint still matches the row's `record`. A whole-row one covered every column, so columns added
@@ -128,7 +144,10 @@ function legacyCurrent(fingerprint: string, savedAt: number, op: ColumnOp, colum
 export function outdatedResult(cell: Cell | undefined, columns: readonly Column[], rows: readonly Row[], index: number, op: ColumnOp, columnId: string, current?: { readonly version: string; readonly record: Record<string, CellValue> }): boolean {
 	if (cell?.s !== 'done' || cell.f) return false;
 	const fingerprint = cell.m?.inputFingerprint;
-	if (fingerprint?.startsWith(FINGERPRINT)) return fingerprint !== inputFingerprint(current?.version ?? inputVersion(columns, rows, index, op, columnId));
+	if (fingerprint?.startsWith(FINGERPRINT)) {
+		const version = current?.version ?? inputVersion(columns, rows, index, op, columnId);
+		return fingerprint !== inputFingerprint(version) && !matchesImplicitMonidDefault(fingerprint, version);
+	}
 	if (fingerprint) return !legacyCurrent(fingerprint, cell.t, op, columns, current?.record ?? inputRecord(columns, rows, index, op, columnId), rows[index]);
 	return referenceInputs(columns, rows, index, op).some((input) => input.cells.some((dep) => dep.row.cells[dep.column.id]?.t > cell.t));
 }

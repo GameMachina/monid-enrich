@@ -8,7 +8,7 @@ import type { Account } from '../../src/lib/auth-identity';
 import type { Row, Sheet } from '../../src/lib/types';
 import { testDatabase } from '../support/database';
 
-test('Postgres workspaces share by verified organization, isolate tenants, enforce quotas and reject stale edits', { timeout: 90_000 }, async (t) => {
+test('Postgres workspaces share by verified organization, isolate tenants, paginate rows and reject stale edits', { timeout: 90_000 }, async (t) => {
 	const live = process.env.ENRICHABLE_LIVE_DB_TEST === 'true';
 	loadEnvConfig(process.cwd());
 	const prefix = `test-${randomUUID()}`;
@@ -42,25 +42,25 @@ test('Postgres workspaces share by verified organization, isolate tenants, enfor
 		await assert.rejects(store.patch(alice, 'shared', { revision: 1, sheet: sheet('shared'), rows: [row('r1')], deleted: [] }), /Another member/);
 		if (live) console.log('Live database: tenant isolation and stale-edit checks passed.');
 		const creations = await Promise.allSettled(Array.from({ length: 12 }, (_, i) => store.create(alice, { sheet: sheet(`s${i}`), rows: [] })));
-		assert.equal(creations.filter((entry) => entry.status === 'fulfilled').length, 9);
-		assert.equal((await store.list(bob)).length, 10);
-		if (live) console.log('Live database: concurrent sheet-quota checks passed.');
+		assert.equal(creations.filter((entry) => entry.status === 'fulfilled').length, 12);
+		assert.equal((await store.list(bob)).length, 13);
+		if (live) console.log('Live database: concurrent sheet writes passed.');
 		await store.patch(alice, 'shared', { revision: 2, sheet: sheet('shared'), rows: Array.from({ length: 999 }, (_, i) => row(`r${i + 1}`)), deleted: [] });
 		assert.equal((await store.list(bob)).find((entry) => entry.sheet.id === 'shared')!.rowCount, 1000);
-		await assert.rejects(store.patch(bob, 'shared', { revision: 3, sheet: sheet('shared'), rows: [row('overflow')], deleted: [] }), /1,000/);
-		assert.equal((await store.get(bob, 'shared')).sheet.revision, 3);
+		await store.patch(bob, 'shared', { revision: 3, sheet: sheet('shared'), rows: [{ ...row('overflow'), order: 1000 }], deleted: [] });
+		assert.equal((await store.get(bob, 'shared')).sheet.revision, 4);
 		const whole = await store.snapshot(bob, 'shared');
-		assert.deepEqual([whole.sheet.revision, whole.rows.length, whole.rows[0].id, whole.rows[999].id], [3, 1000, 'r0', 'r999'], 'one read returns every row in order');
+		assert.deepEqual([whole.sheet.revision, whole.rows.length, whole.rows[0].id, whole.rows[999].id, whole.rows[1000].id], [4, 1001, 'r0', 'r999', 'overflow'], 'one read returns every row in order');
 		await assert.rejects(store.snapshot(stranger, 'shared'), /not found/);
-		if (live) console.log('Live database: row-quota rollback checks passed.');
-		await assert.rejects(store.get(bob, 'shared', 100, 2), /Sheet changed/);
-		const page = await store.get(bob, 'shared', 900, 3);
+		if (live) console.log('Live database: large-row pagination checks passed.');
+		await assert.rejects(store.get(bob, 'shared', 100, 3), /Sheet changed/);
+		const page = await store.get(bob, 'shared', 900, 4);
 		assert.equal(page.rows.length, 100);
 		await assert.rejects(store.patch(alice, 's0', { revision: 1, sheet: sheet('s0'), rows: [row('r0', 's0')], deleted: [] }), /another sheet/);
-		await assert.rejects(store.patch(alice, 'shared', { revision: 3, sheet: sheet('shared'), rows: [row('foreign', 's0')], deleted: [] }), /Rows must belong/);
-		await store.remove(bob, 'shared', 3);
-		assert.equal((await store.list(alice)).length, 9);
+		await assert.rejects(store.patch(alice, 'shared', { revision: 4, sheet: sheet('shared'), rows: [row('foreign', 's0')], deleted: [] }), /Rows must belong/);
+		await store.remove(bob, 'shared', 4);
+		assert.equal((await store.list(alice)).length, 12);
 		await store.create(bob, { sheet: sheet('replacement'), rows: [] });
-		assert.equal((await store.list(alice)).length, 10);
+		assert.equal((await store.list(alice)).length, 13);
 	}
 });
