@@ -15,3 +15,15 @@ export function isPlatformAdmin(account: Account) {
 export function requirePlatformAdmin(account: Account) {
 	if (!isPlatformAdmin(account)) throw new WorkspaceError('A verified platform administrator account is required.', 403);
 }
+
+/** Local development is often linked to shared infrastructure, so global admin deletes stay read-only there by default. */
+export function platformAdminMutationsEnabled() {
+	if (process.env.NODE_ENV !== 'production') return false;
+	if (process.env.VERCEL_ENV === 'preview') return process.env.ENRICHABLE_PLATFORM_ADMIN_MUTATIONS_ENABLED === 'true';
+	return true;
+}
+
+export function requirePlatformAdminMutation(account: Account) {
+	requirePlatformAdmin(account);
+	if (!platformAdminMutationsEnabled()) throw new WorkspaceError('Organization and sheet deletion is disabled in local development and Vercel previews unless explicitly enabled.', 403);
+}

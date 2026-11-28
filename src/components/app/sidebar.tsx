@@ -5,7 +5,7 @@ import { CreditsRemaining } from './credits-remaining';
 import { Logo } from '@/components/ui/logo';
 import clsx from 'clsx';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { ChevronDown, Folder, FolderPlus, LifeBuoy, ListTree, LogOut, Menu, MoreHorizontal, Pencil, Plus, Settings, Trash2, Users, X } from 'lucide-react';
+import { ChevronDown, Folder, FolderPlus, LifeBuoy, ListTree, LogOut, Menu, MoreHorizontal, Pencil, Plus, Settings, ShieldCheck, Trash2, Users, X } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { createContext, type ReactNode, useContext, useEffect, useMemo, useRef, useState } from 'react';
@@ -160,6 +160,7 @@ export function Sidebar({ account, managedAuth = false, platformAdmin = false }:
 	// The drawer is modal, so its own links are the only way to change pages while it's open.
 	const close = () => setMobileOpen(false);
 	const configurationActive = pathname.startsWith('/app/settings');
+	const adminActive = pathname === '/app/admin' || pathname.startsWith('/app/admin/organizations');
 	const tableTypesActive = pathname.startsWith('/app/admin/table-types');
 
 	const content = (
@@ -176,6 +177,10 @@ export function Sidebar({ account, managedAuth = false, platformAdmin = false }:
 			{managedAuth && <div className="mt-4 px-1"><OrganizationSwitcher hidePersonal={false} /></div>}
 			<nav aria-label="App" className="mt-5 flex flex-col gap-0.5">
 				<FoldersNav pathname={pathname} onNavigate={close} />
+				{platformAdmin && <Link href="/app/admin" onClick={close} aria-current={adminActive ? 'page' : undefined} className={linkClass(adminActive)}>
+					<ShieldCheck className={iconClass(adminActive)} strokeWidth={1.75} />
+					<span className="min-w-0 flex-1 truncate">Admin</span>
+				</Link>}
 				{platformAdmin && <Link href="/app/admin/table-types" onClick={close} aria-current={tableTypesActive ? 'page' : undefined} className={linkClass(tableTypesActive)}>
 					<ListTree className={iconClass(tableTypesActive)} strokeWidth={1.75} />
 					<span className="min-w-0 flex-1 truncate">Table Types</span>
